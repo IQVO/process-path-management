@@ -120,6 +120,18 @@ otel:
 
 extraEnv: []
 
+# Covers the eager Postgres dial (migrations + pool.Ping) at boot, which is
+# now wrapped in a bounded retry (internal/adapters/outbound/bootretry) with
+# a budget of ~31s. periodSeconds * failureThreshold gives a ~60s window,
+# comfortably past that budget, before the kubelet gives up and restarts the
+# pod. Once startupProbe succeeds, liveness/readiness probing takes over.
+startupProbe:
+  httpGet:
+    path: /healthz
+    port: http
+  periodSeconds: 2
+  failureThreshold: 30
+
 livenessProbe:
   httpGet:
     path: /healthz

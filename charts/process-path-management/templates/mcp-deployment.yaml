@@ -75,6 +75,12 @@ spec:
             - {{ toYaml . | nindent 14 | trim }}
             {{- end }}
           # GET /healthz is served by cmd/mcp, so the probes have a cheap target.
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 2
+            failureThreshold: 30
           livenessProbe:
             httpGet:
               path: /healthz
