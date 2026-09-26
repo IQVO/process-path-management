@@ -26,6 +26,7 @@ import (
 // that a boot-time catalogue failure is loud, never a silent partial
 // entry (see the retired YAML file's own header comment on this point).
 var (
+	ErrEmptyPathId             = errors.New("processpath: pathId must not be empty")
 	ErrEmptyMatchPrefix        = errors.New("processpath: matchPrefix must not be empty")
 	ErrMatchPrefixNotLowercase = errors.New("processpath: matchPrefix must be lower-case")
 	ErrNoRequiredCapabilities  = errors.New("processpath: requiredCapabilities must be non-empty")
@@ -99,6 +100,9 @@ type ProcessPath struct {
 // (ErrInvalidCycleTime otherwise); eligibility has no invariant of its
 // own — its zero value is a fully valid, permissive declaration.
 func Define(id shared.PathId, matchPrefix string, direct bool, requiredCapabilities []shared.Capability, destinationLocationRole shared.DestinationLocationRole, cycleTimeP95 time.Duration, eligibility shared.Eligibility, now time.Time) (*ProcessPath, error) {
+	if id == "" {
+		return nil, ErrEmptyPathId
+	}
 	if err := validate(matchPrefix, requiredCapabilities, destinationLocationRole, cycleTimeP95); err != nil {
 		return nil, err
 	}

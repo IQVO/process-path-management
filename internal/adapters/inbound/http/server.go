@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -80,6 +81,15 @@ func NewRouter(s *Server, logger *slog.Logger, serviceName string) http.Handler 
 	r.Put("/sites/{siteId}/cpt-schedule", s.handleDefineCPTSchedule)
 	r.Get("/sites/{siteId}/cpt-schedule", s.handleGetCPTSchedule)
 
+	// Unroutable requests (e.g. an empty path-id segment, which chi's
+	// trie never matches) get the same RFC 7807 shape as every other
+	// error this API returns, instead of Go's default text/plain
+	// "404 page not found" — the API's own documented 404 content type
+	// is application/problem+json.
+	r.NotFound(func(w http.ResponseWriter, r *http.Request) {
+		writeProblem(w, http.StatusNotFound, problemInfo{"route-not-found", "No route matches this request"}, "the request path does not match any operation in this API", r.URL.Path)
+	})
+
 	return r
 }
 
@@ -116,8 +126,18 @@ func (s *Server) handleListPaths(w http.ResponseWriter, r *http.Request) {
 	// activeOnly is the default (?all=true opts into the audit view) —
 	// matches the retired YAML catalogue's own posture that every
 	// consumer's normal read is "the currently valid set", not
-	// everything that ever existed.
-	activeOnly := r.URL.Query().Get("all") != "true"
+	// everything that ever existed. The value must be a real boolean
+	// when present: a query like ?all=null is a client bug and gets a
+	// 400 problem+json, never silently coerced to "false".
+	activeOnly := true
+	if vals, ok := r.URL.Query()["all"]; ok {
+		all, err := strconv.ParseBool(vals[0])
+		if err != nil {
+			writeProblem(w, http.StatusBadRequest, problemInfo{"invalid-query-parameter", "The 'all' query parameter must be a boolean (true or false)"}, "could not parse 'all' as a boolean: "+vals[0], r.URL.Path)
+			return
+		}
+		activeOnly = !all
+	}
 
 	paths, err := s.ListPaths.Execute(r.Context(), activeOnly)
 	if err != nil {

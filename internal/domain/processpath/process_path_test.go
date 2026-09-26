@@ -10,6 +10,13 @@ import (
 
 const testCycleTimeP95 = 2 * time.Hour
 
+func TestDefine_RejectsEmptyPathId(t *testing.T) {
+	_, err := Define("", "pick", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, testCycleTimeP95, shared.Eligibility{}, time.Now())
+	if !errors.Is(err, ErrEmptyPathId) {
+		t.Fatalf("want ErrEmptyPathId, got %v", err)
+	}
+}
+
 func TestDefine_RejectsEmptyMatchPrefix(t *testing.T) {
 	_, err := Define("PICK", "", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, testCycleTimeP95, shared.Eligibility{}, time.Now())
 	if !errors.Is(err, ErrEmptyMatchPrefix) {
