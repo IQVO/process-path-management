@@ -90,6 +90,78 @@ func TestDefinePath_InvalidMatchPrefix_Returns422WithProblemDetails(t *testing.T
 	}
 }
 
+func TestDefinePath_EmptyPathId_Returns422WithProblemDetails(t *testing.T) {
+	router := newTestServer(t)
+	// A path defined with an empty id would be unreachable through
+	// /process-paths/{pathId} (chi never matches an empty segment), so
+	// the aggregate rejects it up front instead of creating a resource
+	// no one can read back.
+	body := `{"pathId":"","matchPrefix":"pick","direct":true,"requiredCapabilities":["pick"],"cycleTimeP95":"2h"}`
+	req := httptest.NewRequest(http.MethodPost, "/process-paths", bytes.NewBufferString(body))
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+	if rr.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("want 422, got %d: %s", rr.Code, rr.Body.String())
+	}
+	var problem struct {
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &problem); err != nil {
+		t.Fatalf("unmarshal problem: %v", err)
+	}
+	if want := "https://errors.process-path-management.warehouse-systems.dev/empty-path-id"; problem.Type != want {
+		t.Fatalf("want type %s, got %s", want, problem.Type)
+	}
+}
+
+func TestListPaths_NonBooleanAll_Returns400WithProblemDetails(t *testing.T) {
+	router := newTestServer(t)
+	req := httptest.NewRequest(http.MethodGet, "/process-paths?all=null", nil)
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("want 400, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if ct := rr.Header().Get("Content-Type"); ct != "application/problem+json" {
+		t.Fatalf("want application/problem+json, got %s", ct)
+	}
+}
+
+func TestListPaths_AllFalse_StillActiveOnly(t *testing.T) {
+	router := newTestServer(t)
+	body := `{"pathId":"PICK","matchPrefix":"pick","direct":true,"requiredCapabilities":["pick"],"cycleTimeP95":"2h"}`
+	defineReq := httptest.NewRequest(http.MethodPost, "/process-paths", bytes.NewBufferString(body))
+	defineRR := httptest.NewRecorder()
+	router.ServeHTTP(defineRR, defineReq)
+	if defineRR.Code != http.StatusCreated {
+		t.Fatalf("setup: want 201, got %d", defineRR.Code)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/process-paths?all=false", nil)
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+	var paths []map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &paths); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(paths) != 1 {
+		t.Fatalf("want 1 path with ?all=false, got %d", len(paths))
+	}
+}
+
+func TestRouter_UnroutablePath_Returns404ProblemDetails(t *testing.T) {
+	router := newTestServer(t)
+	req := httptest.NewRequest(http.MethodGet, "/process-paths/", nil)
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("want 404, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if ct := rr.Header().Get("Content-Type"); ct != "application/problem+json" {
+		t.Fatalf("want application/problem+json, got %s", ct)
+	}
+}
+
 func TestDefinePath_DuplicateId_Returns409(t *testing.T) {
 	router := newTestServer(t)
 	body := `{"pathId":"PICK","matchPrefix":"pick","direct":true,"requiredCapabilities":["pick"],"cycleTimeP95":"2h"}`

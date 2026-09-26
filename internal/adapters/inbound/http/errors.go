@@ -21,6 +21,7 @@ func statusFor(err error) int {
 		return http.StatusConflict
 
 	case errors.Is(err, processpath.ErrPathDeactivated),
+		errors.Is(err, processpath.ErrEmptyPathId),
 		errors.Is(err, processpath.ErrEmptyMatchPrefix),
 		errors.Is(err, processpath.ErrMatchPrefixNotLowercase),
 		errors.Is(err, processpath.ErrNoRequiredCapabilities),
@@ -69,6 +70,8 @@ func problemFor(err error) problemInfo {
 		return problemInfo{"path-already-exists", "A process path with this id already exists (active or deactivated)"}
 	case errors.Is(err, processpath.ErrPathDeactivated):
 		return problemInfo{"path-deactivated", "This process path has been deactivated and can no longer be revised"}
+	case errors.Is(err, processpath.ErrEmptyPathId):
+		return problemInfo{"empty-path-id", "pathId must not be empty"}
 	case errors.Is(err, processpath.ErrEmptyMatchPrefix):
 		return problemInfo{"empty-match-prefix", "matchPrefix must not be empty"}
 	case errors.Is(err, processpath.ErrMatchPrefixNotLowercase):

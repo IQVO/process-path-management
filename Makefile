@@ -13,7 +13,7 @@ COVERAGE_THRESHOLD := 90
 
 .DEFAULT_GOAL := help
 
-.PHONY: help build vet fmt fmt-check lint test coverage bdd arch-test integration mutation mutation-fast api-lint vuln check check-all
+.PHONY: help build vet fmt fmt-check lint test coverage bdd arch-test integration mutation mutation-fast api-lint vuln contract check check-all
 
 help:
 	@echo "process-path-management — local quality gate (targets mirror .github/workflows/ci.yml)"
@@ -33,6 +33,9 @@ help:
 	@echo "  mutation          alias for mutation-fast (see .gremlins.yaml)"
 	@echo "  api-lint          Spectral lint on openapi.yaml and asyncapi.yaml"
 	@echo "  vuln              Known CVEs in the dependency graph and the Go stdlib"
+	@echo ""
+	@echo "  contract          scripts/contract-test.sh — Schemathesis property-based"
+	@echo "                    contract tests vs apis/openapi.yaml (needs 'st' on PATH)"
 	@echo ""
 	@echo "  check             FAST bundle: fmt-check vet build lint test"
 	@echo "  check-all         check + coverage + arch-test + bdd — run this before pushing"
@@ -122,6 +125,12 @@ vuln:
 		exit 1; \
 	fi
 	govulncheck ./...
+
+# Property-based contract tests against apis/openapi.yaml — mirrors the
+# `contract` CI job. Not part of check/check-all (needs the Python
+# `schemathesis==4.28.0` tooling on PATH, like CI installs).
+contract:
+	./scripts/contract-test.sh
 
 # The fast self-correction loop: run this after every change, before committing.
 check: fmt-check vet build lint test

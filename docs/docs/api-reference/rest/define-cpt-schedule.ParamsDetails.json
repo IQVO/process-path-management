@@ -1,1 +1,1 @@
-{"parameters":[{"name":"siteId","in":"path","required":true,"schema":{"type":"string"},"example":"sp1"}]}
+{"parameters":[{"name":"siteId","in":"path","required":true,"schema":{"type":"string","minLength":1},"example":"sp1"}]}
