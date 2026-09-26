@@ -20,6 +20,7 @@ import (
 	"time"
 
 	inboundmcp "github.com/claudioed/process-path-management/internal/adapters/inbound/mcp"
+	"github.com/claudioed/process-path-management/internal/adapters/outbound/bootretry"
 	"github.com/claudioed/process-path-management/internal/adapters/outbound/memory"
 	"github.com/claudioed/process-path-management/internal/adapters/outbound/postgres"
 	"github.com/claudioed/process-path-management/internal/adapters/outbound/telemetry"
@@ -157,11 +158,29 @@ func buildRepo(ctx context.Context, databaseURL, migrationsPath string, logger *
 		return memory.NewProcessPathRepo(), noop, nil
 	}
 
-	if err := postgres.RunMigrations(databaseURL, migrationsPath); err != nil {
+	// Retried, because in this fleet EVERY injected pod's first outbound
+	// TCP dial (Postgres here) fails with "read: connection reset by
+	// peer" ~10s after the app starts (Istio 1.30 native sidecars still
+	// warming up their outbound listener). A single attempt turns that
+	// transient condition into CrashLoopBackOff. The retry is NOT a
+	// weakening of the fail-closed rule: once the budget is exhausted
+	// this still refuses to boot, reporting the real cause.
+	if err := bootretry.Do(ctx, logger, "run migrations", func() error {
+		return postgres.RunMigrations(databaseURL, migrationsPath)
+	}); err != nil {
 		return nil, noop, err
 	}
 	pool, err := postgres.NewPool(ctx, databaseURL)
 	if err != nil {
+		return nil, noop, err
+	}
+	// ParseConfig/NewWithConfig do not themselves establish a connection,
+	// so without this the first real failure would surface inside a
+	// request rather than at boot.
+	if err := bootretry.Do(ctx, logger, "ping database", func() error {
+		return pool.Ping(ctx)
+	}); err != nil {
+		pool.Close()
 		return nil, noop, err
 	}
 	return postgres.NewProcessPathRepo(pool), pool.Close, nil
@@ -173,7 +192,9 @@ func buildRepo(ctx context.Context, databaseURL, migrationsPath string, logger *
 // already run via buildRepo's own call to postgres.RunMigrations by the
 // time this is invoked, so this does not re-run them; it only needs its
 // own pool since the two repos never share one across composition roots
-// in this binary.
+// in this binary. It still retries its own first dial (Ping) since this
+// pool is a distinct connection from buildRepo's, and can independently
+// hit the same sidecar warm-up race.
 func buildCPTScheduleRepo(ctx context.Context, databaseURL string, logger *slog.Logger) (ports.CPTScheduleRepo, error) {
 	if databaseURL == "" {
 		logger.Info("DATABASE_URL not set, using in-memory CPTScheduleRepo")
@@ -181,6 +202,12 @@ func buildCPTScheduleRepo(ctx context.Context, databaseURL string, logger *slog.
 	}
 	pool, err := postgres.NewPool(ctx, databaseURL)
 	if err != nil {
+		return nil, err
+	}
+	if err := bootretry.Do(ctx, logger, "ping database (cpt schedule pool)", func() error {
+		return pool.Ping(ctx)
+	}); err != nil {
+		pool.Close()
 		return nil, err
 	}
 	return postgres.NewCPTScheduleRepo(pool), nil

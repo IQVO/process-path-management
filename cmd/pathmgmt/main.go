@@ -23,6 +23,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	inboundhttp "github.com/claudioed/process-path-management/internal/adapters/inbound/http"
+	"github.com/claudioed/process-path-management/internal/adapters/outbound/bootretry"
 	"github.com/claudioed/process-path-management/internal/adapters/outbound/events"
 	outboundkafka "github.com/claudioed/process-path-management/internal/adapters/outbound/kafka"
 	"github.com/claudioed/process-path-management/internal/adapters/outbound/memory"
@@ -213,11 +214,29 @@ func buildPersistence(ctx context.Context, databaseURL, migrationsPath string, l
 		}, nil
 	}
 
-	if err := postgres.RunMigrations(databaseURL, migrationsPath); err != nil {
+	// Retried, because in this fleet EVERY injected pod's first outbound
+	// TCP dial (Postgres here) fails with "read: connection reset by
+	// peer" ~10s after the app starts (Istio 1.30 native sidecars still
+	// warming up their outbound listener). A single attempt turns that
+	// transient condition into CrashLoopBackOff. The retry is NOT a
+	// weakening of the fail-closed rule: once the budget is exhausted
+	// this still refuses to boot, reporting the real cause.
+	if err := bootretry.Do(ctx, logger, "run migrations", func() error {
+		return postgres.RunMigrations(databaseURL, migrationsPath)
+	}); err != nil {
 		return nil, err
 	}
 	pool, err := postgres.NewPool(ctx, databaseURL)
 	if err != nil {
+		return nil, err
+	}
+	// ParseConfig/NewWithConfig do not themselves establish a connection,
+	// so without this the first real failure would surface inside a
+	// request rather than at boot.
+	if err := bootretry.Do(ctx, logger, "ping database", func() error {
+		return pool.Ping(ctx)
+	}); err != nil {
+		pool.Close()
 		return nil, err
 	}
 	return &persistence{

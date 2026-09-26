@@ -25,6 +25,7 @@ import (
 
 	inboundkafka "github.com/claudioed/process-path-management/internal/adapters/inbound/kafka"
 	"github.com/claudioed/process-path-management/internal/adapters/outbound/analyticsstore"
+	"github.com/claudioed/process-path-management/internal/adapters/outbound/bootretry"
 	outboundkafka "github.com/claudioed/process-path-management/internal/adapters/outbound/kafka"
 	"github.com/claudioed/process-path-management/internal/adapters/outbound/postgres"
 )
@@ -56,8 +57,16 @@ func run() error {
 	migrationsPath := getenv("ANALYTICS_MIGRATIONS_PATH", "migrations/analytics")
 
 	// The projector owns the analytical schema: run its migrations on
-	// start.
-	if err := postgres.RunMigrations(analyticsURL, migrationsPath); err != nil {
+	// start. Retried, because in this fleet EVERY injected pod's first
+	// outbound TCP dial (Postgres here) fails with "read: connection
+	// reset by peer" ~10s after the app starts (Istio 1.30 native
+	// sidecars still warming up their outbound listener). A single
+	// attempt turns that transient condition into CrashLoopBackOff. This
+	// does not weaken the fail-closed rule: once the budget is exhausted
+	// it still refuses to boot, reporting the real cause.
+	if err := bootretry.Do(rootCtx, logger, "run analytics migrations", func() error {
+		return postgres.RunMigrations(analyticsURL, migrationsPath)
+	}); err != nil {
 		return err
 	}
 
@@ -66,6 +75,14 @@ func run() error {
 		return err
 	}
 	defer pool.Close()
+	// NewPool does not itself establish a connection, so without this the
+	// first real failure would surface inside the projection loop rather
+	// than at boot.
+	if err := bootretry.Do(rootCtx, logger, "ping analytics database", func() error {
+		return pool.Ping(rootCtx)
+	}); err != nil {
+		return err
+	}
 
 	projection := analyticsstore.NewPostgresProjection(pool)
 	consumed := analyticsstore.NewConsumedEventsRepo(pool)
