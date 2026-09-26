@@ -21,6 +21,7 @@ const sidebars: SidebarsConfig = {
       items: [...apiSidebar],
     },
     'ecosystem/context-map',
+    'mcp/governance-charter',
     {
       type: 'category',
       label: 'Architecture Decision Records',

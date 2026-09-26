@@ -1,0 +1,6 @@
+inventory-storage	check_availability
+inventory-storage	get_bin_occupancy
+inventory-storage	revoke_reservation
+process-path-management	get_cpt_schedule
+process-path-management	get_process_path
+process-path-management	list_process_paths
