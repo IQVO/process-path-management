@@ -69,6 +69,7 @@ Typos, broken links and formatting are of course fair game.
 | [0009](./0009-destination-location-role-on-process-path.md) | Optional destination LocationRole on a ProcessPath | Accepted |
 | [0010](./0010-fulfillment-capability-contract.md) | Process paths publish a fulfillment capability contract (cycle time, eligibility, CPT schedule) | Accepted |
 | [0011](./0011-idempotency-key-middleware.md) | Transactional Idempotency-Key middleware for POST /process-paths | Accepted |
+| [0012](./0012-kafka-dlq-and-graceful-shutdown.md) | Analytics-consumer dead-letter queue and graceful shutdown hardening | Accepted |
 
 Each of these reconstructs a decision that is actually visible in this
 repository's history or code — none is a generic placeholder.

@@ -2,14 +2,24 @@
 // process-path-management "Process Path Catalogue Growth & Change" data
 // product. It consumes the analytics Kafka topic, projects each
 // catalogue-change event into the analytical Postgres database via the
-// idempotent PostgresProjection, and serves only a health endpoint on an
-// admin port. It is the single writer of the analytical database and
-// serves no reports; the reader (cmd/pathmgmt-reports) is a separate
-// deployable (ADR 0007, mirroring facility-layout's ADR-0010).
+// idempotent PostgresProjection, and serves only a health/readiness
+// endpoint on an admin port. It is the single writer of the analytical
+// database and serves no reports; the reader (cmd/pathmgmt-reports) is a
+// separate deployable (ADR 0007, mirroring facility-layout's ADR-0010).
 //
 // Consistent with the rest of the analytics pipeline, this process is
 // trace-free: process-path-management has no observability/OTel package
 // for it.
+//
+// ADR 0012 hardens this composition root's graceful shutdown
+// (mirroring order-management's ADR-0025 §graceful shutdown): a new
+// GET /readyz (distinct from the pre-existing /healthz liveness probe)
+// flips to not-ready FIRST, before anything else stops; the analytics
+// consumer's context is cancelled and its Run goroutine is AWAITED
+// (bounded) so an in-flight message finishes its own commit/DLQ publish
+// before this process exits, instead of the pre-existing fire-and-forget
+// cancel; and the pgx pool is closed LAST, after both the admin server
+// and the consumer have stopped touching it.
 package main
 
 import (
@@ -20,6 +30,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -74,26 +85,38 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	defer pool.Close()
+	// pool.Close() is called explicitly at the END of this function's
+	// graceful-shutdown sequence (NOT deferred here) so it is guaranteed
+	// to run LAST, after the admin server and the analytics consumer
+	// have both already stopped touching it (ADR-0012 §graceful
+	// shutdown).
 	// NewPool does not itself establish a connection, so without this the
 	// first real failure would surface inside the projection loop rather
 	// than at boot.
 	if err := bootretry.Do(rootCtx, logger, "ping analytics database", func() error {
 		return pool.Ping(rootCtx)
 	}); err != nil {
+		pool.Close()
 		return err
 	}
 
 	projection := analyticsstore.NewPostgresProjection(pool)
 	consumed := analyticsstore.NewConsumedEventsRepo(pool)
 	consumer := inboundkafka.NewAnalyticsConsumer(kafkaBrokers, outboundkafka.AnalyticsTopic, projection, consumed, logger)
-	defer func() { _ = consumer.Close() }()
+
+	// readiness gates GET /readyz (ADR-0012 §graceful shutdown,
+	// mirroring order-management's ADR-0025). The zero value is
+	// ready; SetNotReady is called as the FIRST step of the shutdown
+	// sequence below, before the admin server itself stops accepting
+	// connections.
+	readiness := &readinessGate{}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"status":"ok"}`))
 	})
+	mux.HandleFunc("/readyz", readiness.handle)
 	srv := &http.Server{Addr: adminAddr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 
 	go func() {
@@ -104,7 +127,14 @@ func run() error {
 	}()
 
 	consumerCtx, cancelConsumer := context.WithCancel(context.Background())
+	// consumerDone closes once the analytics consumer's Run goroutine
+	// has returned — including having committed (or dead-lettered and
+	// committed) whatever message it was mid-handling when
+	// cancelConsumer was called — so graceful shutdown can wait for a
+	// REAL stop, not just fire-and-forget the cancel.
+	consumerDone := make(chan struct{})
 	go func() {
+		defer close(consumerDone)
 		logger.Info("analytics consumer starting", "topic", outboundkafka.AnalyticsTopic, "group", inboundkafka.AnalyticsConsumerGroup, "brokers", kafkaBrokers)
 		if err := consumer.Run(consumerCtx); err != nil {
 			logger.Error("analytics consumer stopped", "error", err)
@@ -115,11 +145,69 @@ func run() error {
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 	<-stop
 
-	cancelConsumer()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	return srv.Shutdown(ctx)
+
+	// Graceful shutdown (ADR-0012 §graceful shutdown, mirroring
+	// order-management's ADR-0025), in order:
+	//
+	//  1. Flip readiness to not-ready FIRST, before anything else
+	//     stops.
+	//  2. Stop accepting new admin-server connections and drain
+	//     in-flight requests, bounded by shutdownCtx.
+	//  3. Stop the analytics consumer's loop cleanly: cancel its
+	//     context (no new message is fetched/handled after this) and
+	//     wait, bounded by the SAME shutdownCtx, for its goroutine to
+	//     actually finish in-flight work (a message already being
+	//     handled commits its offset, or dead-letters and commits,
+	//     before Run returns) rather than merely asking it to stop and
+	//     moving on.
+	//  4. Close the pgx pool and the consumer's Kafka reader/DLQ
+	//     writer LAST, after both the admin server and the consumer
+	//     have already stopped touching them.
+	readiness.setNotReady()
+
+	shutdownErr := srv.Shutdown(shutdownCtx)
+
+	cancelConsumer()
+	select {
+	case <-consumerDone:
+	case <-shutdownCtx.Done():
+		logger.Warn("analytics consumer did not stop before the shutdown deadline")
+	}
+	if err := consumer.Close(); err != nil {
+		logger.Error("error closing analytics consumer", "error", err)
+	}
+	pool.Close()
+
+	return shutdownErr
+}
+
+// readinessGate is a minimal, process-wide, thread-safe readiness gate
+// for this admin-only binary — mirrors inboundhttp.Readiness's shape
+// (see that type's doc comment) without importing the HTTP inbound
+// adapter package, which this binary otherwise has no reason to depend
+// on (it serves a bare net/http mux, not the chi API router).
+type readinessGate struct {
+	notReady int32
+}
+
+func (g *readinessGate) setNotReady() {
+	atomic.StoreInt32(&g.notReady, 1)
+}
+
+func (g *readinessGate) ready() bool {
+	return atomic.LoadInt32(&g.notReady) == 0
+}
+
+func (g *readinessGate) handle(w http.ResponseWriter, _ *http.Request) {
+	if !g.ready() {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"status":"not_ready"}`))
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(`{"status":"ready"}`))
 }
 
 // newLogger builds a JSON slog logger at the given level. The analytics
