@@ -141,10 +141,25 @@ livenessProbe:
 
 readinessProbe:
   httpGet:
-    path: /healthz
+    # /readyz (ADR-0012 §graceful shutdown, mirroring order-management's
+    # ADR-0025), NOT /healthz: readiness must flip to not-ready during a
+    # graceful SIGTERM drain (see cmd/pathmgmt/main.go's shutdown
+    # sequence) so this pod stops receiving NEW traffic while it
+    # finishes in-flight requests -- /healthz stays a pure liveness
+    # signal ("is the process alive") and is deliberately never flipped
+    # by shutdown, or Kubernetes would kill the pod mid-drain instead of
+    # letting it finish.
+    path: /readyz
     port: http
   initialDelaySeconds: 3
   periodSeconds: 5
+
+# Gives cmd/pathmgmt/main.go's graceful shutdown sequence (readiness
+# flip -> HTTP drain -> outbox relay clean stop, each bounded by a 10s
+# shutdownCtx) enough room to run before Kubernetes SIGKILLs the pod,
+# plus margin for the readinessProbe's periodSeconds=5 to have observed
+# the not-ready flip before traffic fully stops arriving.
+terminationGracePeriodSeconds: 30
 
 # --- MCP server ---
 # The Model Context Protocol server (cmd/mcp): a second deployable over the
@@ -202,6 +217,11 @@ analytics:
   projector:
     replicaCount: 1
     adminAddr: ":8091"
+    # Gives cmd/pathmgmt-projector/main.go's graceful shutdown sequence
+    # (readiness flip -> admin-server drain -> analytics consumer clean
+    # stop, each bounded by a 10s shutdownCtx) enough room to run before
+    # Kubernetes SIGKILLs the pod (ADR-0012 §graceful shutdown).
+    terminationGracePeriodSeconds: 30
     resources:
       limits:
         cpu: 500m

@@ -91,6 +91,15 @@ func run() error {
 		return err
 	}
 
+	// readiness gates GET /readyz (ADR-0012 §graceful shutdown,
+	// mirroring order-management's ADR-0025). The zero value is
+	// ready; SetNotReady is called as the FIRST step of the shutdown
+	// sequence below, before the HTTP server itself stops accepting
+	// connections, so a Kubernetes readinessProbe has a chance to
+	// observe the flip and stop routing new traffic during the drain
+	// window that follows.
+	readiness := &inboundhttp.Readiness{}
+
 	server := &inboundhttp.Server{
 		DefinePath:        &usecases.DefinePath{Repo: repo, Publisher: publisher, Clock: clock, UnitOfWork: persistence.uow, Metrics: pathMetrics},
 		RevisePath:        &usecases.RevisePath{Repo: repo, Publisher: publisher, Clock: clock, UnitOfWork: persistence.uow},
@@ -104,6 +113,10 @@ func run() error {
 		// configuration) — see Server.IdempotencyPool's doc comment and
 		// the idempotency-key-middleware ADR.
 		IdempotencyPool: persistence.pool,
+		// readiness backs GET /readyz (ADR-0012 §graceful shutdown):
+		// flipped to not-ready as the FIRST step of shutdown, below,
+		// before anything else stops.
+		Readiness: readiness,
 	}
 
 	httpServer := &http.Server{
@@ -149,6 +162,28 @@ func run() error {
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+
+	// Graceful shutdown (ADR-0012 §graceful shutdown, mirroring
+	// order-management's ADR-0025), in order:
+	//
+	//  1. Flip readiness to not-ready FIRST, before anything else
+	//     stops — a Kubernetes readinessProbe polling /readyz needs a
+	//     window to observe this and stop routing NEW traffic to this
+	//     pod before step 2 below ever closes the listener.
+	//  2. Stop accepting new HTTP connections and drain in-flight
+	//     requests, bounded by shutdownCtx.
+	//  3. Stop the outbox relay cleanly: cancel its context (no new
+	//     row is picked up after this) and wait, bounded by the SAME
+	//     shutdownCtx, for its goroutine to actually finish its
+	//     in-flight pass rather than merely asking it to stop and
+	//     moving on.
+	//  4. Only THEN do the deferred closePublisher/persistence.close
+	//     calls (registered earlier in this function, so by defer's
+	//     LIFO order closePublisher runs first and persistence.close
+	//     — which closes the pgx pool — runs LAST of all, after the
+	//     relay has already stopped touching it).
+	readiness.SetNotReady()
+
 	err = httpServer.Shutdown(shutdownCtx)
 	// Let the relay finish its in-flight pass so an event committed by a
 	// request that completed just before shutdown is not stranded until

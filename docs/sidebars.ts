@@ -37,6 +37,8 @@ const sidebars: SidebarsConfig = {
         'adr/0008-fclm-aligned-process-path-families',
         'adr/0009-destination-location-role-on-process-path',
         'adr/0010-fulfillment-capability-contract',
+        'adr/0011-idempotency-key-middleware',
+        'adr/0012-kafka-dlq-and-graceful-shutdown',
       ],
     },
   ],
