@@ -99,6 +99,11 @@ func run() error {
 		ListPaths:         &usecases.ListPaths{Repo: repo},
 		DefineCPTSchedule: &usecases.DefineCPTSchedule{Repo: persistence.scheduleRepo, ProcessPathRepo: repo, Publisher: publisher, Clock: clock, UnitOfWork: persistence.uow},
 		GetCPTSchedule:    &usecases.GetCPTSchedule{Repo: persistence.scheduleRepo},
+		// IdempotencyPool reuses the SAME pool buildPersistence opened
+		// against DATABASE_URL (nil in the in-memory dev/test
+		// configuration) — see Server.IdempotencyPool's doc comment and
+		// the idempotency-key-middleware ADR.
+		IdempotencyPool: persistence.pool,
 	}
 
 	httpServer := &http.Server{
