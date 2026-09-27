@@ -89,42 +89,51 @@ func validInstanceFor(s *jsonschema.Schema) map[string]any {
 func TestEval_InputSchemasResolveAndConstrain(t *testing.T) {
 	for _, tool := range wireTools(t) {
 		t.Run(tool.Name, func(t *testing.T) {
-			s := schemaOf(t, tool.InputSchema)
-			if !hasType(s, "object") {
-				t.Fatalf("input schema type = %q, want object", s.Type)
-			}
-			resolved, err := s.Resolve(nil)
-			if err != nil {
-				t.Fatalf("input schema does not resolve: %v", err)
-			}
-
-			valid := validInstanceFor(s)
-			if err := resolved.Validate(valid); err != nil {
-				t.Fatalf("schema rejects its own shape of arguments (%v): %v", valid, err)
-			}
-
-			// Flip the first property of each declared kind to a wrong
-			// Go type; the schema must reject it. (float64 for strings,
-			// not json.Number — the validator type-checks Go kinds, and
-			// json.Number is a string kind. And a string probe for
-			// booleans: list_process_paths declares only a boolean, so a
-			// string-only probe would never exercise its schema.)
-			probedString, probedBool := false, false
-			for name, prop := range s.Properties {
-				var wrong any
-				switch {
-				case hasType(prop, "string") && !probedString:
-					wrong, probedString = float64(42), true
-				case hasType(prop, "boolean") && !probedBool:
-					wrong, probedBool = "not-a-boolean", true
-				default:
-					continue
-				}
-				if err := resolved.Validate(map[string]any{name: wrong}); err == nil {
-					t.Fatalf("schema accepts a wrong-typed %q — it does not constrain model input", name)
-				}
-			}
+			assertToolInputSchemaResolvesAndConstrains(t, tool)
 		})
+	}
+}
+
+// assertToolInputSchemaResolvesAndConstrains is the per-tool body of
+// TestEval_InputSchemasResolveAndConstrain, hoisted to a named helper so
+// its complexity is accounted (and reported) on its own rather than
+// accumulating inside the t.Run closure.
+func assertToolInputSchemaResolvesAndConstrains(t *testing.T, tool *sdk.Tool) {
+	t.Helper()
+	s := schemaOf(t, tool.InputSchema)
+	if !hasType(s, "object") {
+		t.Fatalf("input schema type = %q, want object", s.Type)
+	}
+	resolved, err := s.Resolve(nil)
+	if err != nil {
+		t.Fatalf("input schema does not resolve: %v", err)
+	}
+
+	valid := validInstanceFor(s)
+	if err := resolved.Validate(valid); err != nil {
+		t.Fatalf("schema rejects its own shape of arguments (%v): %v", valid, err)
+	}
+
+	// Flip the first property of each declared kind to a wrong
+	// Go type; the schema must reject it. (float64 for strings,
+	// not json.Number — the validator type-checks Go kinds, and
+	// json.Number is a string kind. And a string probe for
+	// booleans: list_process_paths declares only a boolean, so a
+	// string-only probe would never exercise its schema.)
+	probedString, probedBool := false, false
+	for name, prop := range s.Properties {
+		var wrong any
+		switch {
+		case hasType(prop, "string") && !probedString:
+			wrong, probedString = float64(42), true
+		case hasType(prop, "boolean") && !probedBool:
+			wrong, probedBool = "not-a-boolean", true
+		default:
+			continue
+		}
+		if err := resolved.Validate(map[string]any{name: wrong}); err == nil {
+			t.Fatalf("schema accepts a wrong-typed %q — it does not constrain model input", name)
+		}
 	}
 }
 
