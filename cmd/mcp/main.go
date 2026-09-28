@@ -67,9 +67,16 @@ func run() error {
 
 	mcpAddr := getenv("MCP_ADDR", ":8090")
 	databaseURL := os.Getenv("DATABASE_URL")
+	// See cmd/pathmgmt/main.go's identical fallback and buildRepo's doc
+	// comment for the full "why" (session-scoped pg_advisory_lock vs
+	// PgBouncer transaction-pooling incompatibility, ADR
+	// 0015-migrations-direct-postgres-connection.md). This binary also
+	// runs migrations on start (buildRepo below), so it needs the same
+	// direct-connection split.
+	migrationsDatabaseURL := getenv("MIGRATIONS_DATABASE_URL", databaseURL)
 	migrationsPath := getenv("MIGRATIONS_PATH", "migrations")
 
-	repo, closeAdapters, err := buildRepo(ctx, databaseURL, migrationsPath, logger)
+	repo, closeAdapters, err := buildRepo(ctx, databaseURL, migrationsDatabaseURL, migrationsPath, logger)
 	if err != nil {
 		return err
 	}
@@ -150,7 +157,13 @@ func newRouter(mcpHandler http.Handler) http.Handler {
 // buildRepo wires the Postgres ProcessPathRepo when DATABASE_URL is set,
 // or falls back to the in-memory repo for local development without a
 // database — exactly the selection cmd/pathmgmt makes.
-func buildRepo(ctx context.Context, databaseURL, migrationsPath string, logger *slog.Logger) (ports.ProcessPathRepo, func(), error) {
+//
+// migrationsDatabaseURL is used ONLY for the golang-migrate step below,
+// mirroring cmd/pathmgmt/main.go's buildPersistence exactly — see its
+// doc comment for the full "why" a direct, non-pooled connection is
+// needed here even though the pgxpool opened just after (databaseURL)
+// stays on PgBouncer.
+func buildRepo(ctx context.Context, databaseURL, migrationsDatabaseURL, migrationsPath string, logger *slog.Logger) (ports.ProcessPathRepo, func(), error) {
 	noop := func() {}
 
 	if databaseURL == "" {
@@ -166,7 +179,7 @@ func buildRepo(ctx context.Context, databaseURL, migrationsPath string, logger *
 	// weakening of the fail-closed rule: once the budget is exhausted
 	// this still refuses to boot, reporting the real cause.
 	if err := bootretry.Do(ctx, logger, "run migrations", func() error {
-		return postgres.RunMigrations(databaseURL, migrationsPath)
+		return postgres.RunMigrations(migrationsDatabaseURL, migrationsPath)
 	}); err != nil {
 		return nil, noop, err
 	}

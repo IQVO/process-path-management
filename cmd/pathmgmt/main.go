@@ -65,9 +65,25 @@ func run() error {
 
 	httpAddr := getenv("HTTP_ADDR", ":8080")
 	databaseURL := os.Getenv("DATABASE_URL")
+	// MIGRATIONS_DATABASE_URL, when set, is a DIRECT (non-pooled,
+	// session-mode) Postgres connection string used ONLY for the
+	// golang-migrate startup step below — everything else (the pgxpool
+	// this process serves requests through) keeps using databaseURL
+	// unchanged. See buildPersistence's doc comment for the full "why":
+	// golang-migrate's postgres driver takes a session-scoped
+	// `SELECT pg_advisory_lock($1)` to serialize concurrent migration
+	// runs, which PgBouncer's transaction-pooling mode does not support
+	// (warehouse-infra's PgBouncer rollout, PR #43; this fallback closes
+	// the fleet-wide bug that rollout introduced — see ADR
+	// 0015-migrations-direct-postgres-connection.md). Falls back to
+	// databaseURL when unset, which is every environment that doesn't
+	// provision the split (local dev, CI integration tests, and any
+	// cluster whose Terraform predates this fix) — byte-identical to
+	// this service's behavior before this change in that case.
+	migrationsDatabaseURL := getenv("MIGRATIONS_DATABASE_URL", databaseURL)
 	migrationsPath := getenv("MIGRATIONS_PATH", "migrations")
 
-	persistence, err := buildPersistence(ctx, databaseURL, migrationsPath, logger)
+	persistence, err := buildPersistence(ctx, databaseURL, migrationsDatabaseURL, migrationsPath, logger)
 	if err != nil {
 		return err
 	}
@@ -266,7 +282,29 @@ type persistence struct {
 // is not. With no DATABASE_URL set, the service runs fully functional
 // against in-memory repos (no Postgres required for local dev / smoke
 // tests) — same fallback convention as every other service in this fleet.
-func buildPersistence(ctx context.Context, databaseURL, migrationsPath string, logger *slog.Logger) (*persistence, error) {
+//
+// migrationsDatabaseURL is used ONLY for the golang-migrate step below —
+// the pgxpool opened just after it (and used for every subsequent
+// request) always uses databaseURL. They are deliberately different
+// connection strings in a PgBouncer-fronted environment: golang-migrate's
+// postgres driver takes a session-scoped `SELECT pg_advisory_lock($1)` to
+// serialize concurrent migration runs across replicas starting at the
+// same time, and PgBouncer's transaction-pooling mode (this fleet's
+// pool_mode for every OLTP DATABASE_URL, warehouse-infra PR #43) does not
+// support session-scoped state — each statement in one logical client
+// session can land on a different physical backend connection, so the
+// advisory lock never behaves as a real mutex. Losing replicas crash-loop
+// with `pq: unnamed prepared statement does not exist` / `pq: canceling
+// statement due to statement timeout` until one wins the race. See ADR
+// 0015-migrations-direct-postgres-connection.md for the full incident and
+// fix (mirroring order-management's ADR-0029). Callers pass
+// MIGRATIONS_DATABASE_URL when set (warehouse-infra PR #44 now provisions
+// it as a direct, non-pooled DSN alongside DATABASE_URL for all 9 OLTP
+// services, this one included) or fall back to databaseURL itself for any
+// environment that doesn't provision the split (local dev, CI integration
+// tests) — byte-identical to this function's behavior before this
+// parameter existed in that case.
+func buildPersistence(ctx context.Context, databaseURL, migrationsDatabaseURL, migrationsPath string, logger *slog.Logger) (*persistence, error) {
 	if databaseURL == "" {
 		logger.Info("DATABASE_URL not set, using in-memory ProcessPathRepo and CPTScheduleRepo")
 		return &persistence{
@@ -284,7 +322,7 @@ func buildPersistence(ctx context.Context, databaseURL, migrationsPath string, l
 	// weakening of the fail-closed rule: once the budget is exhausted
 	// this still refuses to boot, reporting the real cause.
 	if err := bootretry.Do(ctx, logger, "run migrations", func() error {
-		return postgres.RunMigrations(databaseURL, migrationsPath)
+		return postgres.RunMigrations(migrationsDatabaseURL, migrationsPath)
 	}); err != nil {
 		return nil, err
 	}
