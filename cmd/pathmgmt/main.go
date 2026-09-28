@@ -51,9 +51,7 @@ func run() error {
 
 	ctx := context.Background()
 
-	serviceName := getenv("OTEL_SERVICE_NAME", inboundhttp.DefaultServiceName)
-	otlpEndpoint := getenv("OTEL_EXPORTER_OTLP_ENDPOINT", telemetry.DefaultOTLPEndpoint)
-	shutdownTelemetry, err := telemetry.Setup(ctx, serviceName, serviceVersion(), otlpEndpoint)
+	serviceName, shutdownTelemetry, err := setupTelemetry(ctx, logger)
 	if err != nil {
 		return err
 	}
@@ -64,12 +62,6 @@ func run() error {
 			logger.Warn("telemetry shutdown did not flush cleanly", "error", err)
 		}
 	}()
-	logger.Info("telemetry configured",
-		"service_name", serviceName,
-		"service_version", serviceVersion(),
-		"environment", telemetry.Environment(),
-		"otlp_endpoint", otlpEndpoint,
-	)
 
 	httpAddr := getenv("HTTP_ADDR", ":8080")
 	databaseURL := os.Getenv("DATABASE_URL")
@@ -125,9 +117,39 @@ func run() error {
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
+	return serveHTTP(logger, httpServer, relay, readiness)
+}
+
+// setupTelemetry configures OTel traces/metrics/logs and emits the
+// "telemetry configured" startup line. It returns the resolved service
+// name (the HTTP router needs the same value) and the telemetry shutdown
+// function; the caller defers the flush itself so it stays last in the
+// caller's defer stack, running after every adapter has closed.
+func setupTelemetry(ctx context.Context, logger *slog.Logger) (string, func(context.Context) error, error) {
+	serviceName := getenv("OTEL_SERVICE_NAME", inboundhttp.DefaultServiceName)
+	otlpEndpoint := getenv("OTEL_EXPORTER_OTLP_ENDPOINT", telemetry.DefaultOTLPEndpoint)
+	shutdown, err := telemetry.Setup(ctx, serviceName, serviceVersion(), otlpEndpoint)
+	if err != nil {
+		return "", nil, err
+	}
+	logger.Info("telemetry configured",
+		"service_name", serviceName,
+		"service_version", serviceVersion(),
+		"environment", telemetry.Environment(),
+		"otlp_endpoint", otlpEndpoint,
+	)
+	return serviceName, shutdown, nil
+}
+
+// serveHTTP runs the HTTP server and, when wired, the outbox relay until
+// SIGINT or SIGTERM, then shuts both down: the server drains in-flight
+// requests within a 10s budget while the relay is allowed to finish its
+// in-flight pass. It returns the first listener/relay error, or the HTTP
+// shutdown error after a signal-triggered stop.
+func serveHTTP(logger *slog.Logger, httpServer *http.Server, relay *postgres.OutboxRelay, readiness *inboundhttp.Readiness) error {
 	errCh := make(chan error, 1)
 	go func() {
-		logger.Info("http server listening", "addr", httpAddr)
+		logger.Info("http server listening", "addr", httpServer.Addr)
 		if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 		}
@@ -184,7 +206,7 @@ func run() error {
 	//     relay has already stopped touching it).
 	readiness.SetNotReady()
 
-	err = httpServer.Shutdown(shutdownCtx)
+	err := httpServer.Shutdown(shutdownCtx)
 	// Let the relay finish its in-flight pass so an event committed by a
 	// request that completed just before shutdown is not stranded until
 	// the next pod boots.

@@ -111,13 +111,7 @@ func run() error {
 	// connections.
 	readiness := &readinessGate{}
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"status":"ok"}`))
-	})
-	mux.HandleFunc("/readyz", readiness.handle)
-	srv := &http.Server{Addr: adminAddr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
+	srv := &http.Server{Addr: adminAddr, Handler: newAdminMux(readiness), ReadHeaderTimeout: 5 * time.Second}
 
 	go func() {
 		logger.Info("projector admin server listening", "addr", adminAddr)
@@ -213,6 +207,19 @@ func (g *readinessGate) handle(w http.ResponseWriter, _ *http.Request) {
 // newLogger builds a JSON slog logger at the given level. The analytics
 // processes log structured JSON but do not wire OTel, so this is a plain
 // handler.
+// newAdminMux builds the projector's admin endpoints: /healthz is a pure
+// liveness signal; /readyz mirrors the readiness gate so a Kubernetes
+// readinessProbe observes the shutdown flip (ADR-0012 §graceful shutdown).
+func newAdminMux(readiness *readinessGate) *http.ServeMux {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	})
+	mux.HandleFunc("/readyz", readiness.handle)
+	return mux
+}
+
 func newLogger(level string) *slog.Logger {
 	var lvl slog.Level
 	switch strings.ToLower(level) {
