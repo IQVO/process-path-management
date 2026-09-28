@@ -70,6 +70,7 @@ Typos, broken links and formatting are of course fair game.
 | [0010](./0010-fulfillment-capability-contract.md) | Process paths publish a fulfillment capability contract (cycle time, eligibility, CPT schedule) | Accepted |
 | [0011](./0011-idempotency-key-middleware.md) | Transactional Idempotency-Key middleware for POST /process-paths | Accepted |
 | [0012](./0012-kafka-dlq-and-graceful-shutdown.md) | Analytics-consumer dead-letter queue and graceful shutdown hardening | Accepted |
+| [0013](./0013-kafka-writer-hash-balancer.md) | Hash balancer for the outbound Kafka writers, closing a latent partition-affinity gap | Accepted |
 
 Each of these reconstructs a decision that is actually visible in this
 repository's history or code — none is a generic placeholder.
