@@ -51,6 +51,11 @@ type Server struct {
 	// for every other optional Postgres-backed capability (UnitOfWork,
 	// the outbox relay).
 	IdempotencyPool *pgxpool.Pool
+	// Readiness backs GET /readyz (ADR-0012 §graceful shutdown,
+	// mirroring order-management's ADR-0025). A nil Readiness (the
+	// zero value, and every pre-existing caller/test) means /readyz
+	// always reports ready — see Readiness's own doc comment.
+	Readiness *Readiness
 }
 
 // NewRouter builds the chi router for this service's REST API. A nil
@@ -81,6 +86,7 @@ func NewRouter(s *Server, logger *slog.Logger, serviceName string) http.Handler 
 	r.Use(corsMiddleware())
 
 	r.Get("/healthz", s.handleHealthz)
+	r.Get("/readyz", s.handleReadyz)
 
 	// POST /process-paths is route-scoped (r.With, not r.Use) behind
 	// RequireIdempotencyKey — it is the one mutating endpoint that

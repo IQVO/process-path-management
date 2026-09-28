@@ -7,7 +7,9 @@ metadata:
     {{- include "process-path-management.labels" . | nindent 4 }}
     app.kubernetes.io/component: analytics-projector
 spec:
+  {{- if not .Values.autoscaling.projector.enabled }}
   replicas: {{ .Values.analytics.projector.replicaCount }}
+  {{- end }}
   selector:
     matchLabels:
       {{- include "process-path-management.selectorLabels" . | nindent 6 }}
@@ -18,6 +20,9 @@ spec:
         {{- include "process-path-management.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: analytics-projector
     spec:
+      {{- with .Values.analytics.projector.terminationGracePeriodSeconds }}
+      terminationGracePeriodSeconds: {{ . }}
+      {{- end }}
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
@@ -72,7 +77,11 @@ spec:
             periodSeconds: 10
           readinessProbe:
             httpGet:
-              path: /healthz
+              # /readyz (ADR-0012 graceful shutdown), NOT /healthz --
+              # readiness must flip to not-ready during a graceful
+              # SIGTERM drain (see cmd/pathmgmt-projector/main.go's
+              # shutdown sequence).
+              path: /readyz
               port: admin
             initialDelaySeconds: 3
             periodSeconds: 5
