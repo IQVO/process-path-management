@@ -128,11 +128,23 @@ type Publisher struct {
 // integration topic (Topic) or the analytics topic (AnalyticsTopic) in
 // the same pass, so the topic must travel per-message via Encoded.Topic
 // rather than being pinned on the writer.
+// Balancer is kafkago.Hash (FNV-1a over Message.Key), not LeastBytes: the
+// mere presence of a non-nil Key does NOT by itself give "same key always
+// maps to the same partition" with kafka-go — the Writer's Balancer alone
+// decides partition placement, and LeastBytes routes purely by cumulative
+// byte volume written per partition, ignoring Key's content entirely.
+// Every event Encode/Publish emit is already keyed by the aggregate's
+// PathId/SiteId (see Encode below); Hash is what actually turns that key
+// into a same-aggregate-same-partition guarantee once a topic has more
+// than one partition (warehouse-infra PR #42 took every business topic,
+// including this one, from 1 to 8 — see ADR 0013 and order-management's
+// companion ADR 0027, which found and fixed the identical LeastBytes
+// mismatch).
 func NewPublisher(brokers []string, newId func() string) *Publisher {
 	return &Publisher{
 		Writer: &kafkago.Writer{
 			Addr:                   kafkago.TCP(brokers...),
-			Balancer:               &kafkago.LeastBytes{},
+			Balancer:               &kafkago.Hash{},
 			AllowAutoTopicCreation: true,
 		},
 		NewId: newId,

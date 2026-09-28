@@ -7,7 +7,9 @@ metadata:
     {{- include "process-path-management.labels" . | nindent 4 }}
     app.kubernetes.io/component: frontend
 spec:
+  {{- if not .Values.autoscaling.frontend.enabled }}
   replicas: {{ .Values.frontend.replicaCount }}
+  {{- end }}
   selector:
     matchLabels:
       {{- include "process-path-management.selectorLabels" . | nindent 6 }}

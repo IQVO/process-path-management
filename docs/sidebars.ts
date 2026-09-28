@@ -39,6 +39,8 @@ const sidebars: SidebarsConfig = {
         'adr/0010-fulfillment-capability-contract',
         'adr/0011-idempotency-key-middleware',
         'adr/0012-kafka-dlq-and-graceful-shutdown',
+        'adr/0013-kafka-writer-hash-balancer',
+        'adr/0014-horizontal-autoscaling-and-pgxpool-tuning',
       ],
     },
   ],
