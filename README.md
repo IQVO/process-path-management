@@ -248,6 +248,11 @@ The MCP server (`cmd/mcp`) exposes read-only tools: `get_process_path`,
 Every error response is `application/problem+json` (RFC 7807), the same
 shape every other service in this fleet emits.
 
+`POST /process-paths` requires an `Idempotency-Key` request header (see
+ADR 0011): a byte-identical retry (same key + same body) replays the
+original response verbatim instead of hitting a natural-key `409`; the
+same key with a different body gets `422`; a missing header gets `400`.
+
 Every REST route and MCP tool is unauthenticated — there is no auth layer
 in front of either (see ADR 0005, which supersedes ADR 0004's earlier
 bearer-key adoption).
@@ -266,8 +271,9 @@ curl -s localhost:8080/healthz
 ```bash
 curl -s -X POST localhost:8080/process-paths \
   -H 'Content-Type: application/json' \
+  -H 'Idempotency-Key: 3f9e2b1a-1e7a-4c9e-9a3f-1c2d3e4f5a6b' \
   -d '{"pathId":"PICK","matchPrefix":"pick","direct":true,"requiredCapabilities":["pick"],"cycleTimeP95":"2h"}'
-# 201 Created (omitting cycleTimeP95 is a 422)
+# 201 Created (omitting cycleTimeP95 is a 422; omitting Idempotency-Key is a 400)
 ```
 
 **List (active only by default):**
@@ -410,6 +416,7 @@ have all migrated to. `helm lint` and two real `helm template` renders
 8. [0008 — Seven new process-path families aligned to real FC labor-tracking vocabulary](docs/docs/adr/0008-fclm-aligned-process-path-families.md)
 9. [0009 — Optional destination LocationRole on a ProcessPath](docs/docs/adr/0009-destination-location-role-on-process-path.md)
 10. [0010 — Process paths publish a fulfillment capability contract (cycle time, eligibility, CPT schedule)](docs/docs/adr/0010-fulfillment-capability-contract.md)
+11. [0011 — Transactional Idempotency-Key middleware for POST /process-paths](docs/docs/adr/0011-idempotency-key-middleware.md)
 
 ## License
 

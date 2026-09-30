@@ -69,6 +69,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ProcessPath"
+        "400":
+          description: The request body is missing or not valid JSON (including a JSON number too large for eligibility.maxUnitsPerLine's int64 range).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetails"
         "409":
           description: A process path with this id already exists (active or deactivated)
           content:
@@ -76,7 +82,11 @@ paths:
               schema:
                 $ref: "#/components/schemas/ProblemDetails"
         "422":
-          description: matchPrefix is empty/not lower-case, requiredCapabilities is empty, or destinationLocationRole is not one of Drop/WorkCenter/Shipping
+          description: >
+            pathId is empty, matchPrefix is empty/not lower-case,
+            requiredCapabilities is empty, cycleTimeP95 is not a positive
+            Go duration string, or destinationLocationRole is not one of
+            Drop/WorkCenter/Shipping.
           content:
             application/problem+json:
               schema:
@@ -107,6 +117,12 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/ProcessPath"
+        "400":
+          description: The `all` query parameter is present but not a boolean (e.g. `all=null`).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetails"
   /process-paths/{pathId}:
     get:
       tags: [process-paths]
@@ -154,6 +170,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ProcessPath"
+        "400":
+          description: The request body is missing or not valid JSON (including a JSON number too large for eligibility.maxUnitsPerLine's int64 range).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetails"
         "404":
           description: No process path exists with this id
           content:
@@ -238,6 +260,18 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/CPTSchedule"
+        "400":
+          description: The request body is missing or not valid JSON.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetails"
+        "404":
+          description: No route matches this request path (e.g. an empty siteId path segment).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetails"
         "422":
           description: >
             timezone is empty/not a recognized IANA zone, cutoffs is
@@ -258,6 +292,7 @@ components:
       required: true
       schema:
         type: string
+        minLength: 1
       example: PICK
     SiteIdPathParam:
       name: siteId
@@ -265,6 +300,7 @@ components:
       required: true
       schema:
         type: string
+        minLength: 1
       example: sp1
   schemas:
     DefineProcessPathRequest:
@@ -273,10 +309,12 @@ components:
       properties:
         pathId:
           type: string
+          minLength: 1
           description: The canonical identity of the path (e.g. "PICK", "PACK", "REBIN", "SLAM").
           example: PICK
         matchPrefix:
           type: string
+          minLength: 1
           description: >
             Lower-case prefix downstream consumers match a caller-supplied
             id against: id == matchPrefix OR id starts with
@@ -284,10 +322,12 @@ components:
           example: pick
         direct:
           type: boolean
+          nullable: true
           default: false
           description: >
             A structural fact about this path's routing shape (reserved for
             a future multi-hop topology). Immutable once set; not revisable.
+            A JSON null is treated the same as an omitted field (false).
         requiredCapabilities:
           type: array
           minItems: 1
@@ -307,6 +347,7 @@ components:
       properties:
         matchPrefix:
           type: string
+          minLength: 1
           example: pick-zone-a
         requiredCapabilities:
           type: array
@@ -351,17 +392,19 @@ components:
           format: date-time
     DestinationLocationRole:
       type: string
+      nullable: true
       description: >
         Optional declaration of what kind of facility-layout LocationRole
         this path's completed work is destined for (ADR 0006). Omitted
-        entirely means no destination role was declared — the default,
-        and most common, case (e.g. Pick has no single destination).
-        Immutable once set at DefinePath time; never revisable via
-        RevisePath. This is declarative routing intent this service
-        publishes for a downstream consumer to interpret — it is never
-        validated against a live facility-layout lookup (this service has
-        zero inbound/outbound dependency on any other context).
-      enum: [Drop, WorkCenter, Shipping]
+        entirely — or the equivalent JSON null / empty string — means no
+        destination role was declared: the default, and most common, case
+        (e.g. Pick has no single destination). Immutable once set at
+        DefinePath time; never revisable via RevisePath. This is
+        declarative routing intent this service publishes for a
+        downstream consumer to interpret — it is never validated against
+        a live facility-layout lookup (this service has zero
+        inbound/outbound dependency on any other context).
+      enum: ["", Drop, WorkCenter, Shipping]
       example: Drop
     CycleTimeP95:
       type: string
@@ -373,20 +416,23 @@ components:
       example: "2h"
     Eligibility:
       type: object
+      nullable: true
       description: >
         Rules a unit of work must satisfy to be routed to this path (ADR
-        0010). Every field is optional; an absent/empty object ({}) is
-        the fully permissive default every path gets on migration, so
-        today's routing behaviour is preserved exactly until an operator
-        narrows it.
+        0010). Every field is optional; an absent/empty object ({}) — or
+        the equivalent JSON null — is the fully permissive default every
+        path gets on migration, so today's routing behaviour is preserved
+        exactly until an operator narrows it.
       properties:
         maxUnitsPerLine:
           type: integer
+          format: int64
           nullable: true
           description: nil/omitted means unbounded; 1 is how a singles path is declared.
           example: 1
         requiredProductAttributes:
           type: array
+          nullable: true
           items:
             type: string
           description: >
@@ -396,11 +442,13 @@ components:
           example: ["giftWrap"]
         excludedProductAttributes:
           type: array
+          nullable: true
           items:
             type: string
           example: ["hazmat"]
         nonSortable:
           type: boolean
+          nullable: true
           default: false
     DefineCPTScheduleRequest:
       type: object
@@ -408,6 +456,7 @@ components:
       properties:
         timezone:
           type: string
+          minLength: 1
           description: IANA zone, e.g. America/Sao_Paulo.
           example: America/Sao_Paulo
         cutoffs:
@@ -421,10 +470,13 @@ components:
       properties:
         cptId:
           type: string
+          minLength: 1
           description: Stable id, unique within the site, e.g. "sp1-1500".
           example: sp1-1500
         localTime:
           type: string
+          minLength: 1
+          pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$'
           description: Recurring daily cutoff, "HH:MM" 24-hour form.
           example: "15:00"
         daysOfWeek:
@@ -436,6 +488,7 @@ components:
           example: ["Mon", "Tue", "Wed", "Thu", "Fri"]
         shipMethod:
           type: string
+          minLength: 1
           description: Free-form label ("ground", "same-day"); no carrier integration exists in this fleet.
           example: ground
         eligiblePathIds:
@@ -443,6 +496,7 @@ components:
           minItems: 1
           items:
             type: string
+            minLength: 1
           description: >
             The path families that can make this cutoff. Each entry must
             reference an Active ProcessPath in this service's own store

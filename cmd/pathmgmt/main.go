@@ -23,6 +23,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	inboundhttp "github.com/claudioed/process-path-management/internal/adapters/inbound/http"
+	"github.com/claudioed/process-path-management/internal/adapters/outbound/bootretry"
 	"github.com/claudioed/process-path-management/internal/adapters/outbound/events"
 	outboundkafka "github.com/claudioed/process-path-management/internal/adapters/outbound/kafka"
 	"github.com/claudioed/process-path-management/internal/adapters/outbound/memory"
@@ -50,9 +51,7 @@ func run() error {
 
 	ctx := context.Background()
 
-	serviceName := getenv("OTEL_SERVICE_NAME", inboundhttp.DefaultServiceName)
-	otlpEndpoint := getenv("OTEL_EXPORTER_OTLP_ENDPOINT", telemetry.DefaultOTLPEndpoint)
-	shutdownTelemetry, err := telemetry.Setup(ctx, serviceName, serviceVersion(), otlpEndpoint)
+	serviceName, shutdownTelemetry, err := setupTelemetry(ctx, logger)
 	if err != nil {
 		return err
 	}
@@ -63,18 +62,28 @@ func run() error {
 			logger.Warn("telemetry shutdown did not flush cleanly", "error", err)
 		}
 	}()
-	logger.Info("telemetry configured",
-		"service_name", serviceName,
-		"service_version", serviceVersion(),
-		"environment", telemetry.Environment(),
-		"otlp_endpoint", otlpEndpoint,
-	)
 
 	httpAddr := getenv("HTTP_ADDR", ":8080")
 	databaseURL := os.Getenv("DATABASE_URL")
+	// MIGRATIONS_DATABASE_URL, when set, is a DIRECT (non-pooled,
+	// session-mode) Postgres connection string used ONLY for the
+	// golang-migrate startup step below — everything else (the pgxpool
+	// this process serves requests through) keeps using databaseURL
+	// unchanged. See buildPersistence's doc comment for the full "why":
+	// golang-migrate's postgres driver takes a session-scoped
+	// `SELECT pg_advisory_lock($1)` to serialize concurrent migration
+	// runs, which PgBouncer's transaction-pooling mode does not support
+	// (warehouse-infra's PgBouncer rollout, PR #43; this fallback closes
+	// the fleet-wide bug that rollout introduced — see ADR
+	// 0015-migrations-direct-postgres-connection.md). Falls back to
+	// databaseURL when unset, which is every environment that doesn't
+	// provision the split (local dev, CI integration tests, and any
+	// cluster whose Terraform predates this fix) — byte-identical to
+	// this service's behavior before this change in that case.
+	migrationsDatabaseURL := getenv("MIGRATIONS_DATABASE_URL", databaseURL)
 	migrationsPath := getenv("MIGRATIONS_PATH", "migrations")
 
-	persistence, err := buildPersistence(ctx, databaseURL, migrationsPath, logger)
+	persistence, err := buildPersistence(ctx, databaseURL, migrationsDatabaseURL, migrationsPath, logger)
 	if err != nil {
 		return err
 	}
@@ -90,6 +99,15 @@ func run() error {
 		return err
 	}
 
+	// readiness gates GET /readyz (ADR-0012 §graceful shutdown,
+	// mirroring order-management's ADR-0025). The zero value is
+	// ready; SetNotReady is called as the FIRST step of the shutdown
+	// sequence below, before the HTTP server itself stops accepting
+	// connections, so a Kubernetes readinessProbe has a chance to
+	// observe the flip and stop routing new traffic during the drain
+	// window that follows.
+	readiness := &inboundhttp.Readiness{}
+
 	server := &inboundhttp.Server{
 		DefinePath:        &usecases.DefinePath{Repo: repo, Publisher: publisher, Clock: clock, UnitOfWork: persistence.uow, Metrics: pathMetrics},
 		RevisePath:        &usecases.RevisePath{Repo: repo, Publisher: publisher, Clock: clock, UnitOfWork: persistence.uow},
@@ -98,6 +116,15 @@ func run() error {
 		ListPaths:         &usecases.ListPaths{Repo: repo},
 		DefineCPTSchedule: &usecases.DefineCPTSchedule{Repo: persistence.scheduleRepo, ProcessPathRepo: repo, Publisher: publisher, Clock: clock, UnitOfWork: persistence.uow},
 		GetCPTSchedule:    &usecases.GetCPTSchedule{Repo: persistence.scheduleRepo},
+		// IdempotencyPool reuses the SAME pool buildPersistence opened
+		// against DATABASE_URL (nil in the in-memory dev/test
+		// configuration) — see Server.IdempotencyPool's doc comment and
+		// the idempotency-key-middleware ADR.
+		IdempotencyPool: persistence.pool,
+		// readiness backs GET /readyz (ADR-0012 §graceful shutdown):
+		// flipped to not-ready as the FIRST step of shutdown, below,
+		// before anything else stops.
+		Readiness: readiness,
 	}
 
 	httpServer := &http.Server{
@@ -106,9 +133,39 @@ func run() error {
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
+	return serveHTTP(logger, httpServer, relay, readiness)
+}
+
+// setupTelemetry configures OTel traces/metrics/logs and emits the
+// "telemetry configured" startup line. It returns the resolved service
+// name (the HTTP router needs the same value) and the telemetry shutdown
+// function; the caller defers the flush itself so it stays last in the
+// caller's defer stack, running after every adapter has closed.
+func setupTelemetry(ctx context.Context, logger *slog.Logger) (string, func(context.Context) error, error) {
+	serviceName := getenv("OTEL_SERVICE_NAME", inboundhttp.DefaultServiceName)
+	otlpEndpoint := getenv("OTEL_EXPORTER_OTLP_ENDPOINT", telemetry.DefaultOTLPEndpoint)
+	shutdown, err := telemetry.Setup(ctx, serviceName, serviceVersion(), otlpEndpoint)
+	if err != nil {
+		return "", nil, err
+	}
+	logger.Info("telemetry configured",
+		"service_name", serviceName,
+		"service_version", serviceVersion(),
+		"environment", telemetry.Environment(),
+		"otlp_endpoint", otlpEndpoint,
+	)
+	return serviceName, shutdown, nil
+}
+
+// serveHTTP runs the HTTP server and, when wired, the outbox relay until
+// SIGINT or SIGTERM, then shuts both down: the server drains in-flight
+// requests within a 10s budget while the relay is allowed to finish its
+// in-flight pass. It returns the first listener/relay error, or the HTTP
+// shutdown error after a signal-triggered stop.
+func serveHTTP(logger *slog.Logger, httpServer *http.Server, relay *postgres.OutboxRelay, readiness *inboundhttp.Readiness) error {
 	errCh := make(chan error, 1)
 	go func() {
-		logger.Info("http server listening", "addr", httpAddr)
+		logger.Info("http server listening", "addr", httpServer.Addr)
 		if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 		}
@@ -143,7 +200,29 @@ func run() error {
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	err = httpServer.Shutdown(shutdownCtx)
+
+	// Graceful shutdown (ADR-0012 §graceful shutdown, mirroring
+	// order-management's ADR-0025), in order:
+	//
+	//  1. Flip readiness to not-ready FIRST, before anything else
+	//     stops — a Kubernetes readinessProbe polling /readyz needs a
+	//     window to observe this and stop routing NEW traffic to this
+	//     pod before step 2 below ever closes the listener.
+	//  2. Stop accepting new HTTP connections and drain in-flight
+	//     requests, bounded by shutdownCtx.
+	//  3. Stop the outbox relay cleanly: cancel its context (no new
+	//     row is picked up after this) and wait, bounded by the SAME
+	//     shutdownCtx, for its goroutine to actually finish its
+	//     in-flight pass rather than merely asking it to stop and
+	//     moving on.
+	//  4. Only THEN do the deferred closePublisher/persistence.close
+	//     calls (registered earlier in this function, so by defer's
+	//     LIFO order closePublisher runs first and persistence.close
+	//     — which closes the pgx pool — runs LAST of all, after the
+	//     relay has already stopped touching it).
+	readiness.SetNotReady()
+
+	err := httpServer.Shutdown(shutdownCtx)
 	// Let the relay finish its in-flight pass so an event committed by a
 	// request that completed just before shutdown is not stranded until
 	// the next pod boots.
@@ -203,7 +282,29 @@ type persistence struct {
 // is not. With no DATABASE_URL set, the service runs fully functional
 // against in-memory repos (no Postgres required for local dev / smoke
 // tests) — same fallback convention as every other service in this fleet.
-func buildPersistence(ctx context.Context, databaseURL, migrationsPath string, logger *slog.Logger) (*persistence, error) {
+//
+// migrationsDatabaseURL is used ONLY for the golang-migrate step below —
+// the pgxpool opened just after it (and used for every subsequent
+// request) always uses databaseURL. They are deliberately different
+// connection strings in a PgBouncer-fronted environment: golang-migrate's
+// postgres driver takes a session-scoped `SELECT pg_advisory_lock($1)` to
+// serialize concurrent migration runs across replicas starting at the
+// same time, and PgBouncer's transaction-pooling mode (this fleet's
+// pool_mode for every OLTP DATABASE_URL, warehouse-infra PR #43) does not
+// support session-scoped state — each statement in one logical client
+// session can land on a different physical backend connection, so the
+// advisory lock never behaves as a real mutex. Losing replicas crash-loop
+// with `pq: unnamed prepared statement does not exist` / `pq: canceling
+// statement due to statement timeout` until one wins the race. See ADR
+// 0015-migrations-direct-postgres-connection.md for the full incident and
+// fix (mirroring order-management's ADR-0029). Callers pass
+// MIGRATIONS_DATABASE_URL when set (warehouse-infra PR #44 now provisions
+// it as a direct, non-pooled DSN alongside DATABASE_URL for all 9 OLTP
+// services, this one included) or fall back to databaseURL itself for any
+// environment that doesn't provision the split (local dev, CI integration
+// tests) — byte-identical to this function's behavior before this
+// parameter existed in that case.
+func buildPersistence(ctx context.Context, databaseURL, migrationsDatabaseURL, migrationsPath string, logger *slog.Logger) (*persistence, error) {
 	if databaseURL == "" {
 		logger.Info("DATABASE_URL not set, using in-memory ProcessPathRepo and CPTScheduleRepo")
 		return &persistence{
@@ -213,11 +314,29 @@ func buildPersistence(ctx context.Context, databaseURL, migrationsPath string, l
 		}, nil
 	}
 
-	if err := postgres.RunMigrations(databaseURL, migrationsPath); err != nil {
+	// Retried, because in this fleet EVERY injected pod's first outbound
+	// TCP dial (Postgres here) fails with "read: connection reset by
+	// peer" ~10s after the app starts (Istio 1.30 native sidecars still
+	// warming up their outbound listener). A single attempt turns that
+	// transient condition into CrashLoopBackOff. The retry is NOT a
+	// weakening of the fail-closed rule: once the budget is exhausted
+	// this still refuses to boot, reporting the real cause.
+	if err := bootretry.Do(ctx, logger, "run migrations", func() error {
+		return postgres.RunMigrations(migrationsDatabaseURL, migrationsPath)
+	}); err != nil {
 		return nil, err
 	}
 	pool, err := postgres.NewPool(ctx, databaseURL)
 	if err != nil {
+		return nil, err
+	}
+	// ParseConfig/NewWithConfig do not themselves establish a connection,
+	// so without this the first real failure would surface inside a
+	// request rather than at boot.
+	if err := bootretry.Do(ctx, logger, "ping database", func() error {
+		return pool.Ping(ctx)
+	}); err != nil {
+		pool.Close()
 		return nil, err
 	}
 	return &persistence{

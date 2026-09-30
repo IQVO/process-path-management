@@ -251,6 +251,226 @@ func TestRehydrate_ReconstructsWithoutRevalidating(t *testing.T) {
 	}
 }
 
+// --- no-op revision detection: localTime parsing ------------------------------
+
+func TestIsValidLocalTime(t *testing.T) {
+	for _, tt := range []struct {
+		in   string
+		want bool
+	}{
+		{"00:00", true},
+		{"23:59", true},
+		{"09:05", true},
+		{"15:00", true},
+		{"3pm", false},
+		{"15:00:00", false},
+		{"1500", false},
+		{"15-00", false},
+		{"1a:00", false},
+		{"a0:30", false},
+		{"15:0a", false},
+		{"15:a0", false},
+		{"24:00", false},
+		{"25:00", false},
+		{"15:60", false},
+		{"-1:30", false},
+		{"", false},
+	} {
+		if got := isValidLocalTime(tt.in); got != tt.want {
+			t.Fatalf("isValidLocalTime(%q) = %v, want %v", tt.in, got, tt.want)
+		}
+	}
+}
+
+func TestParseDigits(t *testing.T) {
+	for _, tt := range []struct {
+		in      string
+		want    int
+		wantErr bool
+	}{
+		{"00", 0, false},
+		{"07", 7, false},
+		{"09", 9, false},
+		{"23", 23, false},
+		{"59", 59, false},
+		{"99", 99, false},
+		{"1a", 0, true},
+		{"a1", 0, true},
+		{"-1", 0, true},
+		{" 1", 0, true},
+		{":0", 0, true},
+		{"", 0, false},
+	} {
+		got, err := parseDigits(tt.in)
+		if tt.wantErr {
+			if err == nil {
+				t.Fatalf("parseDigits(%q): want error, got %d", tt.in, got)
+			}
+			continue
+		}
+		if err != nil {
+			t.Fatalf("parseDigits(%q): unexpected error %v", tt.in, err)
+		}
+		if got != tt.want {
+			t.Fatalf("parseDigits(%q) = %d, want %d", tt.in, got, tt.want)
+		}
+	}
+}
+
+// --- no-op revision detection: equality helpers --------------------------------
+
+func TestWeekdaysEqual(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		a    []Weekday
+		b    []Weekday
+		want bool
+	}{
+		{"nil vs nil", nil, nil, true},
+		{"nil vs empty", nil, []Weekday{}, true},
+		{"empty vs nil", []Weekday{}, nil, true},
+		{"identical", []Weekday{Monday, Tuesday}, []Weekday{Monday, Tuesday}, true},
+		{"different lengths", []Weekday{Monday}, []Weekday{Monday, Tuesday}, false},
+		{"same length, different day", []Weekday{Monday, Tuesday}, []Weekday{Monday, Wednesday}, false},
+		{"reordered days are not equal", []Weekday{Monday, Tuesday}, []Weekday{Tuesday, Monday}, false},
+	} {
+		if got := weekdaysEqual(tt.a, tt.b); got != tt.want {
+			t.Fatalf("%s: weekdaysEqual(%v, %v) = %v, want %v", tt.name, tt.a, tt.b, got, tt.want)
+		}
+	}
+}
+
+func TestPathIdsEqual(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		a    []shared.PathId
+		b    []shared.PathId
+		want bool
+	}{
+		{"nil vs nil", nil, nil, true},
+		{"nil vs empty", nil, []shared.PathId{}, true},
+		{"empty vs nil", []shared.PathId{}, nil, true},
+		{"identical", []shared.PathId{"PICK", "PACK"}, []shared.PathId{"PICK", "PACK"}, true},
+		{"different lengths", []shared.PathId{"PICK"}, []shared.PathId{"PICK", "PACK"}, false},
+		{"same length, different id", []shared.PathId{"PICK", "PACK"}, []shared.PathId{"PICK", "SLAM"}, false},
+		{"reordered ids are not equal", []shared.PathId{"PICK", "PACK"}, []shared.PathId{"PACK", "PICK"}, false},
+	} {
+		if got := pathIdsEqual(tt.a, tt.b); got != tt.want {
+			t.Fatalf("%s: pathIdsEqual(%v, %v) = %v, want %v", tt.name, tt.a, tt.b, got, tt.want)
+		}
+	}
+}
+
+func TestCutoffsEqual(t *testing.T) {
+	base := func() Cutoff {
+		return Cutoff{
+			cptId:           "sp1-1500",
+			localTime:       "15:00",
+			daysOfWeek:      []Weekday{Monday, Tuesday},
+			shipMethod:      "ground",
+			eligiblePathIds: []shared.PathId{"PICK", "PACK"},
+		}
+	}
+	for _, tt := range []struct {
+		name   string
+		mutate func(*Cutoff)
+		want   bool
+	}{
+		{"identical cutoffs", nil, true},
+		{"different cptId", func(c *Cutoff) { c.cptId = "sp1-1800" }, false},
+		{"different localTime", func(c *Cutoff) { c.localTime = "18:00" }, false},
+		{"different shipMethod", func(c *Cutoff) { c.shipMethod = "same-day" }, false},
+		{"different daysOfWeek", func(c *Cutoff) { c.daysOfWeek = []Weekday{Monday, Wednesday} }, false},
+		{"different eligiblePathIds", func(c *Cutoff) { c.eligiblePathIds = []shared.PathId{"PICK", "SLAM"} }, false},
+	} {
+		a := base()
+		b := base()
+		if tt.mutate != nil {
+			tt.mutate(&b)
+		}
+		if got := cutoffsEqual([]Cutoff{a}, []Cutoff{b}); got != tt.want {
+			t.Fatalf("%s: cutoffsEqual = %v, want %v", tt.name, got, tt.want)
+		}
+	}
+	if cutoffsEqual([]Cutoff{base()}, []Cutoff{base(), base()}) {
+		t.Fatal("expected cutoffsEqual=false for differing cutoff counts")
+	}
+	if !cutoffsEqual(nil, []Cutoff{}) {
+		t.Fatal("expected cutoffsEqual(nil, empty)=true")
+	}
+}
+
+// --- Revise changed-detection per mutated dimension -----------------------------
+
+func mustCutoff(t *testing.T, cptId, localTime string, days []Weekday, shipMethod string, ids []shared.PathId) Cutoff {
+	t.Helper()
+	c, err := NewCutoff(cptId, localTime, days, shipMethod, ids)
+	if err != nil {
+		t.Fatalf("unexpected error building cutoff: %v", err)
+	}
+	return c
+}
+
+func TestRevise_MutatedCutoffDimension_ReturnsChangedTrue(t *testing.T) {
+	weekdays := []Weekday{Monday, Tuesday, Wednesday, Thursday, Friday}
+	for _, tt := range []struct {
+		name     string
+		revision Cutoff
+	}{
+		{"different cptId", mustCutoff(t, "sp1-1800", "15:00", weekdays, "ground", []shared.PathId{"PICK"})},
+		{"different localTime", mustCutoff(t, "sp1-1500", "18:00", weekdays, "ground", []shared.PathId{"PICK"})},
+		{"different shipMethod", mustCutoff(t, "sp1-1500", "15:00", weekdays, "same-day", []shared.PathId{"PICK"})},
+		{"different daysOfWeek, same count", mustCutoff(t, "sp1-1500", "15:00", []Weekday{Monday, Tuesday, Wednesday, Thursday, Saturday}, "ground", []shared.PathId{"PICK"})},
+		{"different eligiblePathIds, same count", mustCutoff(t, "sp1-1500", "15:00", weekdays, "ground", []shared.PathId{"PACK"})},
+	} {
+		s, err := Define("sp1", "America/Sao_Paulo", []Cutoff{validCutoff(t)}, time.Now())
+		if err != nil {
+			t.Fatalf("%s: setup: %v", tt.name, err)
+		}
+		changed, err := s.Revise("America/Sao_Paulo", []Cutoff{tt.revision}, time.Now())
+		if err != nil {
+			t.Fatalf("%s: unexpected error: %v", tt.name, err)
+		}
+		if !changed {
+			t.Fatalf("%s: expected changed=true when only that dimension differs", tt.name)
+		}
+	}
+}
+
+func TestRevise_ReorderedDaysOfWeek_ReturnsChangedTrue(t *testing.T) {
+	// daysOfWeek is compared order-sensitively, so a reordered-but-equal
+	// set is reported as a change (and republishes CPTScheduleChanged).
+	s, err := Define("sp1", "America/Sao_Paulo", []Cutoff{mustCutoff(t, "sp1-1500", "15:00", []Weekday{Monday, Tuesday}, "ground", []shared.PathId{"PICK"})}, time.Now())
+	if err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	changed, err := s.Revise("America/Sao_Paulo", []Cutoff{mustCutoff(t, "sp1-1500", "15:00", []Weekday{Tuesday, Monday}, "ground", []shared.PathId{"PICK"})}, time.Now())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !changed {
+		t.Fatal("expected changed=true for a reordered daysOfWeek list (order is significant)")
+	}
+}
+
+func TestRevise_ReorderedCutoffs_ReturnsChangedTrue(t *testing.T) {
+	// cutoffs are compared positionally, so the same cutoffs in a
+	// different order count as a change.
+	c1 := mustCutoff(t, "sp1-1500", "15:00", []Weekday{Monday}, "ground", []shared.PathId{"PICK"})
+	c2 := mustCutoff(t, "sp1-1800", "18:00", []Weekday{Tuesday}, "same-day", []shared.PathId{"PACK"})
+	s, err := Define("sp1", "America/Sao_Paulo", []Cutoff{c1, c2}, time.Now())
+	if err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	changed, err := s.Revise("America/Sao_Paulo", []Cutoff{c2, c1}, time.Now())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !changed {
+		t.Fatal("expected changed=true for reordered cutoffs (comparison is positional)")
+	}
+}
+
 // --- AllEligiblePathIds ------------------------------------------------------
 
 func TestAllEligiblePathIds_DedupesAndSortsAcrossCutoffs(t *testing.T) {

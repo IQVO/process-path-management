@@ -5,12 +5,14 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/riandyrn/otelchi"
 	otelchimetric "github.com/riandyrn/otelchi/metric"
 
@@ -40,6 +42,20 @@ type Server struct {
 	// use case field here is always populated by the composition root).
 	DefineCPTSchedule *usecases.DefineCPTSchedule
 	GetCPTSchedule    *usecases.GetCPTSchedule
+	// IdempotencyPool, when non-nil, wires RequireIdempotencyKey onto
+	// POST /process-paths (see idempotency.go). A nil pool means "no
+	// transactional Postgres backing wired" (in-memory dev/test
+	// configuration) — the idempotency middleware needs a real
+	// pgxpool.Pool to begin its own transaction, so it is simply not
+	// applied in that case, exactly this codebase's existing convention
+	// for every other optional Postgres-backed capability (UnitOfWork,
+	// the outbox relay).
+	IdempotencyPool *pgxpool.Pool
+	// Readiness backs GET /readyz (ADR-0012 §graceful shutdown,
+	// mirroring order-management's ADR-0025). A nil Readiness (the
+	// zero value, and every pre-existing caller/test) means /readyz
+	// always reports ready — see Readiness's own doc comment.
+	Readiness *Readiness
 }
 
 // NewRouter builds the chi router for this service's REST API. A nil
@@ -70,8 +86,27 @@ func NewRouter(s *Server, logger *slog.Logger, serviceName string) http.Handler 
 	r.Use(corsMiddleware())
 
 	r.Get("/healthz", s.handleHealthz)
+	r.Get("/readyz", s.handleReadyz)
 
-	r.Post("/process-paths", s.handleDefinePath)
+	// POST /process-paths is route-scoped (r.With, not r.Use) behind
+	// RequireIdempotencyKey — it is the one mutating endpoint that
+	// creates a NEW resource. Its PathId is caller-supplied (not
+	// server-generated), so a byte-identical retry would otherwise hit
+	// DefinePath's own ErrPathAlreadyExists natural-key check and come
+	// back as a confusing 409 Conflict instead of a clean idempotent
+	// replay of the original 201 — the middleware fixes exactly that
+	// case. The other mutating routes (PUT /process-paths/{pathId},
+	// PUT /sites/{siteId}/cpt-schedule) are idempotent-by-PUT-semantics
+	// already and are deliberately left unprotected for v1 (see the
+	// ADR). IdempotencyPool nil (in-memory dev/test configuration, no
+	// transactional Postgres backing) skips the middleware entirely,
+	// mirroring every other optional Postgres-backed capability's nil
+	// convention in this repo.
+	if s.IdempotencyPool != nil {
+		r.With(RequireIdempotencyKey(s.IdempotencyPool)).Post("/process-paths", s.handleDefinePath)
+	} else {
+		r.Post("/process-paths", s.handleDefinePath)
+	}
 	r.Get("/process-paths", s.handleListPaths)
 	r.Get("/process-paths/{pathId}", s.handleGetPath)
 	r.Put("/process-paths/{pathId}", s.handleRevisePath)
@@ -79,6 +114,15 @@ func NewRouter(s *Server, logger *slog.Logger, serviceName string) http.Handler 
 
 	r.Put("/sites/{siteId}/cpt-schedule", s.handleDefineCPTSchedule)
 	r.Get("/sites/{siteId}/cpt-schedule", s.handleGetCPTSchedule)
+
+	// Unroutable requests (e.g. an empty path-id segment, which chi's
+	// trie never matches) get the same RFC 7807 shape as every other
+	// error this API returns, instead of Go's default text/plain
+	// "404 page not found" — the API's own documented 404 content type
+	// is application/problem+json.
+	r.NotFound(func(w http.ResponseWriter, r *http.Request) {
+		writeProblem(w, http.StatusNotFound, problemInfo{"route-not-found", "No route matches this request"}, "the request path does not match any operation in this API", r.URL.Path)
+	})
 
 	return r
 }
@@ -116,8 +160,18 @@ func (s *Server) handleListPaths(w http.ResponseWriter, r *http.Request) {
 	// activeOnly is the default (?all=true opts into the audit view) —
 	// matches the retired YAML catalogue's own posture that every
 	// consumer's normal read is "the currently valid set", not
-	// everything that ever existed.
-	activeOnly := r.URL.Query().Get("all") != "true"
+	// everything that ever existed. The value must be a real boolean
+	// when present: a query like ?all=null is a client bug and gets a
+	// 400 problem+json, never silently coerced to "false".
+	activeOnly := true
+	if vals, ok := r.URL.Query()["all"]; ok {
+		all, err := strconv.ParseBool(vals[0])
+		if err != nil {
+			writeProblem(w, http.StatusBadRequest, problemInfo{"invalid-query-parameter", "The 'all' query parameter must be a boolean (true or false)"}, "could not parse 'all' as a boolean: "+vals[0], r.URL.Path)
+			return
+		}
+		activeOnly = !all
+	}
 
 	paths, err := s.ListPaths.Execute(r.Context(), activeOnly)
 	if err != nil {

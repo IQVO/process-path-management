@@ -30,16 +30,30 @@ func TestToSnapshot_CarriesFullScheduleState(t *testing.T) {
 	now := time.Now()
 
 	snap := ToSnapshot(s, now)
+	assertScheduleSnapshotHeader(t, snap, now)
+	if len(snap.Cutoffs) != 1 {
+		t.Fatalf("want 1 cutoff snapshot, got %d", len(snap.Cutoffs))
+	}
+	assertCutoffSnapshotCarriesState(t, snap.Cutoffs[0])
+}
+
+// assertScheduleSnapshotHeader checks the schedule-level fields of a
+// CPTScheduleChanged snapshot: site, timezone, and the snapshot time.
+func assertScheduleSnapshotHeader(t *testing.T, snap CPTScheduleChanged, now time.Time) {
+	t.Helper()
 	if snap.SiteId != "sp1" || snap.Timezone != "America/Sao_Paulo" {
 		t.Fatalf("unexpected snapshot header: %+v", snap)
 	}
 	if snap.At != now {
 		t.Fatal("expected At to equal the time passed to ToSnapshot")
 	}
-	if len(snap.Cutoffs) != 1 {
-		t.Fatalf("want 1 cutoff snapshot, got %d", len(snap.Cutoffs))
-	}
-	got := snap.Cutoffs[0]
+}
+
+// assertCutoffSnapshotCarriesState checks that one CutoffSnapshot carries
+// its cutoff's full state: id, local time, ship method, days of week, and
+// eligible path ids.
+func assertCutoffSnapshotCarriesState(t *testing.T, got CutoffSnapshot) {
+	t.Helper()
 	if got.CptId != "sp1-1500" || got.LocalTime != "15:00" || got.ShipMethod != "ground" {
 		t.Fatalf("unexpected cutoff snapshot: %+v", got)
 	}
