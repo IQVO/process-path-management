@@ -8,6 +8,7 @@ import (
 
 	kafkago "github.com/segmentio/kafka-go"
 
+	"github.com/claudioed/process-path-management/internal/adapters/kafka/cloudevents"
 	outboundkafka "github.com/claudioed/process-path-management/internal/adapters/outbound/kafka"
 	"github.com/claudioed/process-path-management/internal/domain/shared"
 )
@@ -43,16 +44,35 @@ func TestPublish_ProcessPathCreated_WritesEnvelopeKeyedByPathId(t *testing.T) {
 		t.Fatalf("want message key PICK, got %s", w.messages[0].Key)
 	}
 
-	var env outboundkafka.Envelope
-	if err := json.Unmarshal(w.messages[0].Value, &env); err != nil {
-		t.Fatalf("unmarshal envelope: %v", err)
+	e, err := cloudevents.Decode(w.messages[0].Value)
+	if err != nil {
+		t.Fatalf("decode cloudevent: %v", err)
 	}
-	if env.EventType != outboundkafka.EventTypeProcessPathCreated {
-		t.Fatalf("want event_type ProcessPathCreated, got %s", env.EventType)
+	if e.Type() != cloudevents.TypeProcessPathCreated {
+		t.Fatalf("want type %s, got %s", cloudevents.TypeProcessPathCreated, e.Type())
 	}
-	if env.Source != outboundkafka.Source {
-		t.Fatalf("want source %s, got %s", outboundkafka.Source, env.Source)
+	if e.Source() != cloudevents.Source {
+		t.Fatalf("want source %s, got %s", cloudevents.Source, e.Source())
 	}
+	if e.Subject() != "PICK" || e.ID() != "evt-1" || !e.Time().Equal(now) {
+		t.Fatalf("subject/id/time = %q/%q/%v", e.Subject(), e.ID(), e.Time())
+	}
+	assertContentTypeHeader(t, w.messages[0])
+}
+
+// assertContentTypeHeader asserts msg carries the structured-mode
+// CloudEvents content-type header (ADR 0016).
+func assertContentTypeHeader(t *testing.T, msg kafkago.Message) {
+	t.Helper()
+	for _, h := range msg.Headers {
+		if h.Key == "content-type" {
+			if string(h.Value) != "application/cloudevents+json; charset=UTF-8" {
+				t.Fatalf("content-type = %q", h.Value)
+			}
+			return
+		}
+	}
+	t.Fatal("missing content-type header")
 }
 
 func TestPublish_ProcessPathDeactivated_OmitsDefinitionFields(t *testing.T) {

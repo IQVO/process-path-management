@@ -81,13 +81,14 @@ internal/
     outbound/postgres/            pgxpool repos, unit of work, outbox publisher + relay, golang-migrate runner
     outbound/memory/              in-memory repos for tests/local (also the zero-DATABASE_URL runtime path)
     outbound/events/              log publisher (default when EVENT_PUBLISHER != kafka)
+    kafka/cloudevents/            the ONLY CloudEvents 1.0 envelope code: New/Decode/ContentTypeHeader + Type* consts (ADR 0016)
     outbound/kafka/               integration + analytics publishers (EVENT_PUBLISHER=kafka), topic constants
     outbound/analyticsstore/      analytics projection/report store
     outbound/telemetry/           OTel traces/metrics/logs
   architecture/                   arch-go + fitness tests (architecture_test.go, fitness_test.go)
 migrations/                       golang-migrate SQL files (0001–0005); migrations/analytics/ for the report DB
 apis/openapi.yaml                 This service's OWN REST API (8 endpoints)
-apis/asyncapi.yaml                What this service PUBLISHES on the integration topic
+apis/asyncapi.yaml                What this service PUBLISHES (integration + analytics topics, CloudEvents 1.0)
 features/                         godog/Gherkin BDD acceptance tests
 web/                              process_path_mfe: Vite + React Module Federation remote (operator SPA)
 charts/process-path-management/   Helm chart (API, MCP, projector, reports, frontend)
@@ -104,36 +105,43 @@ outbox transaction. `TestNoSiblingContextOutboundCalls` fails the build if
 `internal/adapters/outbound/**` imports `net/http` — no REST or MCP client
 to a sibling may ever be added.
 
-### Persistence and event delivery mode matrix
+Delivery modes (`DATABASE_URL` × `EVENT_PUBLISHER`) and the transactional
+outbox (ADR 0003 — this repo is the fleet's reference implementation):
+`.claude/rules/runtime-and-outbox.md`.
 
-Composition root (`cmd/pathmgmt/main.go`) picks the mode at boot from
-`DATABASE_URL` and `EVENT_PUBLISHER`:
+## Events: CloudEvents 1.0 is MANDATORY
 
-| `DATABASE_URL` | `EVENT_PUBLISHER` | Publisher wired          | Outbox relay |
-|----------------|--------------------|---------------------------|--------------|
-| unset          | `log` (default)     | log                       | none         |
-| unset          | `kafka`             | direct Kafka (no outbox)  | none         |
-| set            | `log`                | log                       | none         |
-| set            | `kafka`             | **transactional outbox**  | **yes**      |
+Every Kafka message this service produces or consumes (integration
+`warehouse.<ctx>.events` AND analytics `warehouse.<ctx>.analytics`) is a
+CloudEvents 1.0 event in structured content mode. This is a hard fleet rule,
+not a preference:
 
-The cluster runs the last row. With no `DATABASE_URL`, the service is
-fully functional over REST on the in-memory adapter (`internal/adapters/outbound/memory`)
-— no Postgres required for local dev.
+- No flat envelope (`event_id`/`event_type`/`occurred_at`), no dual-write,
+  no dual-read, no envelope toggle env var (`EVENT_ENVELOPE_MODE` is gone).
+- Build/validate/(un)marshal with `github.com/cloudevents/sdk-go/v2/event`
+  via `internal/adapters/kafka/cloudevents/`; transport stays kafka-go.
+- Kafka header `content-type: application/cloudevents+json; charset=UTF-8`.
+- Required attributes: `specversion=1.0`, `id` (UUID, stable across outbox
+  redelivery), `source=/warehouse/process-path-management`, `type`, `subject` (aggregate id), `time`
+  (occurred-at, UTC), `datacontenttype=application/json`,
+  `dataschema=urn:warehouse:process-path-management:<events|analytics>:<EventName>:v<N>`.
+- `type` = `com.warehouse.<subdomain>.<bounded-context>.<entity>.<EventName>`;
+  for this service: `com.warehouse.wes.process-path-management.<entity>.<EventName>`. Breaking payload
+  change => new `.v2` type + new dataschema version, never mutate.
+- Consumers dispatch on the FULL `type`, ignore unknown types, dedupe on
+  `id`, and DLQ/skip (never crash, never parse a legacy shape) anything that
+  fails CloudEvents validation.
 
-### Transactional outbox (ADR 0003 — this repo is the fleet's REFERENCE implementation)
+Full standard and the fleet's cross-service type catalogue: ADR-0016
+(`docs/docs/adr/`).
 
-Every write use case (`DefinePath`, `RevisePath`, `DeactivatePath`) runs
-`Repo.Save` and `EventPublisher.Publish` inside one `ports.UnitOfWork.Execute`
-scope. `postgres.UnitOfWork` opens a `pgx.Tx`, binds it to the context, and
-commits or rolls back around the callback — either both the aggregate row
-and the `outbox_events` row land, or neither does. `postgres.OutboxRelay`
-runs as a goroutine inside the `pathmgmt` process (not a separate binary),
-claiming up to 100 pending rows with `SELECT … FOR UPDATE SKIP LOCKED ORDER BY id`
-per pass, sending them to Kafka in order, marking `published_at`. This
-pattern is the template four sibling services (wes-work-planning,
-fulfillment-execution, workforce-management, labor-performance) are meant
-to follow — see ADR 0003 for the full rationale, including the concrete
-store/topic divergence bug (ADR 0002) that motivated it.
+This service's published types (consumed byte-for-byte by
+fulfillment-execution, wes-work-planning, workforce-management,
+order-management): `...processpath.ProcessPathCreated`,
+`...processpath.ProcessPathUpdated`, `...processpath.ProcessPathDeactivated`
+(subject = `path_id`) and `...cptschedule.CPTScheduleChanged` (subject =
+`site_id`), all under `com.warehouse.wes.process-path-management`. Its own
+projector DLQs any non-CloudEvents message on the analytics topic.
 
 ## Key Commands
 
@@ -161,28 +169,7 @@ make vuln            # govulncheck ./...
 Helm: `helm lint charts/process-path-management` (CI runs it only on PRs
 targeting `main`).
 
-Local run, no dependencies:
-
-```bash
-go run ./cmd/pathmgmt
-# DATABASE_URL not set -> in-memory ProcessPathRepo; fully functional REST on :8080
-```
-
-With Postgres:
-
-```bash
-docker compose up -d postgres          # Postgres 16 on localhost:5436
-export DATABASE_URL='postgres://pathmgmt:pathmgmt@localhost:5436/pathmgmt?sslmode=disable'
-go run ./cmd/pathmgmt                  # migrations run automatically at startup
-```
-
-With Kafka publishing:
-
-```bash
-export EVENT_PUBLISHER=kafka
-export KAFKA_BROKERS=localhost:9092
-go run ./cmd/pathmgmt
-```
+Local run (in-memory, Postgres, Kafka): `.claude/rules/runtime-and-outbox.md`.
 
 Docs site (Docusaurus, generated OpenAPI reference pages):
 

@@ -64,13 +64,16 @@ Typos, broken links and formatting are of course fair game.
 | [0004](./0004-rest-auth-adoption.md) | Adopting the fleet REST identity standard | Superseded by 0005 |
 | [0005](./0005-remove-rest-auth.md) | Removing the REST auth layer | Accepted |
 | [0006](./0006-mcp-server-second-inbound-adapter.md) | MCP server as a second inbound adapter | Accepted |
-| [0007](./0007-analytical-data-product.md) | Analytical data product (report) via a separate analytics topic | Accepted |
+| [0007](./0007-analytical-data-product.md) | Analytical data product (report) via a separate analytics topic | Accepted (§1 analytics envelope superseded by 0016) |
 | [0008](./0008-fclm-aligned-process-path-families.md) | Seven new process-path families aligned to real FC labor-tracking vocabulary | Accepted |
 | [0009](./0009-destination-location-role-on-process-path.md) | Optional destination LocationRole on a ProcessPath | Accepted |
 | [0010](./0010-fulfillment-capability-contract.md) | Process paths publish a fulfillment capability contract (cycle time, eligibility, CPT schedule) | Accepted |
 | [0011](./0011-idempotency-key-middleware.md) | Transactional Idempotency-Key middleware for POST /process-paths | Accepted |
 | [0012](./0012-kafka-dlq-and-graceful-shutdown.md) | Analytics-consumer dead-letter queue and graceful shutdown hardening | Accepted |
 | [0013](./0013-kafka-writer-hash-balancer.md) | Hash balancer for the outbound Kafka writers, closing a latent partition-affinity gap | Accepted |
+| [0014](./0014-horizontal-autoscaling-and-pgxpool-tuning.md) | Per-workload HorizontalPodAutoscaler and pgxpool MaxConns/statement_timeout tuning | Accepted |
+| [0015](./0015-migrations-direct-postgres-connection.md) | Run golang-migrate against a direct Postgres connection, not PgBouncer | Accepted |
+| [0016](./0016-cloudevents-mandatory-event-envelope.md) | CloudEvents 1.0 as the mandatory event envelope | Accepted |
 
 Each of these reconstructs a decision that is actually visible in this
 repository's history or code — none is a generic placeholder.

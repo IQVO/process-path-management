@@ -3,11 +3,13 @@ package kafka_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"testing"
 	"time"
 
 	inboundkafka "github.com/claudioed/process-path-management/internal/adapters/inbound/kafka"
+	"github.com/claudioed/process-path-management/internal/adapters/kafka/cloudevents"
 )
 
 // call captures one projection-store method invocation.
@@ -53,25 +55,70 @@ func (p *fakeProcessed) MarkProcessed(_ context.Context, eventId string) (bool, 
 	return true, nil
 }
 
-func envelope(t *testing.T, eventId, eventType string, at time.Time, data map[string]any) []byte {
+// envelope builds a structured-mode CloudEvents 1.0 analytics message
+// (ADR 0016) for eventName with the given id/time/data, exactly as the
+// AnalyticsEncoder would publish it.
+func envelope(t *testing.T, eventId, eventName string, at time.Time, data map[string]any) []byte {
 	t.Helper()
-	raw, err := json.Marshal(data)
+	b, err := cloudevents.New(cloudevents.Spec{
+		ID: eventId, Entity: cloudevents.EntityProcessPath, EventName: eventName,
+		Subject: "PICK", Time: at, Stream: cloudevents.StreamAnalytics, Version: 1, Data: data,
+	})
 	if err != nil {
-		t.Fatalf("marshal data: %v", err)
-	}
-	env := map[string]any{
-		"event_id":       eventId,
-		"event_type":     eventType,
-		"occurred_at":    at.Format(time.RFC3339Nano),
-		"source":         "process-path-management",
-		"schema_version": 1,
-		"data":           json.RawMessage(raw),
-	}
-	b, err := json.Marshal(env)
-	if err != nil {
-		t.Fatalf("marshal envelope: %v", err)
+		t.Fatalf("build cloudevent: %v", err)
 	}
 	return b
+}
+
+// legacyFlatEnvelope is the RETIRED pre-ADR-0016 flat analytics envelope.
+// Consumers must reject it, never parse it.
+func legacyFlatEnvelope(t *testing.T, eventId, eventType string, at time.Time) []byte {
+	t.Helper()
+	b, err := json.Marshal(map[string]any{
+		"event_id": eventId, "event_type": eventType, "occurred_at": at.Format(time.RFC3339Nano),
+		"source": "process-path-management", "schema_version": 1, "data": map[string]any{"path_id": "PICK"},
+	})
+	if err != nil {
+		t.Fatalf("marshal legacy envelope: %v", err)
+	}
+	return b
+}
+
+func TestAnalyticsConsumer_RejectsLegacyFlatEnvelope(t *testing.T) {
+	proj := &fakeProjection{}
+	processed := newFakeProcessed()
+	c := &inboundkafka.AnalyticsConsumer{Projection: proj, Processed: processed, Logger: slog.Default()}
+
+	raw := legacyFlatEnvelope(t, "legacy-1", "ProcessPathCreated", time.Now())
+	err := c.HandleMessage(context.Background(), raw)
+	if !errors.Is(err, cloudevents.ErrNotCloudEvent) {
+		t.Fatalf("err = %v, want ErrNotCloudEvent", err)
+	}
+	if len(proj.calls) != 0 || processed.seen["legacy-1"] {
+		t.Fatalf("legacy message must not be applied or marked: calls=%d", len(proj.calls))
+	}
+}
+
+func TestAnalyticsConsumer_DispatchesOnFullTypeOnly(t *testing.T) {
+	proj := &fakeProjection{}
+	c := &inboundkafka.AnalyticsConsumer{Projection: proj, Processed: newFakeProcessed(), Logger: slog.Default()}
+
+	// A CloudEvent whose type merely ENDS in a projecting name (different
+	// context) must be ignored: dispatch is on the full type string.
+	raw, err := json.Marshal(map[string]any{
+		"specversion": "1.0", "id": "x1", "source": "/warehouse/other", "subject": "PICK",
+		"type": "com.warehouse.wes.other.processpath.ProcessPathCreated", "time": "2026-09-11T08:00:00Z",
+		"datacontenttype": "application/json", "data": map[string]any{"path_id": "PICK"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.HandleMessage(context.Background(), raw); err != nil {
+		t.Fatalf("HandleMessage: %v", err)
+	}
+	if len(proj.calls) != 0 {
+		t.Fatalf("suffix-matching type must be ignored, got %d calls", len(proj.calls))
+	}
 }
 
 func TestAnalyticsConsumer_RoutesEachEventType(t *testing.T) {

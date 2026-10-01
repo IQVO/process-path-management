@@ -11,32 +11,54 @@ info:
     process-path published language for the fleet, never a consumer of
     anyone else's events.
 
-    ## Message format
+    ## Message format: CloudEvents 1.0 (mandatory, ADR 0016)
 
-    Every message on `warehouse.process-path-management.events` uses the
-    fixed, CloudEvents-*like* (but NOT strict CloudEvents-spec) envelope
-    shared by every warehouse-systems publisher:
+    Every message on `warehouse.process-path-management.events` AND
+    `warehouse.process-path-management.analytics` is a CloudEvents 1.0
+    event in structured content mode (Kafka protocol binding). The Kafka
+    message value is the JSON event format and every message carries the
+    Kafka header `content-type: application/cloudevents+json; charset=UTF-8`.
+    W3C trace context stays in the `traceparent`/`tracestate` headers.
+    There is no other envelope, no dual-write and no envelope toggle.
 
     ```json
     {
-      "event_id": "uuid-v4",
-      "event_type": "ProcessPathCreated",
-      "occurred_at": "2026-09-06T00:00:00Z",
-      "source": "process-path-management",
-      "data": { ... }
+      "specversion": "1.0",
+      "id": "4f1c2a7e-9d31-4a6b-8f0e-6b2c1d5e7a90",
+      "source": "/warehouse/process-path-management",
+      "type": "com.warehouse.wes.process-path-management.processpath.ProcessPathCreated",
+      "subject": "PICK",
+      "time": "2026-09-06T00:00:00Z",
+      "datacontenttype": "application/json",
+      "dataschema": "urn:warehouse:process-path-management:events:ProcessPathCreated:v1",
+      "data": { "path_id": "PICK", "...": "..." }
     }
     ```
 
+    - `id` is minted once per domain event and persisted with the outbox
+      row, so a redelivery carries the same `id`; `(source, id)` is the
+      consumer idempotency key.
+    - `subject` is the aggregate id (`path_id` for ProcessPath* events,
+      `site_id` for CPTScheduleChanged) — the same value as the Kafka key.
+    - `type` = `com.warehouse.wes.process-path-management.<entity>.<EventName>`.
+      These exact strings are a cross-service contract (consumed by
+      fulfillment-execution, wes-work-planning, workforce-management and
+      order-management); consumers dispatch on the FULL `type`.
+    - `dataschema` = `urn:warehouse:process-path-management:<events|analytics>:<EventName>:v1`
+      distinguishes the integration payload from the analytics payload of
+      the same occurrence (today both carry the identical `data` shape).
+    - A breaking payload change ships as a new `.v2` type with a new
+      dataschema version, never by mutating an existing one.
+
     ## Single, shared topic for four event types
 
-    A single topic (not one per event type) matches the fleet's existing
-    convention (e.g. `warehouse.fulfillment.events` carries several event
-    types, filtered by consumers on `event_type`). `ProcessPathCreated`,
-    `ProcessPathUpdated`, and `ProcessPathDeactivated` are keyed by
-    `path_id`; `CPTScheduleChanged` (ADR 0010) is keyed by `site_id` — a
-    different aggregate on the same topic, so a consumer replaying the
-    topic sees a given path's or a given site's events in publish order,
-    never interleaved with another aggregate's out of order.
+    A single topic (not one per event type) per stream. Consumers dispatch
+    on the CloudEvents `type`. `ProcessPathCreated`, `ProcessPathUpdated`,
+    and `ProcessPathDeactivated` are keyed by `path_id`;
+    `CPTScheduleChanged` (ADR 0010) is keyed by `site_id` — a different
+    aggregate on the same topic, so a consumer replaying the topic sees a
+    given path's or a given site's events in publish order, never
+    interleaved with another aggregate's out of order.
 
     ## ADR 0010: the fulfillment capability contract
 
@@ -45,23 +67,18 @@ info:
     `eligibility` (the rules a unit of work must satisfy to be routed to
     this path) — and this topic now also carries `CPTScheduleChanged`, a
     new event type for the site-scoped Critical Pull Time schedule. Every
-    consumer's decoder must tolerate an unknown `event_type` (ignore it,
+    consumer's decoder must tolerate an unknown `type` (ignore it,
     not fail) and tolerate unknown/absent fields on the payloads it
     already knows, exactly as it already must for any future addition —
     see ADR 0010's Consequences section.
 
-    ## Known integration gap: no consumer wired yet
+    ## Consumers
 
-    `fulfillment-execution`, `wes-work-planning`, and `workforce-management`
-    are this topic's intended consumers (replacing the static YAML
-    catalogue they each previously boot-loaded from
-    `warehouse-infra/config/process-paths/`), but as of this document, NONE
-    of them has a consumer wired to this topic yet. That is a separate,
-    not-yet-done follow-up PR in each of those three repos — see this
-    service's own `docs/docs/ecosystem/context-map.md` for the full
-    picture. This service's outbound publisher itself is real and tested
-    (`internal/adapters/outbound/kafka`); the gap is entirely on the
-    consumer side, in other repositories.
+    `fulfillment-execution`, `wes-work-planning`, `workforce-management`
+    (ProcessPath* catalogue caches) and `order-management` (ProcessPath*
+    and CPTScheduleChanged) consume the integration topic. The analytics
+    topic is consumed only by this service's own projector
+    (`cmd/pathmgmt-projector`). See `docs/docs/ecosystem/context-map.md`.
   contact:
     name: Process Path Management Team
     url: https://github.com/claudioed/process-path-management
@@ -86,16 +103,16 @@ servers:
       a broker is available at localhost:9092 via
       ~/warehouse-systems/docker-compose.kafka.yml.
 
-defaultContentType: application/json
+defaultContentType: application/cloudevents+json
 
 channels:
   warehouse.process-path-management.events:
     description: >-
-      This service's own topic (its `kafka.Topic` constant). Carries all
-      three ProcessPath* event types plus CPTScheduleChanged (ADR 0010),
-      filtered by consumers on `event_type`. Only published when
-      EVENT_PUBLISHER=kafka; the default is a local log publisher (no
-      Kafka required for local dev).
+      This service's own integration topic (its `kafka.Topic` constant).
+      Carries all three ProcessPath* event types plus CPTScheduleChanged
+      (ADR 0010) as CloudEvents 1.0 (ADR 0016), dispatched by consumers on
+      the full `type`. Only published when EVENT_PUBLISHER=kafka; the
+      default is a local log publisher (no Kafka required for local dev).
     publish:
       operationId: publishProcessPathEvents
       summary: Publish ProcessPathCreated / ProcessPathUpdated / ProcessPathDeactivated / CPTScheduleChanged.
@@ -116,6 +133,30 @@ channels:
           - $ref: "#/components/messages/ProcessPathDeactivated"
           - $ref: "#/components/messages/CPTScheduleChanged"
 
+  warehouse.process-path-management.analytics:
+    description: >-
+      Internal analytics topic (`kafka.AnalyticsTopic`, ADR 0007), consumed
+      only by this service's own projector. Same CloudEvents `type`,
+      `subject`, `time` and `data` as the integration occurrence; only
+      `dataschema` differs (`...:analytics:<EventName>:v1`). Messages that
+      fail CloudEvents validation are dead-lettered to
+      `warehouse.process-path-management.analytics.dlq`.
+    publish:
+      operationId: publishProcessPathAnalyticsEvents
+      summary: Publish the analytics occurrence of every domain event.
+      description: >-
+        Written in the same outbox transaction as the integration row,
+        sharing its CloudEvents `id`.
+      tags:
+        - name: process-path
+        - name: cpt-schedule
+      message:
+        oneOf:
+          - $ref: "#/components/messages/ProcessPathCreatedAnalytics"
+          - $ref: "#/components/messages/ProcessPathUpdatedAnalytics"
+          - $ref: "#/components/messages/ProcessPathDeactivatedAnalytics"
+          - $ref: "#/components/messages/CPTScheduleChangedAnalytics"
+
 components:
   messages:
     ProcessPathCreated:
@@ -126,19 +167,23 @@ components:
         Raised the first time a PathId is defined. Carries enough of the
         definition for a consumer to build its local read model without a
         follow-up query.
-      contentType: application/json
+      contentType: application/cloudevents+json
       tags:
         - name: process-path
       payload:
-        $ref: "#/components/schemas/ProcessPathCreatedEnvelope"
+        $ref: "#/components/schemas/ProcessPathCreatedCloudEvent"
       examples:
         - name: pickPathDefined
           summary: A new PICK path defined with the pick capability.
           payload:
-            event_id: 4f1c2a7e-9d31-4a6b-8f0e-6b2c1d5e7a90
-            event_type: ProcessPathCreated
-            occurred_at: "2026-09-06T00:00:00Z"
-            source: process-path-management
+            specversion: "1.0"
+            id: 4f1c2a7e-9d31-4a6b-8f0e-6b2c1d5e7a90
+            source: /warehouse/process-path-management
+            type: com.warehouse.wes.process-path-management.processpath.ProcessPathCreated
+            subject: PICK
+            time: "2026-09-06T00:00:00Z"
+            datacontenttype: application/json
+            dataschema: "urn:warehouse:process-path-management:events:ProcessPathCreated:v1"
             data:
               path_id: PICK
               match_prefix: pick
@@ -148,10 +193,14 @@ components:
         - name: packPathDefinedWithDestinationLocationRole
           summary: A new PACK path defined with a declared Drop destination role.
           payload:
-            event_id: 6a2d3b8f-0e42-4b7c-9f1d-7c3e2f6b8a91
-            event_type: ProcessPathCreated
-            occurred_at: "2026-09-13T00:00:00Z"
-            source: process-path-management
+            specversion: "1.0"
+            id: 6a2d3b8f-0e42-4b7c-9f1d-7c3e2f6b8a91
+            source: /warehouse/process-path-management
+            type: com.warehouse.wes.process-path-management.processpath.ProcessPathCreated
+            subject: PACK
+            time: "2026-09-13T00:00:00Z"
+            datacontenttype: application/json
+            dataschema: "urn:warehouse:process-path-management:events:ProcessPathCreated:v1"
             data:
               path_id: PACK
               match_prefix: pack
@@ -165,10 +214,14 @@ components:
             at most one unit per line, gift-wrap required, hazmat
             excluded, non-sortable.
           payload:
-            event_id: 9c4e5f21-7a83-4d5f-b1c2-8e5a3f7d2b64
-            event_type: ProcessPathCreated
-            occurred_at: "2026-09-13T00:00:00Z"
-            source: process-path-management
+            specversion: "1.0"
+            id: 9c4e5f21-7a83-4d5f-b1c2-8e5a3f7d2b64
+            source: /warehouse/process-path-management
+            type: com.warehouse.wes.process-path-management.processpath.ProcessPathCreated
+            subject: SINGLES
+            time: "2026-09-13T00:00:00Z"
+            datacontenttype: application/json
+            dataschema: "urn:warehouse:process-path-management:events:ProcessPathCreated:v1"
             data:
               path_id: SINGLES
               match_prefix: singles
@@ -188,19 +241,23 @@ components:
       description: >-
         Raised when RevisePath actually changes something. Not raised for
         a no-op update.
-      contentType: application/json
+      contentType: application/cloudevents+json
       tags:
         - name: process-path
       payload:
-        $ref: "#/components/schemas/ProcessPathUpdatedEnvelope"
+        $ref: "#/components/schemas/ProcessPathUpdatedCloudEvent"
       examples:
         - name: pickPathRevisedWithHazmat
           summary: The PICK path's zone and required capabilities were revised.
           payload:
-            event_id: 8a3d6c11-52b7-4f0d-9c14-3e7a5b8d2f46
-            event_type: ProcessPathUpdated
-            occurred_at: "2026-09-06T01:00:00Z"
-            source: process-path-management
+            specversion: "1.0"
+            id: 8a3d6c11-52b7-4f0d-9c14-3e7a5b8d2f46
+            source: /warehouse/process-path-management
+            type: com.warehouse.wes.process-path-management.processpath.ProcessPathUpdated
+            subject: PICK
+            time: "2026-09-06T01:00:00Z"
+            datacontenttype: application/json
+            dataschema: "urn:warehouse:process-path-management:events:ProcessPathUpdated:v1"
             data:
               path_id: PICK
               match_prefix: pick-zone-a
@@ -219,19 +276,23 @@ components:
         once they observe this event, but this service takes no position
         on in-flight work already assigned to it in a downstream
         context — that is each consumer's own operational concern.
-      contentType: application/json
+      contentType: application/cloudevents+json
       tags:
         - name: process-path
       payload:
-        $ref: "#/components/schemas/ProcessPathDeactivatedEnvelope"
+        $ref: "#/components/schemas/ProcessPathDeactivatedCloudEvent"
       examples:
         - name: packPathDeactivated
           summary: The PACK path was retired.
           payload:
-            event_id: c25b9f83-7e64-4a19-b8d2-0f5a3c6e1b47
-            event_type: ProcessPathDeactivated
-            occurred_at: "2026-09-06T02:00:00Z"
-            source: process-path-management
+            specversion: "1.0"
+            id: c25b9f83-7e64-4a19-b8d2-0f5a3c6e1b47
+            source: /warehouse/process-path-management
+            type: com.warehouse.wes.process-path-management.processpath.ProcessPathDeactivated
+            subject: PACK
+            time: "2026-09-06T02:00:00Z"
+            datacontenttype: application/json
+            dataschema: "urn:warehouse:process-path-management:events:ProcessPathDeactivated:v1"
             data:
               path_id: PACK
 
@@ -247,19 +308,23 @@ components:
         its read model, the same self-sufficient-event convention
         ProcessPathCreated/Updated already use. Keyed by `site_id`, not
         `path_id` — a different aggregate sharing this topic.
-      contentType: application/json
+      contentType: application/cloudevents+json
       tags:
         - name: cpt-schedule
       payload:
-        $ref: "#/components/schemas/CPTScheduleChangedEnvelope"
+        $ref: "#/components/schemas/CPTScheduleChangedCloudEvent"
       examples:
         - name: sp1ScheduleDefined
           summary: Site sp1's schedule defined with one 15:00 ground cutoff.
           payload:
-            event_id: 1d2e3f4a-5b6c-4d7e-8f9a-0b1c2d3e4f5a
-            event_type: CPTScheduleChanged
-            occurred_at: "2026-09-13T00:00:00Z"
-            source: process-path-management
+            specversion: "1.0"
+            id: 1d2e3f4a-5b6c-4d7e-8f9a-0b1c2d3e4f5a
+            source: /warehouse/process-path-management
+            type: com.warehouse.wes.process-path-management.cptschedule.CPTScheduleChanged
+            subject: sp1
+            time: "2026-09-13T00:00:00Z"
+            datacontenttype: application/json
+            dataschema: "urn:warehouse:process-path-management:events:CPTScheduleChanged:v1"
             data:
               site_id: sp1
               timezone: America/Sao_Paulo
@@ -270,96 +335,274 @@ components:
                   ship_method: ground
                   eligible_path_ids: ["PICK", "PACK"]
 
+    ProcessPathCreatedAnalytics:
+      name: ProcessPathCreated
+      title: ProcessPathCreated (analytics stream)
+      summary: Analytics occurrence of ProcessPathCreated for this service's own projector.
+      contentType: application/cloudevents+json
+      tags:
+        - name: process-path
+      payload:
+        $ref: "#/components/schemas/ProcessPathCreatedAnalyticsCloudEvent"
+      examples:
+        - name: processPathCreatedAnalytics
+          summary: Same occurrence as the integration message; only dataschema differs.
+          payload:
+            specversion: "1.0"
+            id: 4f1c2a7e-9d31-4a6b-8f0e-6b2c1d5e7a90
+            source: /warehouse/process-path-management
+            type: com.warehouse.wes.process-path-management.processpath.ProcessPathCreated
+            subject: PICK
+            time: "2026-09-06T00:00:00Z"
+            datacontenttype: application/json
+            dataschema: "urn:warehouse:process-path-management:analytics:ProcessPathCreated:v1"
+            data:
+              path_id: PICK
+              match_prefix: pick
+              direct: true
+              required_capabilities: ["pick"]
+              cycle_time_p95: 24h0m0s
+              eligibility: {}
+
+    ProcessPathUpdatedAnalytics:
+      name: ProcessPathUpdated
+      title: ProcessPathUpdated (analytics stream)
+      summary: Analytics occurrence of ProcessPathUpdated for this service's own projector.
+      contentType: application/cloudevents+json
+      tags:
+        - name: process-path
+      payload:
+        $ref: "#/components/schemas/ProcessPathUpdatedAnalyticsCloudEvent"
+      examples:
+        - name: processPathUpdatedAnalytics
+          summary: Same occurrence as the integration message; only dataschema differs.
+          payload:
+            specversion: "1.0"
+            id: 4f1c2a7e-9d31-4a6b-8f0e-6b2c1d5e7a90
+            source: /warehouse/process-path-management
+            type: com.warehouse.wes.process-path-management.processpath.ProcessPathUpdated
+            subject: PICK
+            time: "2026-09-06T00:00:00Z"
+            datacontenttype: application/json
+            dataschema: "urn:warehouse:process-path-management:analytics:ProcessPathUpdated:v1"
+            data:
+              path_id: PICK
+              match_prefix: pick-zone-a
+              direct: true
+              required_capabilities: ["pick", "hazmat"]
+              cycle_time_p95: 24h0m0s
+              eligibility: {}
+
+    ProcessPathDeactivatedAnalytics:
+      name: ProcessPathDeactivated
+      title: ProcessPathDeactivated (analytics stream)
+      summary: Analytics occurrence of ProcessPathDeactivated for this service's own projector.
+      contentType: application/cloudevents+json
+      tags:
+        - name: process-path
+      payload:
+        $ref: "#/components/schemas/ProcessPathDeactivatedAnalyticsCloudEvent"
+      examples:
+        - name: processPathDeactivatedAnalytics
+          summary: Same occurrence as the integration message; only dataschema differs.
+          payload:
+            specversion: "1.0"
+            id: 4f1c2a7e-9d31-4a6b-8f0e-6b2c1d5e7a90
+            source: /warehouse/process-path-management
+            type: com.warehouse.wes.process-path-management.processpath.ProcessPathDeactivated
+            subject: PACK
+            time: "2026-09-06T00:00:00Z"
+            datacontenttype: application/json
+            dataschema: "urn:warehouse:process-path-management:analytics:ProcessPathDeactivated:v1"
+            data:
+              path_id: PACK
+
+    CPTScheduleChangedAnalytics:
+      name: CPTScheduleChanged
+      title: CPTScheduleChanged (analytics stream)
+      summary: Analytics occurrence of CPTScheduleChanged for this service's own projector.
+      contentType: application/cloudevents+json
+      tags:
+        - name: cpt-schedule
+      payload:
+        $ref: "#/components/schemas/CPTScheduleChangedAnalyticsCloudEvent"
+      examples:
+        - name: cPTScheduleChangedAnalytics
+          summary: Same occurrence as the integration message; only dataschema differs.
+          payload:
+            specversion: "1.0"
+            id: 4f1c2a7e-9d31-4a6b-8f0e-6b2c1d5e7a90
+            source: /warehouse/process-path-management
+            type: com.warehouse.wes.process-path-management.cptschedule.CPTScheduleChanged
+            subject: sp1
+            time: "2026-09-06T00:00:00Z"
+            datacontenttype: application/json
+            dataschema: "urn:warehouse:process-path-management:analytics:CPTScheduleChanged:v1"
+            data:
+              site_id: sp1
+              timezone: America/Sao_Paulo
+              cutoffs:
+                - cpt_id: sp1-1500
+                  local_time: "15:00"
+                  days_of_week: ["Mon"]
+                  ship_method: ground
+                  eligible_path_ids: ["PICK"]
+
   schemas:
-    ProcessPathCreatedEnvelope:
+    CloudEventEnvelope:
       type: object
-      title: Envelope + ProcessPathCreated data
-      required: [event_id, event_type, occurred_at, source, data]
+      title: CloudEvents 1.0 envelope (structured mode, ADR 0016)
+      description: >-
+        Every attribute is REQUIRED in this fleet. Kafka header
+        `content-type: application/cloudevents+json; charset=UTF-8`.
+      required: [specversion, id, source, type, subject, time, datacontenttype, dataschema, data]
       properties:
-        event_id:
+        specversion:
+          type: string
+          const: "1.0"
+        id:
           type: string
           format: uuid
-        event_type:
-          type: string
-          enum: ["ProcessPathCreated"]
-        occurred_at:
-          type: string
-          format: date-time
+          description: Minted once per domain event, persisted with the outbox row; stable across redelivery. Consumer dedupe key.
         source:
           type: string
-          enum: ["process-path-management"]
-        data:
-          $ref: "#/components/schemas/ProcessPathData"
-
-    ProcessPathUpdatedEnvelope:
-      type: object
-      title: Envelope + ProcessPathUpdated data
-      required: [event_id, event_type, occurred_at, source, data]
-      properties:
-        event_id:
+          const: /warehouse/process-path-management
+        type:
           type: string
-          format: uuid
-        event_type:
+          description: com.warehouse.wes.process-path-management.<entity>.<EventName>
+        subject:
           type: string
-          enum: ["ProcessPathUpdated"]
-        occurred_at:
+          minLength: 1
+          description: Aggregate id (path_id or site_id) — equal to the Kafka key.
+        time:
           type: string
           format: date-time
-        source:
+          description: The domain event's occurred-at instant, UTC.
+        datacontenttype:
           type: string
-          enum: ["process-path-management"]
-        data:
-          $ref: "#/components/schemas/ProcessPathData"
-
-    ProcessPathDeactivatedEnvelope:
-      type: object
-      title: Envelope + ProcessPathDeactivated data
-      required: [event_id, event_type, occurred_at, source, data]
-      properties:
-        event_id:
+          const: application/json
+        dataschema:
           type: string
-          format: uuid
-        event_type:
-          type: string
-          enum: ["ProcessPathDeactivated"]
-        occurred_at:
-          type: string
-          format: date-time
-        source:
-          type: string
-          enum: ["process-path-management"]
+          format: uri
         data:
           type: object
-          required: [path_id]
-          properties:
-            path_id:
-              type: string
-              example: PACK
-              description: >-
-                required_capabilities/match_prefix/direct/cycle_time_p95/
-                eligibility are omitted (not empty-arrayed/zeroed) on a
-                deactivation — it carries no definition data, only the
-                PathId and the fact that it happened.
 
-    CPTScheduleChangedEnvelope:
+    ProcessPathCreatedCloudEvent:
+      title: CloudEvent + ProcessPathCreated data (events stream)
+      allOf:
+        - $ref: "#/components/schemas/CloudEventEnvelope"
+        - type: object
+          properties:
+            type:
+              const: com.warehouse.wes.process-path-management.processpath.ProcessPathCreated
+            dataschema:
+              const: "urn:warehouse:process-path-management:events:ProcessPathCreated:v1"
+            data:
+              $ref: "#/components/schemas/ProcessPathData"
+
+    ProcessPathUpdatedCloudEvent:
+      title: CloudEvent + ProcessPathUpdated data (events stream)
+      allOf:
+        - $ref: "#/components/schemas/CloudEventEnvelope"
+        - type: object
+          properties:
+            type:
+              const: com.warehouse.wes.process-path-management.processpath.ProcessPathUpdated
+            dataschema:
+              const: "urn:warehouse:process-path-management:events:ProcessPathUpdated:v1"
+            data:
+              $ref: "#/components/schemas/ProcessPathData"
+
+    ProcessPathDeactivatedCloudEvent:
+      title: CloudEvent + ProcessPathDeactivated data (events stream)
+      allOf:
+        - $ref: "#/components/schemas/CloudEventEnvelope"
+        - type: object
+          properties:
+            type:
+              const: com.warehouse.wes.process-path-management.processpath.ProcessPathDeactivated
+            dataschema:
+              const: "urn:warehouse:process-path-management:events:ProcessPathDeactivated:v1"
+            data:
+              $ref: "#/components/schemas/ProcessPathDeactivatedData"
+
+    CPTScheduleChangedCloudEvent:
+      title: CloudEvent + CPTScheduleChanged data (events stream)
+      allOf:
+        - $ref: "#/components/schemas/CloudEventEnvelope"
+        - type: object
+          properties:
+            type:
+              const: com.warehouse.wes.process-path-management.cptschedule.CPTScheduleChanged
+            dataschema:
+              const: "urn:warehouse:process-path-management:events:CPTScheduleChanged:v1"
+            data:
+              $ref: "#/components/schemas/CPTScheduleData"
+
+    ProcessPathCreatedAnalyticsCloudEvent:
+      title: CloudEvent + ProcessPathCreated data (analytics stream)
+      allOf:
+        - $ref: "#/components/schemas/CloudEventEnvelope"
+        - type: object
+          properties:
+            type:
+              const: com.warehouse.wes.process-path-management.processpath.ProcessPathCreated
+            dataschema:
+              const: "urn:warehouse:process-path-management:analytics:ProcessPathCreated:v1"
+            data:
+              $ref: "#/components/schemas/ProcessPathData"
+
+    ProcessPathUpdatedAnalyticsCloudEvent:
+      title: CloudEvent + ProcessPathUpdated data (analytics stream)
+      allOf:
+        - $ref: "#/components/schemas/CloudEventEnvelope"
+        - type: object
+          properties:
+            type:
+              const: com.warehouse.wes.process-path-management.processpath.ProcessPathUpdated
+            dataschema:
+              const: "urn:warehouse:process-path-management:analytics:ProcessPathUpdated:v1"
+            data:
+              $ref: "#/components/schemas/ProcessPathData"
+
+    ProcessPathDeactivatedAnalyticsCloudEvent:
+      title: CloudEvent + ProcessPathDeactivated data (analytics stream)
+      allOf:
+        - $ref: "#/components/schemas/CloudEventEnvelope"
+        - type: object
+          properties:
+            type:
+              const: com.warehouse.wes.process-path-management.processpath.ProcessPathDeactivated
+            dataschema:
+              const: "urn:warehouse:process-path-management:analytics:ProcessPathDeactivated:v1"
+            data:
+              $ref: "#/components/schemas/ProcessPathDeactivatedData"
+
+    CPTScheduleChangedAnalyticsCloudEvent:
+      title: CloudEvent + CPTScheduleChanged data (analytics stream)
+      allOf:
+        - $ref: "#/components/schemas/CloudEventEnvelope"
+        - type: object
+          properties:
+            type:
+              const: com.warehouse.wes.process-path-management.cptschedule.CPTScheduleChanged
+            dataschema:
+              const: "urn:warehouse:process-path-management:analytics:CPTScheduleChanged:v1"
+            data:
+              $ref: "#/components/schemas/CPTScheduleData"
+
+    ProcessPathDeactivatedData:
       type: object
-      title: Envelope + CPTScheduleChanged data
-      required: [event_id, event_type, occurred_at, source, data]
+      required: [path_id]
       properties:
-        event_id:
+        path_id:
           type: string
-          format: uuid
-        event_type:
-          type: string
-          enum: ["CPTScheduleChanged"]
-        occurred_at:
-          type: string
-          format: date-time
-        source:
-          type: string
-          enum: ["process-path-management"]
-        data:
-          $ref: "#/components/schemas/CPTScheduleData"
+          example: PACK
+          description: >-
+            required_capabilities/match_prefix/direct/cycle_time_p95/
+            eligibility are omitted (not empty-arrayed/zeroed) on a
+            deactivation — it carries no definition data, only the
+            PathId and the fact that it happened.
 
     ProcessPathData:
       type: object

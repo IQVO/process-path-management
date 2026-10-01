@@ -8,53 +8,27 @@ package kafka
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"time"
 
 	kafkago "github.com/segmentio/kafka-go"
 
+	"github.com/claudioed/process-path-management/internal/adapters/kafka/cloudevents"
 	"github.com/claudioed/process-path-management/internal/domain/cptschedule"
 	"github.com/claudioed/process-path-management/internal/domain/shared"
 )
 
-// Topic is the topic this service publishes every ProcessPath* event to.
+// Topic is the topic this service publishes every integration event to.
 // A single topic (not one per event type) matches the fleet's existing
-// convention (e.g. warehouse.fulfillment.events carries several event
-// types, filtered by consumers on event_type) — consumers that only care
-// about, say, deactivations still see every message, but the filter cost
-// is negligible against the operational simplicity of one topic per
-// bounded context.
+// convention: consumers dispatch on the CloudEvents `type` attribute
+// (ADR 0016) and ignore types they do not handle, so one topic per bounded
+// context stays operationally simple.
 const Topic = "warehouse.process-path-management.events"
 
-// Source identifies this service in the "source" field of every envelope
-// it publishes.
-const Source = "process-path-management"
-
-// The event types published on Topic — this service's own past-tense
-// domain events, verbatim. Any other event_type appearing on this topic
-// would be a bug in this publisher, not something a consumer should ever
-// need to guard against.
-const (
-	EventTypeProcessPathCreated     = "ProcessPathCreated"
-	EventTypeProcessPathUpdated     = "ProcessPathUpdated"
-	EventTypeProcessPathDeactivated = "ProcessPathDeactivated"
-	EventTypeCPTScheduleChanged     = "CPTScheduleChanged"
-)
-
-// Envelope is the CloudEvents-like wrapper shared across all
-// warehouse-systems services (see e.g. fulfillment-execution's own
-// kafka.Envelope) — Data is left as `any` here (rather than a fixed
-// struct like fulfillment-execution's single-event-type Envelope)
-// because this service publishes three distinct event shapes onto the
-// same topic.
-type Envelope struct {
-	EventId    string    `json:"event_id"`
-	EventType  string    `json:"event_type"`
-	OccurredAt time.Time `json:"occurred_at"`
-	Source     string    `json:"source"`
-	Data       any       `json:"data"`
-}
+// Every message this package produces is a CloudEvents 1.0 event in
+// structured content mode (ADR 0016), built exclusively via
+// internal/adapters/kafka/cloudevents. The `type` strings this service
+// publishes are the cloudevents.Type* constants — an exact cross-service
+// contract consumed by four sibling services.
 
 // ProcessPathData is the payload shape for ALL THREE ProcessPath* event
 // types on this topic. RequiredCapabilities is omitted (not
@@ -155,8 +129,9 @@ func NewPublisher(brokers []string, newId func() string) *Publisher {
 // (so a multi-topic outbox/relay can route it correctly — ADR 0007), the
 // partition key (the PathId, so every event for the same path lands on
 // the same partition and a replaying consumer sees a given path's
-// Created/Updated/Deactivated in publish order), and the JSON-marshalled
-// envelope. It is the unit the transactional outbox (postgres.OutboxPublisher)
+// Created/Updated/Deactivated in publish order), and the structured-mode
+// CloudEvents JSON (ADR 0016). EventId is the CloudEvents `id` and
+// EventType the full CloudEvents `type`. It is the unit the transactional outbox (postgres.OutboxPublisher)
 // stores and the outbox relay later hands to a Sink, so the direct and
 // outbox paths can never disagree about what a message looks like.
 type Encoded struct {
@@ -187,21 +162,62 @@ func (IntegrationEncoder) Encode(event shared.DomainEvent, eventId string) (Enco
 	return Encode(event, eventId)
 }
 
-// Encode translates a domain event into its Kafka wire form on Topic.
-// eventId is the envelope's event_id — callers supply it so the outbox can
-// persist the same id it will later publish under, making redelivery
-// detectable by consumers.
+// Encode translates a domain event into its Kafka wire form on Topic: a
+// CloudEvents 1.0 event with dataschema
+// urn:warehouse:process-path-management:events:<EventName>:v1. eventId is
+// the CloudEvents `id` — callers supply it so the outbox can persist the
+// same id it will later publish under, making redelivery detectable by
+// consumers.
 func Encode(event shared.DomainEvent, eventId string) (Encoded, error) {
-	var (
-		key  string
-		data any
-		typ  string
-	)
+	return encodeFor(event, eventId, Topic, cloudevents.StreamEvents)
+}
+
+// encodeFor is the ONE place a domain event becomes a CloudEvent, shared
+// by the integration Encode and the AnalyticsEncoder so the two streams can
+// never disagree on type, subject, time or payload — only topic and
+// dataschema differ.
+func encodeFor(event shared.DomainEvent, eventId, topic, stream string) (Encoded, error) {
+	m, err := mapEvent(event)
+	if err != nil {
+		return Encoded{}, err
+	}
+	value, err := cloudevents.New(cloudevents.Spec{
+		ID:        eventId,
+		Entity:    m.entity,
+		EventName: m.name,
+		Subject:   m.key,
+		Time:      event.OccurredAt(),
+		Stream:    stream,
+		Version:   1,
+		Data:      m.data,
+	})
+	if err != nil {
+		return Encoded{}, fmt.Errorf("kafka: encode %s: %w", m.name, err)
+	}
+	return Encoded{
+		Topic:     topic,
+		EventId:   eventId,
+		EventType: cloudevents.Type(m.entity, m.name),
+		Key:       m.key,
+		Value:     value,
+	}, nil
+}
+
+// mapped is a domain event's CloudEvents coordinates plus its payload.
+type mapped struct {
+	entity string
+	name   string
+	key    string
+	data   any
+}
+
+// mapEvent maps a domain event to its entity/name, aggregate key (the
+// Kafka key AND the CloudEvents subject) and `data` payload.
+func mapEvent(event shared.DomainEvent) (mapped, error) {
 	switch e := event.(type) {
 	case shared.ProcessPathCreated:
-		key = string(e.PathId)
-		typ = EventTypeProcessPathCreated
-		data = ProcessPathData{
+		key := string(e.PathId)
+		return mapped{cloudevents.EntityProcessPath, "ProcessPathCreated", key, ProcessPathData{
 			PathId:                  key,
 			MatchPrefix:             e.MatchPrefix,
 			Direct:                  e.Direct,
@@ -209,11 +225,10 @@ func Encode(event shared.DomainEvent, eventId string) (Encoded, error) {
 			DestinationLocationRole: string(e.DestinationLocationRole),
 			CycleTimeP95:            e.CycleTimeP95.String(),
 			Eligibility:             eligibilityToData(e.Eligibility),
-		}
+		}}, nil
 	case shared.ProcessPathUpdated:
-		key = string(e.PathId)
-		typ = EventTypeProcessPathUpdated
-		data = ProcessPathData{
+		key := string(e.PathId)
+		return mapped{cloudevents.EntityProcessPath, "ProcessPathUpdated", key, ProcessPathData{
 			PathId:                  key,
 			MatchPrefix:             e.MatchPrefix,
 			Direct:                  e.Direct,
@@ -221,39 +236,24 @@ func Encode(event shared.DomainEvent, eventId string) (Encoded, error) {
 			DestinationLocationRole: string(e.DestinationLocationRole),
 			CycleTimeP95:            e.CycleTimeP95.String(),
 			Eligibility:             eligibilityToData(e.Eligibility),
-		}
+		}}, nil
 	case shared.ProcessPathDeactivated:
-		key = string(e.PathId)
-		typ = EventTypeProcessPathDeactivated
-		data = ProcessPathData{PathId: key}
+		key := string(e.PathId)
+		return mapped{cloudevents.EntityProcessPath, "ProcessPathDeactivated", key, ProcessPathData{PathId: key}}, nil
 	case cptschedule.CPTScheduleChanged:
-		key = string(e.SiteId)
-		typ = EventTypeCPTScheduleChanged
-		data = CPTScheduleData{
+		key := string(e.SiteId)
+		return mapped{cloudevents.EntityCPTSchedule, "CPTScheduleChanged", key, CPTScheduleData{
 			SiteId:   key,
 			Timezone: e.Timezone,
 			Cutoffs:  cutoffsToData(e.Cutoffs),
-		}
+		}}, nil
 	default:
 		// An event type this publisher does not know how to serialize.
 		// Every event this service's use cases raise today is one of
 		// the four above; a future new event type must be added here
 		// explicitly rather than silently dropped.
-		return Encoded{}, fmt.Errorf("kafka: unknown event type %T", event)
+		return mapped{}, fmt.Errorf("kafka: unknown event type %T", event)
 	}
-
-	env := Envelope{
-		EventId:    eventId,
-		EventType:  typ,
-		OccurredAt: event.OccurredAt(),
-		Source:     Source,
-		Data:       data,
-	}
-	payload, err := json.Marshal(env)
-	if err != nil {
-		return Encoded{}, fmt.Errorf("kafka: marshal envelope: %w", err)
-	}
-	return Encoded{Topic: Topic, EventId: eventId, EventType: typ, Key: key, Value: payload}, nil
 }
 
 // Publish forwards event onto Kafka directly (no outbox), keyed by
@@ -275,7 +275,12 @@ func (p *Publisher) Publish(ctx context.Context, event shared.DomainEvent) error
 // and the analytics topic (ADR 0007) — the topic travels with the
 // message, not with the writer.
 func (p *Publisher) Send(ctx context.Context, enc Encoded) error {
-	msg := kafkago.Message{Topic: enc.Topic, Key: []byte(enc.Key), Value: enc.Value}
+	msg := kafkago.Message{
+		Topic:   enc.Topic,
+		Key:     []byte(enc.Key),
+		Value:   enc.Value,
+		Headers: []kafkago.Header{cloudevents.ContentTypeHeader()},
+	}
 	if err := p.Writer.WriteMessages(ctx, msg); err != nil {
 		return fmt.Errorf("kafka: publish %s: %w", enc.EventType, err)
 	}

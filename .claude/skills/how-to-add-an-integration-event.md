@@ -54,30 +54,37 @@ consume `ProcessPath*`; order-management also consumes `cycle_time_p95`,
 consumer's decoder in the sibling repo on `origin/develop`, since a field
 on the wire is not the same as a field someone reads.
 
-### 2. Envelope: this repo's own shape (CloudEvents-*like*, not strict CloudEvents)
+### 2. Envelope: CloudEvents 1.0, mandatory (ADR 0016)
 
-Every message is JSON with routing in the top-level context attributes —
-see `internal/adapters/outbound/kafka/publisher.go`'s `Envelope` struct
-and `apis/asyncapi.yaml`'s intro, which explicitly notes this is
-"CloudEvents-*like* (but NOT strict CloudEvents-spec)":
+Every message on BOTH topics is a CloudEvents 1.0 event in structured
+content mode, built ONLY via `internal/adapters/kafka/cloudevents`
+(`New`/`Decode`/`ContentTypeHeader`, wrapping
+`github.com/cloudevents/sdk-go/v2/event`). There is no flat envelope, no
+dual mode, no envelope toggle — never hand-roll an envelope struct.
 
 ```json
 {
-  "event_id": "uuid-v4",
-  "event_type": "ProcessPathCreated",
-  "occurred_at": "2026-09-06T00:00:00Z",
-  "source": "process-path-management",
+  "specversion": "1.0",
+  "id": "uuid-v4 (minted once, persisted with the outbox row)",
+  "source": "/warehouse/process-path-management",
+  "type": "com.warehouse.wes.process-path-management.processpath.ProcessPathCreated",
+  "subject": "PICK",
+  "time": "2026-09-06T00:00:00Z",
+  "datacontenttype": "application/json",
+  "dataschema": "urn:warehouse:process-path-management:events:ProcessPathCreated:v1",
   "data": { }
 }
 ```
 
-`event_type` here is a bare past-tense name (`ProcessPathCreated`), not
-the fleet's fuller reverse-DNS `com.warehouse.<subdomain>.<context>.<entity>.<Event>`
-convention used elsewhere — this repo's four `EventType*` constants in
-`publisher.go` are the source of truth for this service; don't invent a
-different naming scheme for a fifth one.
+Kafka header: `content-type: application/cloudevents+json; charset=UTF-8`.
+`type` = `com.warehouse.wes.process-path-management.<entity>.<EventName>`;
+entities today are `processpath` and `cptschedule`. Add a new event's
+full type string as a `Type*` constant in
+`internal/adapters/kafka/cloudevents/types.go` (and its assertion in
+`cloudevents_test.go`'s `TestPublishedTypeCatalogue`). A breaking payload
+change is a NEW `.v2` type plus `dataschema` `:v2`, never a mutation.
 
-### 3. Implementation: `Encode`, not `Publish`, is where the wire shape lives
+### 3. Implementation: `mapEvent`, not `Publish`, is where the wire shape lives
 
 Add the event struct to `internal/domain/processpath/` or
 `internal/domain/cptschedule/` (it should already exist as a domain
@@ -86,27 +93,31 @@ onto Kafka, it doesn't invent a new payload shape at the adapter layer;
 see `shared.ProcessPathCreated`/`ProcessPathUpdated`/`ProcessPathDeactivated`
 and `cptschedule.CPTScheduleChanged`).
 
-This repo already separated Encode from Send (ADR 0007's fan-out
-extension of ADR 0003) specifically so the outbox and the direct-publish
-path can never disagree on wire format — add your new event's case to
-the `switch` in `kafka.Encode` (`internal/adapters/outbound/kafka/publisher.go`):
+Both the integration `Encode` and the `AnalyticsEncoder` go through the
+ONE `encodeFor` → `mapEvent` switch in
+`internal/adapters/outbound/kafka/publisher.go`, so the two streams can
+never disagree on type/subject/time/payload (only topic and `dataschema`
+differ). Add your case there:
 
 ```go
 case shared.YourNewEvent:
-    key = string(e.PathId)      // partition key: usually the aggregate id
-    typ = EventTypeYourNewEvent // add this const alongside the other four
-    data = YourNewEventData{ /* wire-shape struct, its own type */ }
+    key := string(e.PathId) // Kafka key AND CloudEvents subject
+    return mapped{cloudevents.EntityProcessPath, "YourNewEvent", key, YourNewEventData{ /* ... */ }}, nil
 ```
 
-Never add logic to `Publish`/`Send` themselves — they only marshal/write
-what `Encode` already produced. If a second topic (e.g. an analytics
-variant, ADR 0007) also needs this event, add a matching case to
-`analytics_publisher.go`'s own `Encode` — the two are intentionally
-separate `Encoder` implementations, not one shared switch.
+Never add logic to `Publish`/`Send` themselves — they only write what
+`Encode` already produced (and attach the content-type header). If the
+analytics projector should react to it, add the full `type` to
+`isProjectingEventType`/`applyProjection` in
+`internal/adapters/inbound/kafka/analytics_consumer.go` — it dispatches on
+the FULL type and ignores unknown types.
 
 ### 4. Contract + docs
 
-- Add the message to `apis/asyncapi.yaml` under this service's channel,
+- Add the message to `apis/asyncapi.yaml` under BOTH channels (with its
+  exact `type` const and `dataschema` via a `<Event>CloudEvent` /
+  `<Event>AnalyticsCloudEvent` schema `allOf` the shared
+  `CloudEventEnvelope`),
   matching the entity-grouping convention already there (group by
   aggregate — `ProcessPathCreated`/`Updated`/`Deactivated` keyed by
   `path_id`, `CPTScheduleChanged` keyed by `site_id` — not chronologically).
@@ -121,7 +132,10 @@ separate `Encoder` implementations, not one shared switch.
 
 ### 5. Test
 
-Unit test the marshal shape against `kafka.Encode` directly (see
+Add the event to `golden_test.go`'s table — it asserts the EXACT
+CloudEvents JSON (every attribute, the full `type`, `dataschema`) on both
+the integration and analytics streams plus the `content-type` header.
+Other marshal-shape tests go against `kafka.Encode` directly (see
 `publisher_test.go`/`analytics_publisher_test.go`/
 `cpt_schedule_publisher_test.go` — never a real broker in a unit test).
 If you also add a `-tags=integration` test asserting real delivery, this
@@ -150,7 +164,10 @@ consumer that replays a topic's full history from `FirstOffset` on every
 process start MUST use a per-process-unique consumer group
 (hostname+PID+timestamp), never a fixed shared string, or a locally-run
 harness process can silently starve the live in-cluster Deployment of
-its partition (the exact wes-work-planning#67 incident). This repo's own
+its partition (the exact wes-work-planning#67 incident). Any such consumer
+must also follow ADR 0016: `cloudevents.Decode`, dispatch on the full
+`type` string from the fleet catalogue, dedupe on `id`, DLQ/skip anything
+that fails validation. This repo's own
 `internal/architecture/fitness_test.go` already carries
 `TestKafkaConsumerGroupNeverHardcodedInline`, which statically bans a
 `kafkago.ReaderConfig`'s `GroupID:` field from being assigned a bare

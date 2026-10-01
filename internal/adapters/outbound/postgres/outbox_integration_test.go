@@ -15,6 +15,7 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 
+	"github.com/claudioed/process-path-management/internal/adapters/kafka/cloudevents"
 	outboundkafka "github.com/claudioed/process-path-management/internal/adapters/outbound/kafka"
 	"github.com/claudioed/process-path-management/internal/adapters/outbound/postgres"
 	"github.com/claudioed/process-path-management/internal/application/usecases"
@@ -92,7 +93,7 @@ func TestOutbox_DefinePath_CommitsAggregateAndEventTogether(t *testing.T) {
 	if _, err := uc.Execute(ctx, "PICK", "pick", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, 2*time.Hour, shared.Eligibility{}); err != nil {
 		t.Fatalf("define: %v", err)
 	}
-	if got := countOutbox(t, pool, "published_at IS NULL AND event_type = 'ProcessPathCreated' AND aggregate_id = 'PICK'"); got != 1 {
+	if got := countOutbox(t, pool, "published_at IS NULL AND event_type = '"+cloudevents.TypeProcessPathCreated+"' AND aggregate_id = 'PICK'"); got != 1 {
 		t.Fatalf("expected 1 unpublished ProcessPathCreated row for PICK, got %d", got)
 	}
 	found, err := postgres.NewProcessPathRepo(pool).FindByID(ctx, "PICK")
@@ -161,10 +162,19 @@ func TestOutboxRelay_PublishesInOrderAndMarksRows(t *testing.T) {
 	if n != 3 || len(sink.sent) != 3 {
 		t.Fatalf("expected 3 published, got n=%d sent=%d", n, len(sink.sent))
 	}
-	want := []string{outboundkafka.EventTypeProcessPathCreated, outboundkafka.EventTypeProcessPathUpdated, outboundkafka.EventTypeProcessPathDeactivated}
+	want := []string{cloudevents.TypeProcessPathCreated, cloudevents.TypeProcessPathUpdated, cloudevents.TypeProcessPathDeactivated}
 	for i, w := range want {
 		if sink.sent[i].EventType != w || sink.sent[i].Key != "SLAM" {
 			t.Fatalf("event %d: want %s keyed SLAM, got %s keyed %s", i, w, sink.sent[i].EventType, sink.sent[i].Key)
+		}
+		// The relayed value is the CloudEvent minted at enqueue time: its
+		// `id` is exactly the outbox row's persisted event_id (ADR 0016).
+		e, err := cloudevents.Decode(sink.sent[i].Value)
+		if err != nil {
+			t.Fatalf("event %d: relayed value is not a CloudEvent: %v", i, err)
+		}
+		if e.ID() != sink.sent[i].EventId || e.Type() != w || e.Subject() != "SLAM" {
+			t.Fatalf("event %d: id/type/subject = %s/%s/%s, want %s/%s/SLAM", i, e.ID(), e.Type(), e.Subject(), sink.sent[i].EventId, w)
 		}
 	}
 	if got := countOutbox(t, pool, "published_at IS NULL"); got != 0 {

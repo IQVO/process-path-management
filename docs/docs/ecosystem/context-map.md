@@ -114,15 +114,20 @@ Catalogue Growth & Change" report served by `pathmgmt-reports`. It
 projects the three `ProcessPath*` event types and ignores
 `CPTScheduleChanged`.
 
-The envelope (identical CloudEvents-like shape across every
-warehouse-systems publisher):
+Every message on both topics is a **CloudEvents 1.0** event in structured
+content mode, Kafka header `content-type: application/cloudevents+json;
+charset=UTF-8` ([ADR 0016](/docs/adr/0016-cloudevents-mandatory-event-envelope)):
 
 ```json
 {
-  "event_id": "uuid-v4",
-  "event_type": "ProcessPathCreated",
-  "occurred_at": "2026-09-06T00:00:00Z",
-  "source": "process-path-management",
+  "specversion": "1.0",
+  "id": "4f1c2a7e-9d31-4a6b-8f0e-6b2c1d5e7a90",
+  "source": "/warehouse/process-path-management",
+  "type": "com.warehouse.wes.process-path-management.processpath.ProcessPathCreated",
+  "subject": "PICK",
+  "time": "2026-09-06T00:00:00Z",
+  "datacontenttype": "application/json",
+  "dataschema": "urn:warehouse:process-path-management:events:ProcessPathCreated:v1",
   "data": {
     "path_id": "PICK",
     "match_prefix": "pick",
@@ -132,6 +137,18 @@ warehouse-systems publisher):
   }
 }
 ```
+
+Exact `type` strings consumers dispatch on (cross-service contract):
+
+| type | consumers |
+| --- | --- |
+| `com.warehouse.wes.process-path-management.processpath.ProcessPathCreated` | fulfillment-execution, wes-work-planning, workforce-management, order-management |
+| `com.warehouse.wes.process-path-management.processpath.ProcessPathUpdated` | same four |
+| `com.warehouse.wes.process-path-management.processpath.ProcessPathDeactivated` | same four |
+| `com.warehouse.wes.process-path-management.cptschedule.CPTScheduleChanged` | order-management |
+
+The analytics occurrence carries the same `type`/`id`/`subject`/`time`/`data`
+with `dataschema` `urn:warehouse:process-path-management:analytics:<EventName>:v1`.
 
 See [apis/asyncapi.yaml](https://github.com/claudioed/process-path-management/blob/develop/apis/asyncapi.yaml)
 for the full, per-event-type schema.
