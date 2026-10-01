@@ -128,3 +128,56 @@ func TestAnalyticsConsumer_PoisonMessage_GoesToDeadLetterTopicWithoutBlockingPar
 	}
 	t.Fatal("consumer never projected the healthy message published right after the poison one")
 }
+
+// TestAnalyticsConsumer_LegacyFlatEnvelope_IsDeadLetteredNotParsed proves
+// ADR 0016's consumer rule against a real broker: a retired flat-envelope
+// message is a deterministic poison message — it lands unmodified on
+// "<topic>.dlq", is never projected, and the CloudEvent published right
+// after it on the same partition is still projected.
+func TestAnalyticsConsumer_LegacyFlatEnvelope_IsDeadLetteredNotParsed(t *testing.T) {
+	brokerList := startBroker(t)
+	topic := uniqueTopic(t)
+	dlqTopic := topic + ".dlq"
+	createTopic(t, brokerList, topic)
+	createTopic(t, brokerList, dlqTopic)
+
+	base := time.Now().UTC().Truncate(time.Second)
+	store := analyticsstore.NewMemoryStore()
+	consumer := inboundkafka.NewAnalyticsConsumer(brokerList, topic, store, newMemoryProcessedEvents(), nil)
+	defer func() { _ = consumer.Close() }()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = consumer.Run(ctx) }()
+
+	dlqReader := kafkago.NewReader(kafkago.ReaderConfig{
+		Brokers:     brokerList,
+		Topic:       dlqTopic,
+		GroupID:     fmt.Sprintf("dlq-legacy-reader-%d", time.Now().UnixNano()),
+		StartOffset: kafkago.FirstOffset,
+	})
+	defer func() { _ = dlqReader.Close() }()
+
+	legacy := legacyFlatMsg(t, "PICK", "evt-legacy-flat", base)
+	publish(t, brokerList, topic, legacy, envelopeMsg(t, "PACK", "evt-ce-healthy", "ProcessPathCreated", base))
+
+	dlqCtx, dlqCancel := context.WithTimeout(ctx, 60*time.Second)
+	defer dlqCancel()
+	dlqMsg, err := dlqReader.ReadMessage(dlqCtx)
+	if err != nil {
+		t.Fatalf("read from dead-letter topic: %v", err)
+	}
+	if string(dlqMsg.Value) != string(legacy.Value) {
+		t.Fatalf("dead-letter payload = %s, want the raw legacy message %s", dlqMsg.Value, legacy.Value)
+	}
+
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		rep, err := store.Query(context.Background(), reportQuery(base))
+		if err == nil && len(rep.Rows) == 1 && rep.Rows[0].PathsDefined == 1 {
+			return
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	t.Fatal("expected exactly the CloudEvent (not the legacy message) to be projected")
+}

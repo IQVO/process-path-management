@@ -110,3 +110,9 @@ empty-arrayed) since a deactivation carries no definition data.
 Every event is also enqueued onto `warehouse.process-path-management.analytics`
 (ADR 0007) in the same outbox transaction; that topic is consumed only by
 this service's own `pathmgmt-projector`.
+
+On the wire every event is a CloudEvents 1.0 event (ADR 0016) with
+`type` `com.warehouse.wes.process-path-management.<processpath|cptschedule>.<EventName>`
+and `subject` = `path_id` / `site_id` (the Kafka key). These four full type
+strings are consumed byte-for-byte by four sibling services — see
+`internal/adapters/kafka/cloudevents/types.go`.

@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/claudioed/process-path-management/internal/adapters/kafka/cloudevents"
 	outboundkafka "github.com/claudioed/process-path-management/internal/adapters/outbound/kafka"
 	"github.com/claudioed/process-path-management/internal/domain/cptschedule"
 	"github.com/claudioed/process-path-management/internal/domain/shared"
@@ -162,21 +163,21 @@ func TestPublish_CPTScheduleChanged_WritesFullSnapshotEnvelope(t *testing.T) {
 		t.Fatalf("want message key sp1, got %s", w.messages[0].Key)
 	}
 
-	var env outboundkafka.Envelope
-	if err := json.Unmarshal(w.messages[0].Value, &env); err != nil {
-		t.Fatalf("unmarshal envelope: %v", err)
-	}
-	if env.EventType != outboundkafka.EventTypeCPTScheduleChanged {
-		t.Fatalf("want event_type CPTScheduleChanged, got %s", env.EventType)
-	}
-
-	raw, err := json.Marshal(env.Data)
+	e, err := cloudevents.Decode(w.messages[0].Value)
 	if err != nil {
-		t.Fatalf("re-marshal data: %v", err)
+		t.Fatalf("decode cloudevent: %v", err)
 	}
+	if e.Type() != cloudevents.TypeCPTScheduleChanged {
+		t.Fatalf("want type %s, got %s", cloudevents.TypeCPTScheduleChanged, e.Type())
+	}
+	if e.Subject() != "sp1" {
+		t.Fatalf("want subject sp1, got %s", e.Subject())
+	}
+	assertContentTypeHeader(t, w.messages[0])
+
 	var data outboundkafka.CPTScheduleData
-	if err := json.Unmarshal(raw, &data); err != nil {
-		t.Fatalf("unmarshal CPTScheduleData: %v", err)
+	if err := e.DataAs(&data); err != nil {
+		t.Fatalf("DataAs CPTScheduleData: %v", err)
 	}
 	if data.SiteId != "sp1" || data.Timezone != "America/Sao_Paulo" {
 		t.Fatalf("unexpected header: %+v", data)
@@ -214,7 +215,7 @@ func TestPublish_CPTScheduleChanged_GoesThroughOutboxSameAsProcessPathEvents(t *
 	if enc.Topic != outboundkafka.Topic {
 		t.Fatalf("want topic %s, got %s", outboundkafka.Topic, enc.Topic)
 	}
-	if enc.EventType != outboundkafka.EventTypeCPTScheduleChanged {
-		t.Fatalf("want event type CPTScheduleChanged, got %s", enc.EventType)
+	if enc.EventType != cloudevents.TypeCPTScheduleChanged {
+		t.Fatalf("want event type %s, got %s", cloudevents.TypeCPTScheduleChanged, enc.EventType)
 	}
 }

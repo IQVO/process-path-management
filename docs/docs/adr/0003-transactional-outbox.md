@@ -11,6 +11,11 @@ description: ADR 0003 — why this service stopped publishing to Kafka from insi
 ## Status
 
 Accepted — implemented in the same change that introduced this record.
+The outbox mechanics stand; the encoded message format it stores (the
+flat `event_id`/`event_type`/`occurred_at` envelope) is **Superseded by
+ADR-0016** — rows now hold the structured-mode CloudEvents 1.0 bytes, with
+`event_id` = the CloudEvents `id` and `event_type` = the full CloudEvents
+`type`.
 
 ## Context
 

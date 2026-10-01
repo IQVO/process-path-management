@@ -4,7 +4,6 @@ package kafka_test
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"testing"
 	"time"
@@ -13,6 +12,7 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	tckafka "github.com/testcontainers/testcontainers-go/modules/kafka"
 
+	"github.com/claudioed/process-path-management/internal/adapters/kafka/cloudevents"
 	outboundkafka "github.com/claudioed/process-path-management/internal/adapters/outbound/kafka"
 	"github.com/claudioed/process-path-management/internal/domain/shared"
 )
@@ -170,9 +170,8 @@ func TestPublisherKeysMessagesForSamePathIdOntoTheSamePartition(t *testing.T) {
 			break
 		}
 		if string(msg.Key) == samePathId {
-			var env outboundkafka.Envelope
-			if jsonErr := json.Unmarshal(msg.Value, &env); jsonErr != nil {
-				t.Fatalf("unmarshal envelope: %v", jsonErr)
+			if _, ceErr := cloudevents.Decode(msg.Value); ceErr != nil {
+				t.Fatalf("decode cloudevent: %v", ceErr)
 			}
 			countOnSamePartition++
 		}

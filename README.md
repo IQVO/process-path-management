@@ -3,7 +3,7 @@
 > **⚠️ Study project.** This repository is an educational exercise in
 > Domain-Driven Design applied to warehouse management/execution systems. It
 > follows real industry-standard patterns and terminology (WMS/WES/WCS,
-> CloudEvents-like envelopes, RFC 7807, hexagonal architecture) but is
+> CloudEvents 1.0, RFC 7807, hexagonal architecture) but is
 > **not a production system** and is **not affiliated with, endorsed by, or
 > representative of any real-world
 > company**.
@@ -400,9 +400,6 @@ have all migrated to. `helm lint` and two real `helm template` renders
   consumer.** None of the four consuming repos decodes
   `destination_location_role` today. See
   [docs/docs/ecosystem/context-map.md](docs/docs/ecosystem/context-map.md).
-- **The analytics topic has no AsyncAPI document.**
-  `apis/asyncapi.yaml` covers the integration topic only; the analytics
-  envelope is described in ADR 0007.
 
 ## Architecture Decision Records
 
@@ -417,6 +414,7 @@ have all migrated to. `helm lint` and two real `helm template` renders
 9. [0009 — Optional destination LocationRole on a ProcessPath](docs/docs/adr/0009-destination-location-role-on-process-path.md)
 10. [0010 — Process paths publish a fulfillment capability contract (cycle time, eligibility, CPT schedule)](docs/docs/adr/0010-fulfillment-capability-contract.md)
 11. [0011 — Transactional Idempotency-Key middleware for POST /process-paths](docs/docs/adr/0011-idempotency-key-middleware.md)
+12. [0016 — CloudEvents 1.0 as the mandatory event envelope](docs/docs/adr/0016-cloudevents-mandatory-event-envelope.md)
 
 ## License
 

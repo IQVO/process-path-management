@@ -10,7 +10,10 @@ description: ADR 0007 — an additive analytical read model, the "Process Path C
 
 ## Status
 
-**Accepted.**
+**Accepted.** §1's analytics "Envelope v1" wire format (`event_id`/
+`event_type`/`occurred_at`/`source`/`schema_version`/`data`) is
+**Superseded by ADR-0016** (CloudEvents 1.0 as the mandatory event
+envelope); the rest of this decision stands.
 
 ## Context
 

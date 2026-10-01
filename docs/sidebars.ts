@@ -42,6 +42,7 @@ const sidebars: SidebarsConfig = {
         'adr/0013-kafka-writer-hash-balancer',
         'adr/0014-horizontal-autoscaling-and-pgxpool-tuning',
         'adr/0015-migrations-direct-postgres-connection',
+        'adr/0016-cloudevents-mandatory-event-envelope',
       ],
     },
   ],
