@@ -73,6 +73,7 @@ func NewAnalyticsDirectPublisher(brokers []string, newId func() string) *Analyti
 		encoder: NewAnalyticsEncoder(newId),
 		writer: &kafkago.Writer{
 			BatchTimeout:           syncWriterBatchTimeout,
+			RequiredAcks:           syncWriterRequiredAcks,
 			Addr:                   kafkago.TCP(brokers...),
 			Topic:                  AnalyticsTopic,
 			Balancer:               &kafkago.Hash{},

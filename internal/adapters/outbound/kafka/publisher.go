@@ -118,6 +118,7 @@ func NewPublisher(brokers []string, newId func() string) *Publisher {
 	return &Publisher{
 		Writer: &kafkago.Writer{
 			BatchTimeout:           syncWriterBatchTimeout,
+			RequiredAcks:           syncWriterRequiredAcks,
 			Addr:                   kafkago.TCP(brokers...),
 			Balancer:               &kafkago.Hash{},
 			AllowAutoTopicCreation: true,
