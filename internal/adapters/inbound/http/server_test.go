@@ -127,6 +127,22 @@ func TestListPaths_NonBooleanAll_Returns400WithProblemDetails(t *testing.T) {
 	}
 }
 
+// The published contract types `all` as a boolean: only "true"/"false" are
+// valid. strconv.ParseBool's lenient spellings must be rejected (the
+// Schemathesis contract job found ?all=F answered 200).
+func TestListPaths_LenientBooleanSpellings_Return400(t *testing.T) {
+	for _, v := range []string{"F", "T", "1", "0", "t", "f", "TRUE", "False"} {
+		t.Run(v, func(t *testing.T) {
+			router := newTestServer(t)
+			rr := httptest.NewRecorder()
+			router.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/process-paths?all="+v, nil))
+			if rr.Code != http.StatusBadRequest {
+				t.Fatalf("?all=%s: want 400, got %d", v, rr.Code)
+			}
+		})
+	}
+}
+
 func TestListPaths_AllFalse_StillActiveOnly(t *testing.T) {
 	router := newTestServer(t)
 	body := `{"pathId":"PICK","matchPrefix":"pick","direct":true,"requiredCapabilities":["pick"],"cycleTimeP95":"2h"}`

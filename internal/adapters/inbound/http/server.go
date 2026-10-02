@@ -2,10 +2,10 @@ package http
 
 import (
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
@@ -165,7 +165,7 @@ func (s *Server) handleListPaths(w http.ResponseWriter, r *http.Request) {
 	// 400 problem+json, never silently coerced to "false".
 	activeOnly := true
 	if vals, ok := r.URL.Query()["all"]; ok {
-		all, err := strconv.ParseBool(vals[0])
+		all, err := parseStrictBool(vals[0])
 		if err != nil {
 			writeProblem(w, http.StatusBadRequest, problemInfo{"invalid-query-parameter", "The 'all' query parameter must be a boolean (true or false)"}, "could not parse 'all' as a boolean: "+vals[0], r.URL.Path)
 			return
@@ -441,4 +441,20 @@ func allowedOrigins() []string {
 		return strings.Split(v, ",")
 	}
 	return []string{"http://localhost:5173", "http://localhost:5189"}
+}
+
+// parseStrictBool accepts exactly "true" or "false" -- the only spellings
+// of a JSON-Schema/OpenAPI `boolean` query parameter. strconv.ParseBool is
+// far more lenient ("1", "t", "T", "F", "TRUE", ...), so GET
+// /process-paths?all=F used to answer 200 for a value the published
+// contract says is invalid (found by the Schemathesis contract job).
+func parseStrictBool(v string) (bool, error) {
+	switch v {
+	case "true":
+		return true, nil
+	case "false":
+		return false, nil
+	default:
+		return false, fmt.Errorf("%q is not a boolean (want true or false)", v)
+	}
 }
