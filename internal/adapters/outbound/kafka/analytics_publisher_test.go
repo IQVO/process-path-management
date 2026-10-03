@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/claudioed/process-path-management/internal/adapters/kafka/cloudevents"
 	outboundkafka "github.com/claudioed/process-path-management/internal/adapters/outbound/kafka"
 	"github.com/claudioed/process-path-management/internal/domain/shared"
 )
@@ -29,30 +30,30 @@ func TestAnalyticsEncoder_Encode_ProcessPathCreated(t *testing.T) {
 	if got.Key != "PICK" {
 		t.Fatalf("key = %q, want PICK", got.Key)
 	}
-	if got.EventType != outboundkafka.EventTypeProcessPathCreated {
-		t.Fatalf("event type = %q, want %q", got.EventType, outboundkafka.EventTypeProcessPathCreated)
+	if got.EventType != cloudevents.TypeProcessPathCreated {
+		t.Fatalf("event type = %q, want %q", got.EventType, cloudevents.TypeProcessPathCreated)
 	}
 
-	var env outboundkafka.AnalyticsEnvelope
-	if err := json.Unmarshal(got.Value, &env); err != nil {
-		t.Fatalf("unmarshal envelope: %v", err)
+	e, err := cloudevents.Decode(got.Value)
+	if err != nil {
+		t.Fatalf("decode cloudevent: %v", err)
 	}
-	if env.EventId != "evt-1" {
-		t.Fatalf("event_id = %q, want evt-1", env.EventId)
+	if e.ID() != "evt-1" {
+		t.Fatalf("id = %q, want evt-1", e.ID())
 	}
-	if env.Source != outboundkafka.Source {
-		t.Fatalf("source = %q, want %q", env.Source, outboundkafka.Source)
+	if e.Source() != cloudevents.Source {
+		t.Fatalf("source = %q, want %q", e.Source(), cloudevents.Source)
 	}
-	if env.SchemaVersion != 1 {
-		t.Fatalf("schema_version = %d, want 1", env.SchemaVersion)
+	if e.DataSchema() != "urn:warehouse:process-path-management:analytics:ProcessPathCreated:v1" {
+		t.Fatalf("dataschema = %q", e.DataSchema())
 	}
-	if !env.OccurredAt.Equal(now) {
-		t.Fatalf("occurred_at = %v, want %v", env.OccurredAt, now)
+	if !e.Time().Equal(now) {
+		t.Fatalf("time = %v, want %v", e.Time(), now)
 	}
 
 	var data map[string]json.RawMessage
-	if err := json.Unmarshal(env.Data, &data); err != nil {
-		t.Fatalf("unmarshal data: %v", err)
+	if err := e.DataAs(&data); err != nil {
+		t.Fatalf("DataAs: %v", err)
 	}
 	if _, ok := data["match_prefix"]; !ok {
 		t.Fatal("expected match_prefix in analytics data for ProcessPathCreated")
@@ -70,13 +71,13 @@ func TestAnalyticsEncoder_Encode_ProcessPathDeactivated_OmitsDefinitionFields(t 
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	var env outboundkafka.AnalyticsEnvelope
-	if err := json.Unmarshal(got.Value, &env); err != nil {
-		t.Fatalf("unmarshal envelope: %v", err)
+	e, err := cloudevents.Decode(got.Value)
+	if err != nil {
+		t.Fatalf("decode cloudevent: %v", err)
 	}
 	var data map[string]json.RawMessage
-	if err := json.Unmarshal(env.Data, &data); err != nil {
-		t.Fatalf("unmarshal data: %v", err)
+	if err := e.DataAs(&data); err != nil {
+		t.Fatalf("DataAs: %v", err)
 	}
 	if _, present := data["match_prefix"]; present {
 		t.Fatal("expected match_prefix to be omitted on a Deactivated analytics event")

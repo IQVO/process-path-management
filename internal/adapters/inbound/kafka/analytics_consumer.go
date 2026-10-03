@@ -30,7 +30,6 @@ package kafka
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -39,6 +38,7 @@ import (
 	"github.com/cenkalti/backoff/v4"
 	kafkago "github.com/segmentio/kafka-go"
 
+	"github.com/claudioed/process-path-management/internal/adapters/kafka/cloudevents"
 	"github.com/claudioed/process-path-management/internal/analytics/report"
 )
 
@@ -74,22 +74,19 @@ type ProcessedEvents interface {
 	MarkProcessed(ctx context.Context, eventId string) (bool, error)
 }
 
-// analyticsEnvelope is the inbound decode shape of the Envelope v1 wrapper
-// on the analytics topic. Declared here (rather than imported from the
-// outbound publisher) so this inbound adapter does not depend on an
-// outbound adapter (arch-go enforced).
-type analyticsEnvelope struct {
-	EventId       string          `json:"event_id"`
-	EventType     string          `json:"event_type"`
-	OccurredAt    time.Time       `json:"occurred_at"`
-	Source        string          `json:"source"`
-	SchemaVersion int             `json:"schema_version"`
-	Data          json.RawMessage `json:"data"`
+// analyticsEvent is the projection-relevant view of one inbound
+// CloudEvents 1.0 event (ADR 0016): its `id` (the dedupe key), full `type`
+// (the dispatch key) and `time` (the domain occurred-at). The projection
+// needs no payload field, so `data` is not decoded here.
+type analyticsEvent struct {
+	Id   string
+	Type string
+	Time time.Time
 }
 
 // AnalyticsConsumer reads analytics events off the analytics topic and
 // applies each to the catalogue-growth ProjectionStore, exactly once per
-// event_id despite Kafka's at-least-once delivery.
+// CloudEvents `id` despite Kafka's at-least-once delivery.
 type AnalyticsConsumer struct {
 	Reader     *kafkago.Reader
 	Projection report.ProjectionStore
@@ -131,16 +128,37 @@ func NewAnalyticsConsumer(brokers []string, topic string, projection report.Proj
 		Projection: projection,
 		Processed:  processed,
 		Logger:     logger,
-		dlqWriter: &kafkago.Writer{
-			Addr:  kafkago.TCP(brokers...),
-			Topic: topic + analyticsDlqTopicSuffix,
-		},
+		dlqWriter:  newDLQWriter(brokers, topic+analyticsDlqTopicSuffix),
+	}
+}
+
+// newDLQWriter builds the dead-letter writer for dlqTopic. It sets
+// AllowAutoTopicCreation, the fleet convention for every writer
+// (warehouse-infra/terraform/kafka.tf leaves topic creation to the
+// producing writer): "<topic>.dlq" is only ever written on the rare
+// poison-message path, so it usually does not exist yet when it is first
+// needed. Without the flag that first dead-letter write fails with
+// "[3] Unknown Topic Or Partition", the offset is (correctly) not
+// committed, and Run aborts, stopping the projector on the very message
+// the DLQ exists to route around.
+func newDLQWriter(brokers []string, dlqTopic string) *kafkago.Writer {
+	return &kafkago.Writer{
+		Addr:                   kafkago.TCP(brokers...),
+		Topic:                  dlqTopic,
+		AllowAutoTopicCreation: true,
+		// BatchTimeout: a DLQ write is a synchronous single message; with
+		// kafka-go's 1s default the writer holds every write for a full second
+		// waiting to fill a batch, capping dead-lettering at ~1 msg/s/partition
+		// (observed live: a backlog of legacy messages took hours to drain while
+		// the consumer processed nothing else).
+		BatchTimeout: dlqBatchTimeout,
 	}
 }
 
 // Run reads and handles messages until ctx is cancelled or the reader
 // returns a fatal error. handleFetchedMessage always commits the
-// offset (on success, on a malformed/non-projecting message, or after
+// offset (on success, on a non-projecting message, after dead-lettering a
+// non-CloudEvents message, or after
 // exhausting retries and publishing to the dead-letter topic), so one
 // bad message cannot wedge the projector. Only a commit failure or a
 // DLQ publish failure aborts the loop — a genuine infrastructure
@@ -170,27 +188,29 @@ func (c *AnalyticsConsumer) Close() error {
 	return errors.Join(readerErr, c.dlqWriter.Close())
 }
 
-// HandleMessage decodes raw as an analyticsEnvelope and applies the
-// matching projection method for its event_type. Event types outside the
+// HandleMessage decodes raw as a CloudEvents 1.0 event and applies the
+// matching projection method for its full `type`. Types outside the
 // projection contract are ignored (and not marked processed). For a
-// projecting event it dedupes on event_id via ProcessedEvents before
-// applying, so a redelivery is a no-op. It is exported separately from Run
-// so tests can feed raw envelopes without a live broker.
+// projecting event it dedupes on the CloudEvents `id` via ProcessedEvents
+// before applying, so a redelivery is a no-op. A message that is not a
+// valid CloudEvent (including the retired flat envelope) is rejected with
+// an error wrapping cloudevents.ErrNotCloudEvent. It is exported
+// separately from Run so tests can feed raw messages without a live broker.
 //
 // This method does NOT retry and is not used by Run's own per-message
 // flow (see handleFetchedMessage) — it exists for the existing direct
 // unit-test surface and for any caller that wants single-shot,
 // no-DLQ semantics.
 func (c *AnalyticsConsumer) HandleMessage(ctx context.Context, raw []byte) error {
-	env, err := decodeAnalyticsEnvelope(raw)
+	env, err := decodeAnalyticsEvent(raw)
 	if err != nil {
 		return err
 	}
-	if !isProjectingEventType(env.EventType) {
+	if !isProjectingEventType(env.Type) {
 		return nil
 	}
 
-	isNew, err := c.Processed.MarkProcessed(ctx, env.EventId)
+	isNew, err := c.Processed.MarkProcessed(ctx, env.Id)
 	if err != nil {
 		return fmt.Errorf("analytics: mark processed: %w", err)
 	}
@@ -207,8 +227,10 @@ func (c *AnalyticsConsumer) HandleMessage(ctx context.Context, raw []byte) error
 // file's package doc comment for why HandleMessage's naive
 // mark-then-apply cannot simply be retried as a whole):
 //
-//  1. Decode. A malformed message is logged and committed — there is
-//     nothing a retry could fix.
+//  1. Decode. A message that is not a valid CloudEvents 1.0 event
+//     (malformed JSON, the retired flat envelope, missing attributes) is
+//     a deterministic poison message: it is published to the dead-letter
+//     topic and committed — there is nothing a retry could fix (ADR 0016).
 //  2. Filter by event type. A non-projecting event is committed as a
 //     no-op, exactly HandleMessage's existing behaviour.
 //  3. Call ProcessedEvents.MarkProcessed EXACTLY ONCE. If it errors
@@ -230,16 +252,17 @@ func (c *AnalyticsConsumer) HandleMessage(ctx context.Context, raw []byte) error
 //     committed anyway — one poison message must never permanently
 //     block every other event behind it on this partition.
 func (c *AnalyticsConsumer) handleFetchedMessage(ctx context.Context, msg kafkago.Message) error {
-	env, decodeErr := decodeAnalyticsEnvelope(msg.Value)
+	env, decodeErr := decodeAnalyticsEvent(msg.Value)
 	if decodeErr != nil {
-		c.Logger.ErrorContext(ctx, "analytics: skipping unparseable kafka message", "error", decodeErr)
-		return c.commit(ctx, msg)
+		c.Logger.WarnContext(ctx, "analytics: rejecting non-CloudEvents kafka message",
+			"topic", msg.Topic, "partition", msg.Partition, "offset", msg.Offset, "error", decodeErr)
+		return c.deadLetterAndCommit(ctx, msg, analyticsEvent{}, decodeErr)
 	}
-	if !isProjectingEventType(env.EventType) {
+	if !isProjectingEventType(env.Type) {
 		return c.commit(ctx, msg)
 	}
 
-	isNew, err := c.markProcessedWithRetry(ctx, env.EventId)
+	isNew, err := c.markProcessedWithRetry(ctx, env.Id)
 	if err != nil {
 		return c.deadLetterAndCommit(ctx, msg, env, fmt.Errorf("mark processed: %w", err))
 	}
@@ -256,7 +279,7 @@ func (c *AnalyticsConsumer) handleFetchedMessage(ctx context.Context, msg kafkag
 // markProcessedWithRetry retries ProcessedEvents.MarkProcessed up to
 // maxAnalyticsHandlerAttempts times with jittered exponential backoff,
 // bounded by ctx. Safe to retry: MarkProcessed's own contract is
-// idempotent (recording the same event_id twice is a documented no-op
+// idempotent (recording the same event id twice is a documented no-op
 // reporting isNew=false the second time), and no apply has happened yet
 // at the point this is called.
 func (c *AnalyticsConsumer) markProcessedWithRetry(ctx context.Context, eventId string) (bool, error) {
@@ -275,7 +298,7 @@ func (c *AnalyticsConsumer) markProcessedWithRetry(ctx context.Context, eventId 
 // Postgres transaction (see PostgresProjection.apply's inTx wrapping) —
 // a failed attempt rolls back cleanly, so a retry can never
 // double-count the same event.
-func (c *AnalyticsConsumer) applyProjectionWithRetry(ctx context.Context, env analyticsEnvelope) error {
+func (c *AnalyticsConsumer) applyProjectionWithRetry(ctx context.Context, env analyticsEvent) error {
 	return c.retryBounded(ctx, func() error {
 		return c.applyProjection(ctx, env)
 	})
@@ -296,10 +319,10 @@ func (c *AnalyticsConsumer) retryBounded(ctx context.Context, fn func() error) e
 // deadLetterAndCommit logs, publishes msg (raw, unmodified) plus error
 // context to the dead-letter topic, and commits the offset regardless —
 // one poison message must never block every other event behind it.
-func (c *AnalyticsConsumer) deadLetterAndCommit(ctx context.Context, msg kafkago.Message, env analyticsEnvelope, cause error) error {
-	c.Logger.ErrorContext(ctx, "analytics: exhausted retries, sending to dead-letter topic",
-		"dlq_topic", c.Reader.Config().Topic+analyticsDlqTopicSuffix,
-		"event_id", env.EventId, "event_type", env.EventType, "attempts", maxAnalyticsHandlerAttempts, "error", cause)
+func (c *AnalyticsConsumer) deadLetterAndCommit(ctx context.Context, msg kafkago.Message, env analyticsEvent, cause error) error {
+	c.Logger.ErrorContext(ctx, "analytics: sending message to dead-letter topic",
+		"dlq_topic", c.dlqTopic(),
+		"ce_id", env.Id, "ce_type", env.Type, "error", cause)
 	if dlqErr := c.dlqPublish(ctx, msg, cause); dlqErr != nil {
 		return fmt.Errorf("analytics: publish to dead-letter topic: %w", dlqErr)
 	}
@@ -318,11 +341,11 @@ func (c *AnalyticsConsumer) dlqPublish(ctx context.Context, msg kafkago.Message,
 	}
 	headers := append([]kafkago.Header{}, msg.Headers...)
 	headers = append(headers,
-		kafkago.Header{Key: "x-dlq-source-topic", Value: []byte(c.Reader.Config().Topic)},
+		kafkago.Header{Key: "x-dlq-source-topic", Value: []byte(c.sourceTopic())},
 		kafkago.Header{Key: "x-dlq-error", Value: []byte(cause.Error())},
 		kafkago.Header{Key: "x-dlq-failed-at", Value: []byte(time.Now().UTC().Format(time.RFC3339))},
 	)
-	return c.dlqWriter.WriteMessages(ctx, kafkago.Message{
+	return writeDLQ(ctx, c.dlqWriter, kafkago.Message{
 		Key:     msg.Key,
 		Value:   msg.Value,
 		Headers: headers,
@@ -335,39 +358,108 @@ func (c *AnalyticsConsumer) commit(ctx context.Context, msg kafkago.Message) err
 	return c.Reader.CommitMessages(ctx, msg)
 }
 
-// decodeAnalyticsEnvelope decodes raw as an analyticsEnvelope.
-func decodeAnalyticsEnvelope(raw []byte) (analyticsEnvelope, error) {
-	var env analyticsEnvelope
-	if err := json.Unmarshal(raw, &env); err != nil {
-		return analyticsEnvelope{}, fmt.Errorf("analytics: decode envelope: %w", err)
+// sourceTopic is the topic this consumer reads; empty for the zero-value
+// struct unit tests build without a Reader.
+func (c *AnalyticsConsumer) sourceTopic() string {
+	if c.Reader == nil {
+		return ""
 	}
-	return env, nil
+	return c.Reader.Config().Topic
 }
 
-// isProjectingEventType reports whether eventType is one this consumer
-// applies to the projection — every other event type on this topic is
-// silently skipped (and never marked processed), exactly the
-// pre-existing filter's behaviour.
+// dlqTopic is the dead-letter topic derived from sourceTopic.
+func (c *AnalyticsConsumer) dlqTopic() string {
+	return c.sourceTopic() + analyticsDlqTopicSuffix
+}
+
+// decodeAnalyticsEvent decodes and validates raw as a CloudEvents 1.0
+// event via the service's single cloudevents helper. Any failure wraps
+// cloudevents.ErrNotCloudEvent — the retired flat envelope is never
+// parsed as a fallback.
+func decodeAnalyticsEvent(raw []byte) (analyticsEvent, error) {
+	e, err := cloudevents.Decode(raw)
+	if err != nil {
+		return analyticsEvent{}, fmt.Errorf("analytics: %w", err)
+	}
+	return analyticsEvent{Id: e.ID(), Type: e.Type(), Time: e.Time()}, nil
+}
+
+// isProjectingEventType reports whether the full CloudEvents `type` is one
+// this consumer applies to the projection — every other type on this
+// topic (e.g. CPTScheduleChanged) is silently skipped (and never marked
+// processed) for forward compatibility.
 func isProjectingEventType(eventType string) bool {
 	switch eventType {
-	case "ProcessPathCreated", "ProcessPathUpdated", "ProcessPathDeactivated":
+	case cloudevents.TypeProcessPathCreated, cloudevents.TypeProcessPathUpdated, cloudevents.TypeProcessPathDeactivated:
 		return true
 	default:
 		return false
 	}
 }
 
-// applyProjection dispatches env to the matching Projection method.
-// Callers must have already confirmed isProjectingEventType(env.EventType).
-func (c *AnalyticsConsumer) applyProjection(ctx context.Context, env analyticsEnvelope) error {
-	switch env.EventType {
-	case "ProcessPathCreated":
-		return c.Projection.ApplyProcessPathCreated(ctx, env.EventId, env.OccurredAt)
-	case "ProcessPathUpdated":
-		return c.Projection.ApplyProcessPathUpdated(ctx, env.EventId, env.OccurredAt)
-	case "ProcessPathDeactivated":
-		return c.Projection.ApplyProcessPathDeactivated(ctx, env.EventId, env.OccurredAt)
+// applyProjection dispatches env on its full `type` to the matching
+// Projection method, passing the CloudEvents `id` and `time`. Callers
+// must have already confirmed isProjectingEventType(env.Type).
+func (c *AnalyticsConsumer) applyProjection(ctx context.Context, env analyticsEvent) error {
+	switch env.Type {
+	case cloudevents.TypeProcessPathCreated:
+		return c.Projection.ApplyProcessPathCreated(ctx, env.Id, env.Time)
+	case cloudevents.TypeProcessPathUpdated:
+		return c.Projection.ApplyProcessPathUpdated(ctx, env.Id, env.Time)
+	case cloudevents.TypeProcessPathDeactivated:
+		return c.Projection.ApplyProcessPathDeactivated(ctx, env.Id, env.Time)
 	default:
 		return nil
 	}
 }
+
+// dlqTopicReadyAttempts / dlqTopicReadyBackoff bound how long a DLQ publish
+// waits for an auto-created "<topic>.dlq" to become writable.
+const (
+	dlqTopicReadyAttempts = 40
+	dlqTopicReadyBackoff  = 250 * time.Millisecond
+)
+
+// dlqMessageWriter is the slice of *kafkago.Writer writeDLQ needs.
+type dlqMessageWriter interface {
+	WriteMessages(ctx context.Context, msgs ...kafkago.Message) error
+}
+
+// writeDLQ publishes msg to the dead-letter topic, retrying (bounded) while
+// the topic is still being auto-created. AllowAutoTopicCreation alone is not
+// enough: the first write races partition leader election and the broker
+// answers UnknownTopicOrPartition / LeaderNotAvailable for a few hundred
+// milliseconds. Any other error -- or exhausting the budget -- is returned,
+// so the caller still refuses to commit the offset (no message loss).
+func writeDLQ(ctx context.Context, w dlqMessageWriter, msg kafkago.Message) error {
+	var err error
+	for attempt := 0; attempt < dlqTopicReadyAttempts; attempt++ {
+		if err = w.WriteMessages(ctx, msg); err == nil || !isTopicNotReady(err) {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return errors.Join(err, ctx.Err())
+		case <-time.After(dlqTopicReadyBackoff):
+		}
+	}
+	return err
+}
+
+// isTopicNotReady reports whether err only means the (auto-created) topic
+// has no leader yet.
+func isTopicNotReady(err error) bool {
+	var werrs kafkago.WriteErrors
+	if errors.As(err, &werrs) {
+		for _, e := range werrs {
+			if e != nil && !isTopicNotReady(e) {
+				return false
+			}
+		}
+		return werrs.Count() > 0
+	}
+	return errors.Is(err, kafkago.UnknownTopicOrPartition) || errors.Is(err, kafkago.LeaderNotAvailable)
+}
+
+// dlqBatchTimeout flushes a dead-letter write almost immediately.
+const dlqBatchTimeout = 10 * time.Millisecond

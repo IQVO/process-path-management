@@ -15,6 +15,7 @@ import (
 	tckafka "github.com/testcontainers/testcontainers-go/modules/kafka"
 
 	inboundkafka "github.com/claudioed/process-path-management/internal/adapters/inbound/kafka"
+	"github.com/claudioed/process-path-management/internal/adapters/kafka/cloudevents"
 	"github.com/claudioed/process-path-management/internal/adapters/outbound/analyticsstore"
 	"github.com/claudioed/process-path-management/internal/analytics/report"
 )
@@ -112,19 +113,31 @@ func publish(t *testing.T, brokerList []string, topic string, msgs ...kafkago.Me
 	t.Fatalf("publish to %s: %v", topic, err)
 }
 
-func envelopeMsg(t *testing.T, pathId, eventId, eventType string, at time.Time) kafkago.Message {
+// envelopeMsg builds the structured-mode CloudEvents 1.0 analytics
+// message (ADR 0016) the AnalyticsEncoder publishes for eventName, with the
+// content-type header the production publisher attaches.
+func envelopeMsg(t *testing.T, pathId, eventId, eventName string, at time.Time) kafkago.Message {
 	t.Helper()
-	env := map[string]any{
-		"event_id":       eventId,
-		"event_type":     eventType,
-		"occurred_at":    at.UTC(),
-		"source":         "process-path-management",
-		"schema_version": 1,
-		"data":           map[string]any{"path_id": pathId},
-	}
-	value, err := json.Marshal(env)
+	value, err := cloudevents.New(cloudevents.Spec{
+		ID: eventId, Entity: cloudevents.EntityProcessPath, EventName: eventName,
+		Subject: pathId, Time: at, Stream: cloudevents.StreamAnalytics, Version: 1,
+		Data: map[string]any{"path_id": pathId},
+	})
 	if err != nil {
-		t.Fatalf("marshal envelope: %v", err)
+		t.Fatalf("build cloudevent: %v", err)
+	}
+	return kafkago.Message{Key: []byte(pathId), Value: value, Headers: []kafkago.Header{cloudevents.ContentTypeHeader()}}
+}
+
+// legacyFlatMsg is the RETIRED pre-ADR-0016 flat analytics envelope.
+func legacyFlatMsg(t *testing.T, pathId, eventId string, at time.Time) kafkago.Message {
+	t.Helper()
+	value, err := json.Marshal(map[string]any{
+		"event_id": eventId, "event_type": "ProcessPathCreated", "occurred_at": at.UTC(),
+		"source": "process-path-management", "schema_version": 1, "data": map[string]any{"path_id": pathId},
+	})
+	if err != nil {
+		t.Fatalf("marshal legacy envelope: %v", err)
 	}
 	return kafkago.Message{Key: []byte(pathId), Value: value}
 }
