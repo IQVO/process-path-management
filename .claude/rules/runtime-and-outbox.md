@@ -1,3 +1,12 @@
+---
+paths:
+  - "internal/adapters/**/kafka/**"
+  - "internal/adapters/outbound/events/**"
+  - "apis/asyncapi*"
+  - "internal/adapters/outbound/postgres/**"
+  - "migrations/**"
+---
+
 # Runtime modes, local run, and the transactional outbox
 
 Moved out of `CLAUDE.md` to keep it under ~12KB; still authoritative.
