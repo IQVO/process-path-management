@@ -130,7 +130,7 @@ npm run gen-api-docs pathmgmt
 ```
 
 `docs-api-drift` re-runs exactly this and fails if `git diff` on
-`docs/api-reference/rest` is non-empty — commit the regenerated
+`docs/docs/api-reference/rest` is non-empty — commit the regenerated
 `.mdx`/`.json` files, they are generated output, not hand-written.
 
 ## 5. Behaviour: add a godog scenario
