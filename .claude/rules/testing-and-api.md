@@ -1,3 +1,12 @@
+---
+paths:
+  - "internal/adapters/inbound/http/**"
+  - "apis/openapi*.yaml"
+  - "apis/openapi/**"
+  - "**/*_test.go"
+  - "features/**"
+---
+
 # Testing discipline, CI matrix, and REST API reference
 
 ## REST API (inbound adapter — `internal/adapters/inbound/http`)

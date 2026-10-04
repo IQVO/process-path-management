@@ -1,3 +1,12 @@
+---
+paths:
+  - "internal/**"
+  - "cmd/**"
+  - "apis/**"
+  - "features/**"
+  - "migrations/**"
+---
+
 # Domain model — ubiquitous language, aggregates, invariants, domain events
 
 ## Ubiquitous Language (use these exact names)
