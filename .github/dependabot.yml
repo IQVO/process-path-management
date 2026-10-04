@@ -10,13 +10,12 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 10
-  - package-ecosystem: npm
-    directory: /web
-    schedule:
-      interval: weekly
-    open-pull-requests-limit: 10
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
     open-pull-requests-limit: 10
+
+  # NOTE: the npm app tree here depends on file:../warehouse-ui-kit (a sibling repo). Dependabot cannot fetch
+  # path dependencies outside the repository, so an npm entry for it fails on every run; security alerts
+  # are fixed with scoped npm overrides instead (see the fleet recipe). repo_lint (R3) enforces this.
