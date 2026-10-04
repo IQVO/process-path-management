@@ -14,10 +14,10 @@ const config: Config = {
     faster: true,
   },
 
-  url: 'https://claudioed.github.io',
+  url: 'https://iqvo.github.io',
   baseUrl: '/process-path-management/',
 
-  organizationName: 'claudioed',
+  organizationName: 'IQVO',
   projectName: 'process-path-management',
   deploymentBranch: 'gh-pages',
   trailingSlash: false,
@@ -44,7 +44,7 @@ const config: Config = {
         docs: {
           sidebarPath: './sidebars.ts',
           editUrl:
-            'https://github.com/claudioed/process-path-management/tree/develop/docs/',
+            'https://github.com/IQVO/process-path-management/tree/develop/docs/',
           docItemComponent: '@theme/ApiItem',
         },
         blog: false,
@@ -108,7 +108,7 @@ const config: Config = {
           position: 'left',
         },
         {
-          href: 'https://github.com/claudioed/process-path-management',
+          href: 'https://github.com/IQVO/process-path-management',
           label: 'GitHub',
           position: 'right',
         },
@@ -129,17 +129,17 @@ const config: Config = {
           title: 'Ecosystem',
           items: [
             {label: 'Context map', to: '/docs/ecosystem/context-map'},
-            {label: 'fulfillment-execution', href: 'https://github.com/claudioed/fulfillment-execution'},
-            {label: 'wes-work-planning', href: 'https://github.com/claudioed/wes-work-planning'},
-            {label: 'workforce-management', href: 'https://github.com/claudioed/workforce-management'},
+            {label: 'fulfillment-execution', href: 'https://github.com/IQVO/fulfillment-execution'},
+            {label: 'wes-work-planning', href: 'https://github.com/IQVO/wes-work-planning'},
+            {label: 'workforce-management', href: 'https://github.com/IQVO/workforce-management'},
           ],
         },
         {
           title: 'Source',
           items: [
-            {label: 'GitHub repository', href: 'https://github.com/claudioed/process-path-management'},
-            {label: 'OpenAPI spec', href: 'https://github.com/claudioed/process-path-management/blob/develop/apis/openapi.yaml'},
-            {label: 'AsyncAPI spec', href: 'https://github.com/claudioed/process-path-management/blob/develop/apis/asyncapi.yaml'},
+            {label: 'GitHub repository', href: 'https://github.com/IQVO/process-path-management'},
+            {label: 'OpenAPI spec', href: 'https://github.com/IQVO/process-path-management/blob/develop/apis/openapi.yaml'},
+            {label: 'AsyncAPI spec', href: 'https://github.com/IQVO/process-path-management/blob/develop/apis/asyncapi.yaml'},
           ],
         },
       ],
