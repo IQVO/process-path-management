@@ -98,7 +98,12 @@ Claude Code loads each rule below automatically when you touch the matching path
 
 | When touching | Read |
 |---|---|
+| `cmd/**`, `internal/**`, `migrations/**` ... | `.claude/rules/architecture-and-layout.md` |
+| `internal/adapters/**`, `internal/domain/shared/**`, `apis/asyncapi.yaml` ... | `.claude/rules/cloudevents-envelope.md` |
+| `docs/**`, `apis/**`, `.github/workflows/**` | `.claude/rules/docs-and-gitflow.md` |
+| `internal/**`, `cmd/**`, `apis/**` ... | `.claude/rules/domain-model.md` |
 | `internal/adapters/**/kafka/**`, `internal/adapters/outbound/events/**`, `apis/asyncapi*` ... | `.claude/rules/runtime-and-outbox.md` |
+| `cmd/**`, `internal/**`, `apis/**` ... | `.claude/rules/strategic-context.md` |
 | `internal/adapters/inbound/http/**`, `apis/openapi*.yaml`, `apis/openapi/**` ... | `.claude/rules/testing-and-api.md` |
 
 Hooks (`scripts/harness/hook.py`, wired for Claude Code, Codex and OpenCode) block pushes to develop/main, `--no-verify`, bare `rm -rf`, and edits to generated files, and feed gofmt/vet findings back after each edit. Before saying "done" run `make check-fast`; the full gate is `make check-all`. `HARNESS_OFF=1` disables the hooks when debugging the harness itself.
