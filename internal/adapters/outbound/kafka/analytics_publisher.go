@@ -58,6 +58,30 @@ type AnalyticsPublisher struct {
 	writer  Writer
 }
 
+// SetNewId overrides the id-minting function used by the standalone
+// Publish path.
+func (p *AnalyticsPublisher) SetNewId(newId func() string) { p.encoder.NewId = newId }
+
+// PublishWithId publishes event onto AnalyticsTopic under a caller-minted
+// CloudEvents id — the form FanOutPublisher uses so ONE occurrence gets
+// ONE id on every topic (ADR 0016's no-Postgres fan-out edge). It
+// implements IdAwareSender.
+func (p *AnalyticsPublisher) PublishWithId(ctx context.Context, event shared.DomainEvent, eventId string) error {
+	enc, err := p.encoder.Encode(event, eventId)
+	if err != nil {
+		return err
+	}
+	msg := kafkago.Message{
+		Key:     []byte(enc.Key),
+		Value:   enc.Value,
+		Headers: []kafkago.Header{cloudevents.ContentTypeHeader()},
+	}
+	if err := p.writer.WriteMessages(ctx, msg); err != nil {
+		return fmt.Errorf("kafka: publish %s analytics event: %w", enc.EventType, err)
+	}
+	return nil
+}
+
 // NewAnalyticsDirectPublisher constructs an AnalyticsPublisher writing to
 // AnalyticsTopic on brokers. newId mints each event's CloudEvents `id`.
 //

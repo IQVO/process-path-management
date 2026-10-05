@@ -96,6 +96,22 @@ type Publisher struct {
 	NewId  func() string
 }
 
+// SetNewId overrides the id-minting function used by the standalone
+// Publish path.
+func (p *Publisher) SetNewId(newId func() string) { p.NewId = newId }
+
+// PublishWithId publishes event onto Kafka under a caller-minted
+// CloudEvents id — the form FanOutPublisher uses so ONE occurrence gets
+// ONE id on every topic (ADR 0016's no-Postgres fan-out edge). It
+// implements IdAwareSender.
+func (p *Publisher) PublishWithId(ctx context.Context, event shared.DomainEvent, eventId string) error {
+	enc, err := Encode(event, eventId)
+	if err != nil {
+		return err
+	}
+	return p.Send(ctx, enc)
+}
+
 // NewPublisher constructs a Publisher writing to brokers. The underlying
 // Writer carries NO fixed topic: this Publisher doubles as the outbox
 // relay's Sink (ADR 0007), and the relay may hand it rows for either the

@@ -379,8 +379,13 @@ func buildEventPublisher(p *persistence, logger *slog.Logger) (ports.EventPublis
 	if p.pool == nil {
 		logger.Info("kafka event publishing enabled (direct, no outbox: DATABASE_URL not set)",
 			"brokers", brokers, "topic", outboundkafka.Topic, "analytics_topic", outboundkafka.AnalyticsTopic)
-		analyticsPublisher := outboundkafka.NewAnalyticsDirectPublisher(brokers, uuid.NewString)
-		fanOut := outboundkafka.FanOutPublisher{kafkaPublisher, analyticsPublisher}
+		// ONE id per occurrence, shared by both topics — matching the
+		// OutboxPublisher semantics on the other branch (ADR 0016's
+		// dev-only fan-out edge: each publisher minting its own id made
+		// the two topics disagree about the same occurrence's id).
+		newId := uuid.NewString
+		analyticsPublisher := outboundkafka.NewAnalyticsDirectPublisher(brokers, newId)
+		fanOut := outboundkafka.NewSharedIdFanOut(newId, kafkaPublisher, analyticsPublisher)
 		closeBoth := func() {
 			closeKafka()
 			if err := analyticsPublisher.Close(); err != nil {
