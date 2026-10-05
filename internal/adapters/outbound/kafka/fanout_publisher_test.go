@@ -146,7 +146,9 @@ func TestFanOutPublisher_PlainSenderRefused(t *testing.T) {
 // SenderFunc adapts a function to the Sender interface for tests.
 type SenderFunc func(ctx context.Context, event shared.DomainEvent) error
 
-func (f SenderFunc) Publish(ctx context.Context, event shared.DomainEvent) error { return f(ctx, event) }
+func (f SenderFunc) Publish(ctx context.Context, event shared.DomainEvent) error {
+	return f(ctx, event)
+}
 
 // idAwareFunc adapts a function to the IdAwareSender interface for tests.
 type idAwareFunc func(ctx context.Context, event shared.DomainEvent, eventId string) error
