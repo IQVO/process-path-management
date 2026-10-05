@@ -94,6 +94,44 @@ func run() error {
 	defer closePublisher()
 	clock := memory.SystemClock{}
 
+	// Outbox lag gauge (ADR 0018): the age of the oldest unpublished
+	// outbox_events row, 0 when drained — the operational signal for
+	// "the relay is behind", closing ADR 0003's deferred follow-up.
+	// Only meaningful with the outbox wired (Postgres + kafka). The
+	// registration is unregistered before the pool closes (deferred
+	// here runs before buildPersistence's pool.Close below it).
+	var unregisterOutboxLag func() error
+	if persistence.pool != nil {
+		reg, err := postgres.RegisterOutboxLagGauge(persistence.pool)
+		if err != nil {
+			// A failed metric registration must never take the
+			// service down; the gauge is observability, not a
+			// dependency.
+			logger.Warn("outbox lag gauge registration failed", "error", err)
+		} else {
+			unregisterOutboxLag = reg.Unregister
+			defer func() { _ = unregisterOutboxLag() }()
+		}
+	}
+
+	// Housekeeping sweeper (ADR 0018): bounds the two append-only tables
+	// (idempotency_keys, published outbox_events) so they do not grow
+	// without limit. Runs alongside the HTTP server in the same process
+	// and stops with the same signal context; a 0/negative TTL disables
+	// the corresponding half. Safe across replicas (each DELETE targets
+	// explicitly-eligible rows only). Env vars are read HERE, in the
+	// composition root, never in the adapter. Nil without Postgres
+	// (in-memory dev mode has neither table).
+	var sweeper *postgres.Sweeper
+	if persistence.pool != nil {
+		sweeper = postgres.NewSweeper(persistence.pool,
+			postgres.WithSweepInterval(durationEnv("HOUSEKEEPING_INTERVAL", postgres.DefaultSweepInterval)),
+			postgres.WithIdempotencyKeyTTL(durationEnv("IDEMPOTENCY_KEY_TTL", postgres.DefaultIdempotencyKeyTTL)),
+			postgres.WithOutboxRetention(durationEnv("OUTBOX_RETENTION", postgres.DefaultOutboxRetention)),
+			postgres.WithSweeperLogger(logger),
+		)
+	}
+
 	pathMetrics, err := telemetry.NewPathMetrics()
 	if err != nil {
 		return err
@@ -133,7 +171,7 @@ func run() error {
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
-	return serveHTTP(logger, httpServer, relay, readiness)
+	return serveHTTP(logger, httpServer, relay, sweeper, readiness)
 }
 
 // setupTelemetry configures OTel traces/metrics/logs and emits the
@@ -157,12 +195,13 @@ func setupTelemetry(ctx context.Context, logger *slog.Logger) (string, func(cont
 	return serviceName, shutdown, nil
 }
 
-// serveHTTP runs the HTTP server and, when wired, the outbox relay until
-// SIGINT or SIGTERM, then shuts both down: the server drains in-flight
-// requests within a 10s budget while the relay is allowed to finish its
-// in-flight pass. It returns the first listener/relay error, or the HTTP
-// shutdown error after a signal-triggered stop.
-func serveHTTP(logger *slog.Logger, httpServer *http.Server, relay *postgres.OutboxRelay, readiness *inboundhttp.Readiness) error {
+// serveHTTP runs the HTTP server and, when wired, the outbox relay and
+// the housekeeping sweeper until SIGINT or SIGTERM, then shuts them down:
+// the server drains in-flight requests within a 10s budget while the relay
+// is allowed to finish its in-flight pass. It returns the first
+// listener/relay error, or the HTTP shutdown error after a
+// signal-triggered stop.
+func serveHTTP(logger *slog.Logger, httpServer *http.Server, relay *postgres.OutboxRelay, sweeper *postgres.Sweeper, readiness *inboundhttp.Readiness) error {
 	errCh := make(chan error, 1)
 	go func() {
 		logger.Info("http server listening", "addr", httpServer.Addr)
@@ -190,6 +229,18 @@ func serveHTTP(logger *slog.Logger, httpServer *http.Server, relay *postgres.Out
 		}()
 	} else {
 		close(relayDone)
+	}
+
+	// The housekeeping sweeper (ADR 0018) runs on the same signal
+	// context. Unlike the relay it never returns a non-nil error (a
+	// failed pass is logged and retried on the next tick), so it does
+	// not feed errCh; it just needs to stop touching the pool before
+	// the deferred pool.Close runs, which the shared stopCtx gives us.
+	if sweeper != nil {
+		go func() {
+			logger.Info("housekeeping sweeper running")
+			_ = sweeper.Run(stopCtx)
+		}()
 	}
 
 	select {

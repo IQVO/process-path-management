@@ -44,6 +44,7 @@ const sidebars: SidebarsConfig = {
         'adr/0015-migrations-direct-postgres-connection',
         'adr/0016-cloudevents-mandatory-event-envelope',
         'adr/0017-optimistic-concurrency-version-column',
+        'adr/0018-outbox-lag-gauge-and-housekeeping-sweeper',
       ],
     },
   ],

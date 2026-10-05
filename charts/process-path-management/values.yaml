@@ -173,6 +173,15 @@ config:
   # "log" (default) or "kafka" — gates whether ProcessPath* events are
   # published onto warehouse.process-path-management.events at all.
   eventPublisher: "log"
+  # Housekeeping sweeper (ADR 0018): periodically deletes idempotency_keys
+  # rows older than idempotencyKeyTtl and PUBLISHED outbox_events rows
+  # older than outboxRetention (unpublished rows are never swept). Only
+  # takes effect when a database is configured; any value <= 0 ("0s")
+  # disables that half. Go duration strings.
+  housekeeping:
+    interval: "1h"
+    idempotencyKeyTtl: "24h"
+    outboxRetention: "168h"
 
 database:
   url: ""
