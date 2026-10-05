@@ -62,7 +62,7 @@ type Server struct {
 // logger defaults to slog.Default(); an empty serviceName defaults to
 // DefaultServiceName.
 //
-// Middleware order matters here (fleet-standard-metrics ADR, Tier 1 item
+// Middleware order matters here (standard-metrics convention, ADR 0019, Tier 1 item
 // 2): otelchi runs before RequestLogger so the request context already
 // carries a span by the time a line is logged. WithChiRoutes resolves
 // the route pattern up front, so spans/metrics are labeled

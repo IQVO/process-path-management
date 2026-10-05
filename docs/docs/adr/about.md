@@ -76,6 +76,13 @@ Typos, broken links and formatting are of course fair game.
 | [0016](./0016-cloudevents-mandatory-event-envelope.md) | CloudEvents 1.0 as the mandatory event envelope | Accepted |
 | [0017](./0017-optimistic-concurrency-version-column.md) | Optimistic concurrency (version column) on ProcessPath and CPTSchedule | Accepted |
 | [0018](./0018-outbox-lag-gauge-and-housekeeping-sweeper.md) | Outbox lag gauge and housekeeping sweeper | Accepted |
+| [0019](./0019-standard-metrics-convention.md) | Adopting the fleet standard-metrics convention | Accepted |
+| [0020](./0020-rfc-7807-problem-details.md) | Adopting RFC 7807 Problem Details for all HTTP error responses | Accepted |
+| [0021](./0021-architecture-fitness-suite.md) | The architecture fitness test suite as a merge gate | Accepted |
+| [0022](./0022-mfe-console-remote.md) | The operator console MFE remote and its chart component | Accepted |
+| [0023](./0023-mcp-eval-and-governance-harness.md) | The MCP eval and governance harness | Accepted |
+| [0024](./0024-bootretry-for-istio-native-sidecar-warmup.md) | Boot-time dial retry for the Istio native-sidecar warm-up race | Accepted |
+| [0025](./0025-schemathesis-contract-job.md) | Schemathesis property-based contract testing against the live API | Accepted |
 
 Each of these reconstructs a decision that is actually visible in this
 repository's history or code — none is a generic placeholder.
