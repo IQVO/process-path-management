@@ -14,17 +14,10 @@ import (
 )
 
 func TestPostgres_CPTScheduleRoundTrip(t *testing.T) {
-	databaseURL := requireDatabaseURL(t)
-	if err := postgres.RunMigrations(databaseURL, migrationsDir(t)); err != nil {
-		t.Fatalf("unexpected error running migrations: %v", err)
-	}
-
+	// testcontainers Postgres (outboxDB boots and migrates it): the test
+	// owns its own database, never an external DATABASE_URL, never t.Skip.
+	pool := outboxDB(t)
 	ctx := context.Background()
-	pool, err := postgres.NewPool(ctx, databaseURL)
-	if err != nil {
-		t.Fatalf("unexpected error opening pool: %v", err)
-	}
-	defer pool.Close()
 
 	repo := postgres.NewCPTScheduleRepo(pool)
 	siteId := shared.SiteId("SP-IT-" + time.Now().UTC().Format("150405.000000"))
@@ -97,17 +90,10 @@ func TestPostgres_CPTScheduleRoundTrip(t *testing.T) {
 }
 
 func TestPostgres_CPTScheduleFindBySiteID_MissingReturnsNilNotError(t *testing.T) {
-	databaseURL := requireDatabaseURL(t)
-	if err := postgres.RunMigrations(databaseURL, migrationsDir(t)); err != nil {
-		t.Fatalf("unexpected error running migrations: %v", err)
-	}
-
+	// testcontainers Postgres (outboxDB boots and migrates it): the test
+	// owns its own database, never an external DATABASE_URL, never t.Skip.
+	pool := outboxDB(t)
 	ctx := context.Background()
-	pool, err := postgres.NewPool(ctx, databaseURL)
-	if err != nil {
-		t.Fatalf("unexpected error opening pool: %v", err)
-	}
-	defer pool.Close()
 
 	repo := postgres.NewCPTScheduleRepo(pool)
 	found, err := repo.FindBySiteID(ctx, shared.SiteId("DOES-NOT-EXIST-INTEGRATION"))
@@ -123,17 +109,10 @@ func TestPostgres_CPTScheduleFindBySiteID_MissingReturnsNilNotError(t *testing.T
 // proves the new ADR 0010 columns actually round-trip through Postgres,
 // not just the in-memory adapter.
 func TestPostgres_ProcessPathRoundTrip_CarriesCycleTimeP95AndEligibility(t *testing.T) {
-	databaseURL := requireDatabaseURL(t)
-	if err := postgres.RunMigrations(databaseURL, migrationsDir(t)); err != nil {
-		t.Fatalf("unexpected error running migrations: %v", err)
-	}
-
+	// testcontainers Postgres (outboxDB boots and migrates it): the test
+	// owns its own database, never an external DATABASE_URL, never t.Skip.
+	pool := outboxDB(t)
 	ctx := context.Background()
-	pool, err := postgres.NewPool(ctx, databaseURL)
-	if err != nil {
-		t.Fatalf("unexpected error opening pool: %v", err)
-	}
-	defer pool.Close()
 
 	repo := postgres.NewProcessPathRepo(pool)
 	id := shared.PathId("SINGLES-IT-" + time.Now().UTC().Format("150405.000000"))

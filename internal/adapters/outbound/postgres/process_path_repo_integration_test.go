@@ -13,17 +13,10 @@ import (
 )
 
 func TestPostgres_ProcessPathRoundTrip(t *testing.T) {
-	databaseURL := requireDatabaseURL(t)
-	if err := postgres.RunMigrations(databaseURL, migrationsDir(t)); err != nil {
-		t.Fatalf("unexpected error running migrations: %v", err)
-	}
-
+	// testcontainers Postgres (outboxDB boots and migrates it): the test
+	// owns its own database, never an external DATABASE_URL, never t.Skip.
+	pool := outboxDB(t)
 	ctx := context.Background()
-	pool, err := postgres.NewPool(ctx, databaseURL)
-	if err != nil {
-		t.Fatalf("unexpected error opening pool: %v", err)
-	}
-	defer pool.Close()
 
 	repo := postgres.NewProcessPathRepo(pool)
 
@@ -114,17 +107,10 @@ func TestPostgres_ProcessPathRoundTrip(t *testing.T) {
 }
 
 func TestPostgres_FindByID_MissingReturnsNilNotError(t *testing.T) {
-	databaseURL := requireDatabaseURL(t)
-	if err := postgres.RunMigrations(databaseURL, migrationsDir(t)); err != nil {
-		t.Fatalf("unexpected error running migrations: %v", err)
-	}
-
+	// testcontainers Postgres (outboxDB boots and migrates it): the test
+	// owns its own database, never an external DATABASE_URL, never t.Skip.
+	pool := outboxDB(t)
 	ctx := context.Background()
-	pool, err := postgres.NewPool(ctx, databaseURL)
-	if err != nil {
-		t.Fatalf("unexpected error opening pool: %v", err)
-	}
-	defer pool.Close()
 
 	repo := postgres.NewProcessPathRepo(pool)
 

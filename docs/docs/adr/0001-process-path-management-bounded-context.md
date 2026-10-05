@@ -91,8 +91,10 @@ on `fulfillment-execution`, `wes-work-planning`, or `workforce-management`,
 and none of them has (as of this document) a synchronous dependency on this
 service either — see the
 [Context Map](/docs/ecosystem/context-map) for the current, honest state
-of that integration (topic and publisher real and tested; no consumer
-wired yet in any of the three downstream repos).
+of that integration (topic and publisher real and tested; as of this
+record's writing no consumer was wired yet in any of the three downstream
+repos — all three have since consumed the topic, via ADR 0002's cutover
+and ADR 0016's CloudEvents envelope).
 
 This service is the SOURCE of the process-path published language, never a
 consumer of anyone else's — it has no inbound Kafka consumer and no

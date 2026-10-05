@@ -59,7 +59,7 @@ service, and on every HPA scale-out event. It was found and reproduced
 live against order-management during Phase 4 (k6/HPA load-test
 validation) cleanup — see order-management's ADR-0029 for the full
 incident record and live verification. It blocks safely enabling this
-service's own `database.api.enabled`/`database.mcp` HPAs
+service's own `autoscaling.api.enabled` HPA
 ([ADR 0014](./0014-horizontal-autoscaling-and-pgxpool-tuning.md))
 fleet-wide, the same way it blocked order-management's ADR-0026 HPAs.
 

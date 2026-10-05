@@ -72,6 +72,12 @@ const (
 // like matchPrefix/requiredCapabilities. It is OPTIONAL
 // (shared.DestinationLocationRoleUnset, the zero value, is a fully valid
 // permanent state) — see ADR 0006.
+//
+// version is the optimistic-concurrency token (ADR 0017): inert
+// infrastructure metadata the domain never reads, exactly like id — the
+// Postgres repo guards its upsert with it and the HTTP adapter maps a
+// mismatch to 409. A fresh Define starts at 1; Rehydrate restores
+// whatever the loaded row carried.
 type ProcessPath struct {
 	id                      shared.PathId
 	matchPrefix             string
@@ -83,6 +89,7 @@ type ProcessPath struct {
 	status                  Status
 	createdAt               time.Time
 	updatedAt               time.Time
+	version                 int
 }
 
 // Define constructs a brand-new, Active ProcessPath. Returns one of the
@@ -117,13 +124,17 @@ func Define(id shared.PathId, matchPrefix string, direct bool, requiredCapabilit
 		status:                  StatusActive,
 		createdAt:               now,
 		updatedAt:               now,
+		version:                 1,
 	}, nil
 }
 
 // Rehydrate reconstructs a ProcessPath from persisted state without
 // re-validating construction invariants (used by repository adapters) —
-// same pattern as labor-performance's standard.Rehydrate.
-func Rehydrate(id shared.PathId, matchPrefix string, direct bool, requiredCapabilities []shared.Capability, destinationLocationRole shared.DestinationLocationRole, cycleTimeP95 time.Duration, eligibility shared.Eligibility, status Status, createdAt, updatedAt time.Time) *ProcessPath {
+// same pattern as labor-performance's standard.Rehydrate. version is the
+// row's optimistic-concurrency version (ADR 0017): the adapter passes
+// what it read, Save guards on it, and a mismatch surfaces as
+// ports.ErrConcurrentModification.
+func Rehydrate(id shared.PathId, matchPrefix string, direct bool, requiredCapabilities []shared.Capability, destinationLocationRole shared.DestinationLocationRole, cycleTimeP95 time.Duration, eligibility shared.Eligibility, status Status, createdAt, updatedAt time.Time, version int) *ProcessPath {
 	return &ProcessPath{
 		id:                      id,
 		matchPrefix:             matchPrefix,
@@ -135,6 +146,7 @@ func Rehydrate(id shared.PathId, matchPrefix string, direct bool, requiredCapabi
 		status:                  status,
 		createdAt:               createdAt,
 		updatedAt:               updatedAt,
+		version:                 version,
 	}
 }
 
@@ -205,6 +217,12 @@ func (p *ProcessPath) Status() Status       { return p.status }
 func (p *ProcessPath) IsActive() bool       { return p.status == StatusActive }
 func (p *ProcessPath) CreatedAt() time.Time { return p.createdAt }
 func (p *ProcessPath) UpdatedAt() time.Time { return p.updatedAt }
+
+// Version is this aggregate's optimistic-concurrency version (ADR 0017):
+// 1 for a fresh Define, +1 per committed Save of a loaded row. The domain
+// itself never branches on it; the Postgres repo's guarded upsert and the
+// 409 mapping read it.
+func (p *ProcessPath) Version() int { return p.version }
 
 func validate(matchPrefix string, requiredCapabilities []shared.Capability, destinationLocationRole shared.DestinationLocationRole, cycleTimeP95 time.Duration) error {
 	if matchPrefix == "" {

@@ -242,12 +242,17 @@ func TestRehydrate_ReconstructsWithoutRevalidating(t *testing.T) {
 	// Rehydrate deliberately accepts state Define would reject (e.g. an
 	// empty timezone), mirroring processpath.Rehydrate's own posture:
 	// repository adapters never re-run construction invariants on read.
-	s := Rehydrate("sp1", "", nil, created, updated)
+	s := Rehydrate("sp1", "", nil, created, updated, 5)
 	if s.SiteId() != "sp1" {
 		t.Fatalf("want siteId sp1, got %s", s.SiteId())
 	}
 	if s.CreatedAt() != created || s.UpdatedAt() != updated {
 		t.Fatal("want createdAt/updatedAt to match the rehydrated values exactly")
+	}
+	// ADR 0017: Rehydrate preserves the row's optimistic-concurrency
+	// version exactly; it is metadata the domain never rewrites.
+	if s.Version() != 5 {
+		t.Fatalf("want rehydrated version 5, got %d", s.Version())
 	}
 }
 

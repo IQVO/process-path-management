@@ -37,7 +37,9 @@ Keys come from `API_READ_KEY` / `API_READWRITE_KEY` (falling back to
 defaults to `enforce` when any key is set and to `off` — with a WARN — when
 none is, so local runs and the existing handler tests are unchanged. The
 Helm chart exposes `auth.mode`, `auth.readKey`, `auth.readWriteKey` and
-`auth.existingSecret`. This service has no MCP adapter, no reports binary
-and no outbound REST clients, so nothing else changes; it is a pure
-resource server whose only callers are operators, warehouse-console and
-the e2e harness.
+`auth.existingSecret`. At the time of this record this service had no
+MCP adapter and no reports binary (both landed later — ADR 0006's MCP
+server and ADR 0007's analytical data product — and inherited this
+decision's unauthenticated posture until the fleet-wide revert below);
+it is a pure resource server whose only callers are operators,
+warehouse-console and the e2e harness.

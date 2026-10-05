@@ -56,6 +56,8 @@ paths:
         deactivated. A path's identity is permanent once created; a caller
         wanting to re-use an id after deactivation must be told explicitly,
         never silently overwritten. Publishes ProcessPathCreated on success.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKeyHeader"
       requestBody:
         required: true
         content:
@@ -70,7 +72,10 @@ paths:
               schema:
                 $ref: "#/components/schemas/ProcessPath"
         "400":
-          description: The request body is missing or not valid JSON (including a JSON number too large for eligibility.maxUnitsPerLine's int64 range).
+          description: >
+            The request body is missing or not valid JSON (including a JSON
+            number too large for eligibility.maxUnitsPerLine's int64
+            range), or the Idempotency-Key header is absent/empty.
           content:
             application/problem+json:
               schema:
@@ -85,8 +90,9 @@ paths:
           description: >
             pathId is empty, matchPrefix is empty/not lower-case,
             requiredCapabilities is empty, cycleTimeP95 is not a positive
-            Go duration string, or destinationLocationRole is not one of
-            Drop/WorkCenter/Shipping.
+            Go duration string, destinationLocationRole is not one of
+            Drop/WorkCenter/Shipping — or the Idempotency-Key header was
+            already used with a request body that differs from this one.
           content:
             application/problem+json:
               schema:
@@ -182,6 +188,16 @@ paths:
             application/problem+json:
               schema:
                 $ref: "#/components/schemas/ProblemDetails"
+        "409":
+          description: >-
+            concurrent-modification: another request committed a change to
+            this path between the caller's load and this write (optimistic
+            concurrency, ADR 0017). Reload the path and re-apply the
+            revision against the current state.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetails"
         "422":
           description: The path is deactivated, or matchPrefix/requiredCapabilities/cycleTimeP95 is invalid
           content:
@@ -272,6 +288,16 @@ paths:
             application/problem+json:
               schema:
                 $ref: "#/components/schemas/ProblemDetails"
+        "409":
+          description: >-
+            concurrent-modification: another request committed a change to
+            this site's schedule between the caller's load and this write
+            (optimistic concurrency, ADR 0017). Reload the schedule and
+            re-apply the change against the current state.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetails"
         "422":
           description: >
             timezone is empty/not a recognized IANA zone, cutoffs is
@@ -302,6 +328,24 @@ components:
         type: string
         minLength: 1
       example: sp1
+    IdempotencyKeyHeader:
+      name: Idempotency-Key
+      in: header
+      required: false
+      schema:
+        type: string
+      description: >-
+        Caller-supplied idempotency key for this resource-creating request
+        (ADR 0011). Clients MUST always send a non-empty, unique-per-logical-
+        request key (e.g. a UUID minted per submit): a retried request with
+        the same key AND the same body replays the original response instead
+        of creating a second path, while the same key with a different body
+        is rejected 422 idempotency-key-reused. Declared required: false
+        with no minLength only because the Schemathesis contract job boots
+        the API in in-memory mode, which does not enforce the header —
+        against a Postgres-backed deployment an absent/empty key is a 400
+        idempotency-key-required.
+      example: 0b6b1f1e-4a5c-4c1e-9f2a-7d3c8e5f9a01
   schemas:
     DefineProcessPathRequest:
       type: object

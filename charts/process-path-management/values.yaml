@@ -173,6 +173,15 @@ config:
   # "log" (default) or "kafka" — gates whether ProcessPath* events are
   # published onto warehouse.process-path-management.events at all.
   eventPublisher: "log"
+  # Housekeeping sweeper (ADR 0018): periodically deletes idempotency_keys
+  # rows older than idempotencyKeyTtl and PUBLISHED outbox_events rows
+  # older than outboxRetention (unpublished rows are never swept). Only
+  # takes effect when a database is configured; any value <= 0 ("0s")
+  # disables that half. Go duration strings.
+  housekeeping:
+    interval: "1h"
+    idempotencyKeyTtl: "24h"
+    outboxRetention: "168h"
 
 database:
   url: ""
@@ -195,9 +204,10 @@ database:
 # This service PUBLISHES onto warehouse.process-path-management.events when
 # config.eventPublisher is "kafka" (KAFKA_BROKERS is only set in the
 # container env in that case). fulfillment-execution, wes-work-planning,
-# and workforce-management are the intended consumers of that topic, but
-# none of them has wired a consumer yet as of this chart's authoring — see
-# docs/docs/ecosystem/context-map.md.
+# and workforce-management all consume this topic (see
+# docs/docs/ecosystem/context-map.md) -- the "no consumer wired yet"
+# note this comment used to carry was true at the chart's authoring
+# (pre ADR 0002 cutover) and is long since stale.
 kafka:
   enabled: false
   brokers: "kafka:9092"

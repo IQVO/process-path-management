@@ -16,12 +16,13 @@ const meterName = "github.com/claudioed/process-path-management"
 // operator's attempt to define a new process path actually takes effect.
 // A rejection rate climbing means the operator SPA (or a scripted
 // caller) is submitting malformed path definitions — a proxy for a
-// broken input form, not a transient failure. Matches the fleet-standard-
-// metrics ADR's naming convention (<context>.<aggregate>.<verb>) exactly.
+// broken input form, not a transient failure. Matches the standard-
+// metrics convention's naming rule (ADR 0019:
+// <context>.<aggregate>.<verb>) exactly.
 const pathDefinitionCounterName = "process_path_management.paths.defined"
 
 // outcomeKey distinguishes accepted from rejected definition attempts on
-// the single counter, per the fleet-standard-metrics ADR's convention of
+// the single counter, per the standard-metrics convention (ADR 0019) of
 // one counter with an outcome attribute over two separately-named
 // counters for the same event's success/failure split.
 const outcomeKey = attribute.Key("outcome")
