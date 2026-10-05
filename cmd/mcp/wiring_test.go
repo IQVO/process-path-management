@@ -75,11 +75,29 @@ func TestBuildRepo_UsesMigrationsDatabaseURLNotDatabaseURLForMigrations(t *testi
 		unreachableAppURL  = "postgres://u:***@127.0.0.1:1/process_path_management?sslmode=disable&connect_timeout=1"
 	)
 
-	_, _, err := buildRepo(context.Background(), unreachableAppURL, bogusMigrationsURL, migrationsDirForTest(t), quietLogger())
+	_, _, _, err := buildRepo(context.Background(), unreachableAppURL, bogusMigrationsURL, migrationsDirForTest(t), quietLogger())
 	if err == nil {
 		t.Fatal("a malformed MIGRATIONS_DATABASE_URL must fail boot")
 	}
 	if !strings.Contains(err.Error(), "parse scheme") {
 		t.Fatalf("err = %v — expected the bogus-URL parse error from migrate.New; a \"connection refused\"/dial error here would mean migrations ran against databaseURL/unreachableAppURL instead of migrationsDatabaseURL", err)
 	}
+}
+
+// TestBuildCPTScheduleRepo_SharesBuildRepoPool pins ADR 0014's
+// connection arithmetic as code: buildCPTScheduleRepo must reuse the
+// pool buildRepo opened (the pod's ONE MaxConns=10 OLTP pool), never
+// open its own — the old two-pool wiring silently doubled every mcp
+// pod's ceiling to 20 connections. In-memory mode passes a nil pool and
+// must keep selecting the in-memory repo.
+func TestBuildCPTScheduleRepo_SharesBuildRepoPool(t *testing.T) {
+	t.Run("in-memory mode with nil pool", func(t *testing.T) {
+		repo, err := buildCPTScheduleRepo(context.Background(), "", nil, quietLogger())
+		if err != nil {
+			t.Fatalf("buildCPTScheduleRepo: %v", err)
+		}
+		if repo == nil {
+			t.Fatal("expected the in-memory CPTScheduleRepo, got nil")
+		}
+	})
 }

@@ -149,6 +149,16 @@ numbers exactly (ADR 0026 / PR #110):
 | Analytics writer (`analyticsstore.NewPool`) | `cmd/pathmgmt-projector` | **5** | The projector's HPA ceiling is capped at 2 (see the table above) and does single-row upserts against the catalogue-growth projection; a small, flat pool is enough at either 1 or 2 replicas. Analytics DSNs stay direct against Postgres (not through PgBouncer, per PR #43's own split), so this ceiling is the real per-process cap against the shared instance. |
 | Analytics reader (`analyticsstore.NewReadOnlyPool`) | `cmd/pathmgmt-reports` | **5** (`ReportsMaxConns`) | `reports` IS HPA-scalable (max 3); at that ceiling, 3 × 5 = 15 connections against the analytical database — comfortably inside the shared ceiling alongside the OLTP path's 40 (mediated by PgBouncer) and the projector's 5–10. |
 
+> **Note (2026-10-04):** `cmd/mcp` briefly opened TWO OLTP pools (one per
+> repo: `buildRepo` + `buildCPTScheduleRepo`), doubling each pod's real
+> ceiling to 20 connections against this table's 10. Both repos now
+> share ONE pool — `buildRepo` opens it, pings it, and hands it to
+> `buildCPTScheduleRepo` — the same single-pool shape
+> `cmd/pathmgmt`'s `buildPersistence` already used for the same two
+> repos, so this table's per-pod arithmetic holds as written.
+> Pinned by `TestBuildCPTScheduleRepo_SharesBuildRepoPool` and the
+> existing `TestNewPool_AppliesMaxConns` (still asserts 10).
+
 Worst case across every workload simultaneously at its proposed HPA
 maximum, accounting for PgBouncer sitting in front of the OLTP path
 (so the OLTP `MaxConns × replicas` figure is a PgBouncer-side client
