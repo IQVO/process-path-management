@@ -62,7 +62,7 @@ type Server struct {
 // logger defaults to slog.Default(); an empty serviceName defaults to
 // DefaultServiceName.
 //
-// Middleware order matters here (fleet-standard-metrics ADR, Tier 1 item
+// Middleware order matters here (standard-metrics convention, ADR 0019, Tier 1 item
 // 2): otelchi runs before RequestLogger so the request context already
 // carries a span by the time a line is logged. WithChiRoutes resolves
 // the route pattern up front, so spans/metrics are labeled
@@ -423,11 +423,14 @@ func writeJSON(w http.ResponseWriter, status int, body any) {
 // local-dev default (comma-separated) for staging/prod deployments.
 // Includes PUT/DELETE (unlike a read-mostly service's CORS policy)
 // since operators mutate paths directly from the browser.
+// Idempotency-Key is allowed because the SPA's POST /process-paths
+// sends one (ADR 0011): without the header here the browser's preflight
+// would reject the request before it ever reached the middleware.
 func corsMiddleware() func(http.Handler) http.Handler {
 	return cors.Handler(cors.Options{
 		AllowedOrigins:   allowedOrigins(),
 		AllowedMethods:   []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete},
-		AllowedHeaders:   []string{"Content-Type", "Authorization"},
+		AllowedHeaders:   []string{"Content-Type", "Authorization", IdempotencyKeyHeader},
 		AllowCredentials: false,
 		MaxAge:           300,
 	})

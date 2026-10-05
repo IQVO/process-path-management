@@ -136,12 +136,18 @@ func parseDigits(s string) (int, error) {
 
 // CPTSchedule is the aggregate root: one recurring cutoff schedule per
 // site (id = SiteId).
+//
+// version is the optimistic-concurrency token (ADR 0017), same posture
+// as ProcessPath's own: inert infrastructure metadata the domain never
+// reads. The schedule is mutable via PUT /sites/{siteId}/cpt-schedule,
+// so its upsert is version-guarded the same way.
 type CPTSchedule struct {
 	siteId    shared.SiteId
 	timezone  string
 	cutoffs   []Cutoff
 	createdAt time.Time
 	updatedAt time.Time
+	version   int
 }
 
 // Define constructs a brand-new CPTSchedule. Invariants: timezone must be
@@ -162,19 +168,22 @@ func Define(siteId shared.SiteId, timezone string, cutoffs []Cutoff, now time.Ti
 		cutoffs:   append([]Cutoff(nil), cutoffs...),
 		createdAt: now,
 		updatedAt: now,
+		version:   1,
 	}, nil
 }
 
 // Rehydrate reconstructs a CPTSchedule from persisted state without
 // re-validating construction invariants — same pattern as
-// processpath.Rehydrate.
-func Rehydrate(siteId shared.SiteId, timezone string, cutoffs []Cutoff, createdAt, updatedAt time.Time) *CPTSchedule {
+// processpath.Rehydrate. version is the row's optimistic-concurrency
+// version (ADR 0017).
+func Rehydrate(siteId shared.SiteId, timezone string, cutoffs []Cutoff, createdAt, updatedAt time.Time, version int) *CPTSchedule {
 	return &CPTSchedule{
 		siteId:    siteId,
 		timezone:  timezone,
 		cutoffs:   cutoffs,
 		createdAt: createdAt,
 		updatedAt: updatedAt,
+		version:   version,
 	}
 }
 
@@ -202,6 +211,10 @@ func (s *CPTSchedule) Timezone() string      { return s.timezone }
 func (s *CPTSchedule) Cutoffs() []Cutoff     { return append([]Cutoff(nil), s.cutoffs...) }
 func (s *CPTSchedule) CreatedAt() time.Time  { return s.createdAt }
 func (s *CPTSchedule) UpdatedAt() time.Time  { return s.updatedAt }
+
+// Version is this aggregate's optimistic-concurrency version (ADR 0017);
+// see ProcessPath.Version for the posture.
+func (s *CPTSchedule) Version() int { return s.version }
 
 // AllEligiblePathIds returns the de-duplicated union of every cutoff's
 // eligiblePathIds — the set the cross-aggregate use-case check validates

@@ -37,14 +37,30 @@ async function parseProblemOrThrow(res: Response): Promise<void> {
  * Parses an RFC 7807 problem+json body on failure so the form can surface
  * the exact domain-error detail (e.g. "a path with this id already
  * exists") instead of a generic "request failed".
+ *
+ * Every call sends a fresh Idempotency-Key (ADR 0011), minted per submit:
+ * a network retry of the SAME submit reuses the same key only within the
+ * one apiPost invocation (fetch's own retry, if any), while every new
+ * submit gets a new key — so an accidental double-click can never replay
+ * a previous response, and against a Postgres-backed deployment the
+ * request no longer 400s with idempotency-key-required.
  */
 export async function apiPost<TResponse>(
   path: string,
   body: unknown,
 ): Promise<TResponse> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  // crypto.randomUUID is available in every browser context the MFE runs
+  // in (secure contexts + localhost dev; the fallback keeps arbitrary
+  // non-secure hosts working, same approach the console shell uses).
+  const key =
+    typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  headers["Idempotency-Key"] = key;
   const res = await fetch(`${PROCESS_PATH_API_BASE}${path}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers,
     body: JSON.stringify(body),
   });
   if (!res.ok) await parseProblemOrThrow(res);

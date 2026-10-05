@@ -311,21 +311,108 @@ func assertKafkaIntegrationTestFollowsFleetRules(t *testing.T, path, content str
 // on any other bounded context, everything propagates only via Kafka
 // events this service publishes). Unlike most of the fleet, which allows a
 // synchronous HTTP client to a sibling context's REST or MCP surface,
-// process-path-management bans that outright: internal/adapters/outbound
-// must never import net/http as an HTTP CLIENT dependency, because there
-// is no legitimate outbound synchronous call this service should ever make
-// to another bounded context. (net/http appears elsewhere in this codebase
-// — e.g. the inbound HTTP server and the MCP adapter's http.Server — which
-// is fine and unrelated; this check is scoped to internal/adapters/outbound
-// only, where an outbound client package would live if one were added.)
+// process-path-management bans that outright: no adapter may hold an
+// HTTP CLIENT dependency, because there is no legitimate outbound
+// synchronous call this service should ever make to another bounded
+// context. (net/http the SERVER library appears legitimately across
+// internal/adapters/inbound — the chi router, the MCP Streamable HTTP
+// handler — which is why the scan matches client constructs, not the
+// bare import.)
+//
+// The scan covers BOTH internal/adapters/outbound and
+// internal/adapters/inbound: a sibling-context HTTP client could just as
+// easily hide inside an inbound adapter (the MCP report tool's client
+// did exactly that), and a scan that only reads outbound would never
+// see it. Each file that legitimately holds an HTTP client must appear
+// in sameContextHTTPClients with its reason; today that is exactly one:
+// the MCP catalogue-growth report tool calling this context's OWN
+// pathmgmt-reports service, which ADR 0007 §4 explicitly allows
+// (same-context, not a sibling bounded context).
+//
+// httpClientConstructs are the textual shapes an HTTP client takes in
+// this codebase: a field/parameter of type *http.Client, a client
+// literal, or an outbound request builder.
+var httpClientConstructs = []string{
+	"*http.Client",
+	"&http.Client{",
+	"http.NewRequest",
+	"http.NewRequestWithContext",
+	"http.Get(",
+	"http.Post(",
+	"http.DefaultClient",
+}
+
+// containsHTTPClient reports whether src holds any HTTP-client construct.
+func containsHTTPClient(src string) bool {
+	for _, s := range httpClientConstructs {
+		if strings.Contains(src, s) {
+			return true
+		}
+	}
+	return false
+}
+
+var sameContextHTTPClients = map[string]string{
+	"adapters/inbound/mcp/report_tool.go": "calls this context's OWN pathmgmt-reports REST service (ADR 0007 §4: same-context reads are not sibling-context coupling)",
+}
+
 func TestNoSiblingContextOutboundCalls(t *testing.T) {
-	for _, path := range goFilesUnder(t, "../adapters/outbound", false) {
-		src, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatalf("read %s: %v", path, err)
+	for _, root := range []string{"../adapters/outbound", "../adapters/inbound"} {
+		for _, path := range goFilesUnder(t, root, false) {
+			src, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatalf("read %s: %v", path, err)
+			}
+			if !containsHTTPClient(string(src)) {
+				continue
+			}
+			rel, err := filepath.Rel("..", path)
+			if err != nil {
+				t.Fatalf("rel %s: %v", path, err)
+			}
+			if reason, ok := sameContextHTTPClients[rel]; ok {
+				t.Logf("%s: HTTP client allowed — %s", rel, reason)
+				continue
+			}
+			t.Errorf("%s: holds an HTTP client under internal/adapters — process-path-management is a zero-inbound-dependency Open Host Service (see AGENTS.md): it must never issue a synchronous HTTP call to a sibling bounded context. Every cross-context integration here happens exclusively via Kafka events this service publishes. If this file calls only this context's own service, add it (with its reason) to sameContextHTTPClients in this test.", path)
 		}
-		if strings.Contains(string(src), `"net/http"`) {
-			t.Errorf("%s: imports net/http under internal/adapters/outbound — process-path-management is a zero-inbound-dependency Open Host Service (see AGENTS.md): it must never issue a synchronous HTTP call to a sibling bounded context. Every cross-context integration here happens exclusively via Kafka events this service publishes.", path)
+	}
+}
+
+// TestNoSiblingContextOutboundCalls_DetectsViolation proves the guard
+// above fires: given a fixture that looks exactly like a smuggled
+// sibling-context HTTP client, the detector must reject it. This is the
+// guard's own test — a scanner that has never seen a violation prove
+// anything is a scanner nobody trusts — and it fails the moment someone
+// weakens containsHTTPClient or the allowlist lookup to a no-op.
+func TestNoSiblingContextOutboundCalls_DetectsViolation(t *testing.T) {
+	fixturePath := filepath.Join("adapters", "inbound", "sibling_context_client_fixture.go")
+	if _, ok := sameContextHTTPClients[fixturePath]; ok {
+		t.Fatalf("%s must NOT be in the allowlist for this test to mean anything", fixturePath)
+	}
+
+	// The exact shapes a smuggled client takes; every one must be caught.
+	violations := []string{
+		"package inbound\n\nimport \"net/http\"\n\nvar c *http.Client\n",
+		"package inbound\n\nimport \"net/http\"\n\nvar c = &http.Client{Timeout: time.Second}\n",
+		"package inbound\n\nimport \"net/http\"\n\nfunc f() { req, _ := http.NewRequest(http.MethodGet, url, nil); _ = req }\n",
+		"package inbound\n\nimport \"net/http\"\n\nfunc f(ctx context.Context, url string) { req, _ := http.NewRequestWithContext(ctx, http.MethodGet, url, nil); _ = req }\n",
+	}
+	for i, src := range violations {
+		if !containsHTTPClient(src) {
+			t.Fatalf("violation shape %d was NOT detected — containsHTTPClient must match every client construct a smuggler would use", i)
 		}
+	}
+
+	// And the allowlist lookup this test relies on: a detected client not
+	// on the allowlist is the failing condition the real scan reports.
+	if _, allowed := sameContextHTTPClients[fixturePath]; allowed {
+		t.Fatal("fixture unexpectedly allowlisted")
+	}
+
+	// A clean file (server-only net/http use) must NOT be flagged.
+	clean := "package inbound\n\nimport (\n	\"net/http\"\n)\n\nfunc Handler() http.Handler { return nil }\n"
+	if containsHTTPClient(clean) {
+		t.Fatal("server-only net/http use was flagged as a client — the detector is too broad and would drown the signal in false positives")
 	}
 }

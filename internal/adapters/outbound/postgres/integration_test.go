@@ -3,7 +3,6 @@
 package postgres_test
 
 import (
-	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -19,13 +18,4 @@ func migrationsDir(t *testing.T) string {
 		t.Fatal("unable to resolve test file path")
 	}
 	return filepath.Join(filepath.Dir(thisFile), "..", "..", "..", "..", "migrations")
-}
-
-func requireDatabaseURL(t *testing.T) string {
-	t.Helper()
-	url := os.Getenv("DATABASE_URL")
-	if url == "" {
-		t.Skip("DATABASE_URL not set; skipping Postgres integration test")
-	}
-	return url
 }

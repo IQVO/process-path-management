@@ -34,10 +34,10 @@ const Topic = "warehouse.process-path-management.events"
 // types on this topic. RequiredCapabilities is omitted (not
 // empty-arrayed) on a ProcessPathDeactivated event, since a deactivation
 // carries no definition data — only the PathId and the fact that it
-// happened. DestinationLocationRole is likewise omitted (not
+// DestinationLocationRole is likewise omitted (not
 // empty-stringed) on any event for a path that never declared one — a
 // path with no destination role carries no such field on the wire (ADR
-// 0006).
+// 0009).
 //
 // CycleTimeP95 and Eligibility are the fulfillment capability contract
 // (ADR 0010), additive on ProcessPathCreated/Updated. CycleTimeP95 is
@@ -94,6 +94,22 @@ type Writer interface {
 type Publisher struct {
 	Writer Writer
 	NewId  func() string
+}
+
+// SetNewId overrides the id-minting function used by the standalone
+// Publish path.
+func (p *Publisher) SetNewId(newId func() string) { p.NewId = newId }
+
+// PublishWithId publishes event onto Kafka under a caller-minted
+// CloudEvents id — the form FanOutPublisher uses so ONE occurrence gets
+// ONE id on every topic (ADR 0016's no-Postgres fan-out edge). It
+// implements IdAwareSender.
+func (p *Publisher) PublishWithId(ctx context.Context, event shared.DomainEvent, eventId string) error {
+	enc, err := Encode(event, eventId)
+	if err != nil {
+		return err
+	}
+	return p.Send(ctx, enc)
 }
 
 // NewPublisher constructs a Publisher writing to brokers. The underlying

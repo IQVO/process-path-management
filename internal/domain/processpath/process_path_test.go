@@ -231,7 +231,7 @@ func TestRehydrate_ReconstructsWithoutRevalidating(t *testing.T) {
 	// uppercase matchPrefix), because it reconstructs already-persisted,
 	// already-validated-at-write-time data -- repository adapters must
 	// never re-run construction invariants on read.
-	p := Rehydrate("PICK", "PICK-LEGACY", false, []shared.Capability{"pick"}, shared.DestinationLocationRoleWorkCenter, testCycleTimeP95, shared.Eligibility{}, StatusDeactivated, created, updated)
+	p := Rehydrate("PICK", "PICK-LEGACY", false, []shared.Capability{"pick"}, shared.DestinationLocationRoleWorkCenter, testCycleTimeP95, shared.Eligibility{}, StatusDeactivated, created, updated, 7)
 	if p.ID() != "PICK" {
 		t.Fatalf("want id PICK, got %s", p.ID())
 	}
@@ -249,6 +249,19 @@ func TestRehydrate_ReconstructsWithoutRevalidating(t *testing.T) {
 	}
 	if p.DestinationLocationRole() != shared.DestinationLocationRoleWorkCenter {
 		t.Fatalf("want rehydrated DestinationLocationRole WorkCenter, got %q", p.DestinationLocationRole())
+	}
+	// ADR 0017: Rehydrate preserves the row's optimistic-concurrency
+	// version exactly; it is metadata the domain never rewrites.
+	if p.Version() != 7 {
+		t.Fatalf("want rehydrated version 7, got %d", p.Version())
+	}
+	// And a fresh Define starts at 1.
+	fresh, err := Define("FRESH", "fresh", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, testCycleTimeP95, shared.Eligibility{}, time.Now())
+	if err != nil {
+		t.Fatalf("Define: %v", err)
+	}
+	if fresh.Version() != 1 {
+		t.Fatalf("want fresh Define version 1, got %d", fresh.Version())
 	}
 }
 

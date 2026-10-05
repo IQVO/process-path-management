@@ -73,6 +73,33 @@ func TestGetProcessPath(t *testing.T) {
 	if out.CycleTimeP95 != (2 * time.Hour).String() {
 		t.Fatalf("want cycleTimeP95 %s, got %q", (2 * time.Hour).String(), out.CycleTimeP95)
 	}
+	// destinationLocationRole is omitted (empty) when unset, mirroring
+	// the REST DTO's omit-when-unknown discipline (ADR 0006/0009).
+	if out.DestinationLocationRole != "" {
+		t.Fatalf("destinationLocationRole = %q, want \"\" (unset) on the wire", out.DestinationLocationRole)
+	}
+}
+
+// TestGetProcessPathCarriesDestinationLocationRole pins that the MCP DTO
+// now carries the declared destination location role — the REST wire
+// always did; an AI client should not need REST for that one field.
+func TestGetProcessPathCarriesDestinationLocationRole(t *testing.T) {
+	h := newHarness(t)
+	p, err := processpath.Define(shared.PathId("PACK"), "pack", false, []shared.Capability{"pack"}, shared.DestinationLocationRoleWorkCenter, 2*time.Hour, shared.Eligibility{}, base)
+	if err != nil {
+		t.Fatalf("define: %v", err)
+	}
+	if err := h.repo.Save(context.Background(), p); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	out, err := h.deps.getProcessPath(context.Background(), getProcessPathInput{PathId: "PACK"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out.DestinationLocationRole != "WorkCenter" {
+		t.Fatalf("destinationLocationRole = %q, want WorkCenter", out.DestinationLocationRole)
+	}
 }
 
 func TestGetProcessPathNotFound(t *testing.T) {

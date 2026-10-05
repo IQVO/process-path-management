@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/claudioed/process-path-management/internal/application/ports"
 	"github.com/claudioed/process-path-management/internal/application/usecases"
 	"github.com/claudioed/process-path-management/internal/domain/cptschedule"
 	"github.com/claudioed/process-path-management/internal/domain/processpath"
@@ -17,7 +18,14 @@ func statusFor(err error) int {
 		errors.Is(err, usecases.ErrCPTScheduleNotFound):
 		return http.StatusNotFound
 
-	case errors.Is(err, usecases.ErrPathAlreadyExists):
+	case errors.Is(err, usecases.ErrPathAlreadyExists),
+		errors.Is(err, ports.ErrConcurrentModification):
+		// ErrConcurrentModification is a different 409 than the
+		// natural-key conflict: a concurrent writer committed a version
+		// this caller never saw between its load and its Save (ADR
+		// 0017, optimistic concurrency) — same status family, its own
+		// distinct category so a caller can tell "re-fetch and retry"
+		// apart from a domain-rule rejection.
 		return http.StatusConflict
 
 	case errors.Is(err, processpath.ErrPathDeactivated),
@@ -74,6 +82,7 @@ func problemCatalog() []struct {
 	}{
 		{usecases.ErrPathNotFound, problemInfo{"path-not-found", "No process path exists with this id"}},
 		{usecases.ErrPathAlreadyExists, problemInfo{"path-already-exists", "A process path with this id already exists (active or deactivated)"}},
+		{ports.ErrConcurrentModification, problemInfo{"concurrent-modification", "The resource was modified by another request; reload and retry"}},
 		{processpath.ErrPathDeactivated, problemInfo{"path-deactivated", "This process path has been deactivated and can no longer be revised"}},
 		{processpath.ErrEmptyPathId, problemInfo{"empty-path-id", "pathId must not be empty"}},
 		{processpath.ErrEmptyMatchPrefix, problemInfo{"empty-match-prefix", "matchPrefix must not be empty"}},

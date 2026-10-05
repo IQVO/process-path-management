@@ -69,7 +69,7 @@ type Clock interface {
 	Now() time.Time
 }
 
-// PathMetrics records DefinePath outcomes (fleet-standard-metrics ADR,
+// PathMetrics records DefinePath outcomes (standard-metrics convention,
 // Tier 2) so the business signal — how often an operator's attempt to
 // define a new process path actually takes effect versus gets rejected —
 // is observable independently of HTTP traffic. Use cases treat a nil
