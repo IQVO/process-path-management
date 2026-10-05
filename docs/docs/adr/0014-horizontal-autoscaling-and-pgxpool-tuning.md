@@ -67,8 +67,9 @@ whose `RepromiseConsumer` needed its own per-workload consumer-group
 safety argument, `cmd/pathmgmt`'s only Kafka activity is outbound
 publishing (it is the published-language SOURCE, never a consumer — see
 AGENTS.md and `TestNoSiblingContextOutboundCalls` in
-`internal/architecture/architecture_test.go`, which also fails the
-build if any outbound adapter imports `net/http`, so no HTTP client to
+`internal/architecture/fitness_test.go`, which also fails the
+build if any adapter under `internal/adapters` holds an HTTP client
+outside the same-context allowlist, so no HTTP client to
 a sibling can ever sneak in). This service's *only* inbound Kafka
 consumer at all is `internal/adapters/inbound/kafka/analytics_consumer.go`,
 run by `cmd/pathmgmt-projector`, reading this service's OWN analytics

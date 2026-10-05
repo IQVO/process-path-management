@@ -42,12 +42,15 @@ Remove the REST auth layer entirely:
 - `apis/openapi.yaml` no longer declares `components.securitySchemes.bearerAuth`
   or any `security:` key. `apis/asyncapi.yaml` had no auth-related content
   to begin with.
-- This service has no MCP adapter (`internal/adapters/inbound/mcp/` does
-  not exist here), so there is no MCP-specific unauthenticate step to
-  apply.
+- This service had no MCP adapter at the time of this record
+  (`internal/adapters/inbound/mcp/` landed later, ADR 0006); that
+  adapter was born unauthenticated under this decision, so there was no
+  MCP-specific unauthenticate step to apply then and none is needed now.
 - No outbound REST clients or peer API-key logic exist in
-  `internal/adapters/outbound/` for this service, so nothing there
-  changes either.
+  `internal/adapters/outbound/` for this service (the one HTTP client
+  this service holds today — the MCP report tool calling this context's
+  OWN pathmgmt-reports service, ADR 0007 — is same-context and carries
+  no auth either), so nothing there changes either.
 
 ## Consequences
 

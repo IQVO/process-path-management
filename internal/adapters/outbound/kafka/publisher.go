@@ -34,10 +34,10 @@ const Topic = "warehouse.process-path-management.events"
 // types on this topic. RequiredCapabilities is omitted (not
 // empty-arrayed) on a ProcessPathDeactivated event, since a deactivation
 // carries no definition data — only the PathId and the fact that it
-// happened. DestinationLocationRole is likewise omitted (not
+// DestinationLocationRole is likewise omitted (not
 // empty-stringed) on any event for a path that never declared one — a
 // path with no destination role carries no such field on the wire (ADR
-// 0006).
+// 0009).
 //
 // CycleTimeP95 and Eligibility are the fulfillment capability contract
 // (ADR 0010), additive on ProcessPathCreated/Updated. CycleTimeP95 is

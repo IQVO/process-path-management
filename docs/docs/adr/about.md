@@ -60,7 +60,7 @@ Typos, broken links and formatting are of course fair game.
 | --- | --- | --- |
 | [0001](./0001-process-path-management-bounded-context.md) | Process Path Management as a new Generic Subdomain bounded context | Accepted |
 | [0002](./0002-yaml-to-kafka-cutover.md) | Cutting the fleet over from the static YAML catalogue to this service's events | Accepted |
-| [0003](./0003-transactional-outbox.md) | Transactional outbox for the process-path Published Language | Accepted |
+| [0003](./0003-transactional-outbox.md) | Transactional outbox for the process-path Published Language | Accepted (stored message format superseded by 0016) |
 | [0004](./0004-rest-auth-adoption.md) | Adopting the fleet REST identity standard | Superseded by 0005 |
 | [0005](./0005-remove-rest-auth.md) | Removing the REST auth layer | Accepted |
 | [0006](./0006-mcp-server-second-inbound-adapter.md) | MCP server as a second inbound adapter | Accepted |
