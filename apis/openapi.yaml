@@ -188,6 +188,16 @@ paths:
             application/problem+json:
               schema:
                 $ref: "#/components/schemas/ProblemDetails"
+        "409":
+          description: >-
+            concurrent-modification: another request committed a change to
+            this path between the caller's load and this write (optimistic
+            concurrency, ADR 0017). Reload the path and re-apply the
+            revision against the current state.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetails"
         "422":
           description: The path is deactivated, or matchPrefix/requiredCapabilities/cycleTimeP95 is invalid
           content:
@@ -274,6 +284,16 @@ paths:
                 $ref: "#/components/schemas/ProblemDetails"
         "404":
           description: No route matches this request path (e.g. an empty siteId path segment).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetails"
+        "409":
+          description: >-
+            concurrent-modification: another request committed a change to
+            this site's schedule between the caller's load and this write
+            (optimistic concurrency, ADR 0017). Reload the schedule and
+            re-apply the change against the current state.
           content:
             application/problem+json:
               schema:

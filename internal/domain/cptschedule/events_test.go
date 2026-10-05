@@ -69,7 +69,7 @@ func TestToSnapshot_EmptyScheduleProducesEmptyCutoffsSlice(t *testing.T) {
 	// Rehydrate with zero cutoffs is a state Define would reject, but is
 	// reachable via a corrupted/manually-edited row -- ToSnapshot must
 	// not panic on it.
-	s := Rehydrate("sp1", "America/Sao_Paulo", nil, time.Now(), time.Now())
+	s := Rehydrate("sp1", "America/Sao_Paulo", nil, time.Now(), time.Now(), 3)
 	snap := ToSnapshot(s, time.Now())
 	if len(snap.Cutoffs) != 0 {
 		t.Fatalf("want 0 cutoff snapshots, got %d", len(snap.Cutoffs))

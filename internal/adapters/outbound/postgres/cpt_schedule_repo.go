@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/claudioed/process-path-management/internal/application/ports"
 	"github.com/claudioed/process-path-management/internal/domain/cptschedule"
 	"github.com/claudioed/process-path-management/internal/domain/shared"
 )
@@ -30,18 +31,32 @@ func NewCPTScheduleRepo(pool *pgxpool.Pool) *CPTScheduleRepo {
 	return &CPTScheduleRepo{pool: pool}
 }
 
+// Save upserts the schedule, version-guarded against a concurrent
+// writer (ADR 0017): the cpt_schedules row only updates when its current
+// version still matches s.Version(), and always advances by exactly one.
+// ports.ErrConcurrentModification is returned on a mismatch. The cutoff
+// child rows are replaced wholesale inside the same transaction scope —
+// they carry no version of their own because they are only ever written
+// through this full-replace Save, never mutated independently.
 func (r *CPTScheduleRepo) Save(ctx context.Context, s *cptschedule.CPTSchedule) error {
 	q := querierFrom(ctx, r.pool)
 
-	_, err := q.Exec(ctx, `
-		INSERT INTO cpt_schedules (site_id, timezone, created_at, updated_at)
-		VALUES ($1, $2, $3, $4)
+	tag, err := q.Exec(ctx, `
+		INSERT INTO cpt_schedules (site_id, timezone, created_at, updated_at, version)
+		VALUES ($1, $2, $3, $4, 1)
 		ON CONFLICT (site_id) DO UPDATE
 		  SET timezone   = EXCLUDED.timezone,
-		      updated_at = EXCLUDED.updated_at
-	`, string(s.SiteId()), s.Timezone(), s.CreatedAt(), s.UpdatedAt())
+		      updated_at = EXCLUDED.updated_at,
+		      version    = cpt_schedules.version + 1
+		WHERE cpt_schedules.version = $5
+	`, string(s.SiteId()), s.Timezone(), s.CreatedAt(), s.UpdatedAt(), s.Version())
 	if err != nil {
 		return err
+	}
+	if tag.RowsAffected() == 0 {
+		// The row exists (the ON CONFLICT arm) but its version no
+		// longer matches what s was loaded at.
+		return ports.ErrConcurrentModification
 	}
 
 	// Replace the cutoff set wholesale: delete every existing row for
@@ -69,10 +84,11 @@ func (r *CPTScheduleRepo) FindBySiteID(ctx context.Context, siteId shared.SiteId
 	var (
 		timezone             string
 		createdAt, updatedAt time.Time
+		version              int
 	)
 	err := q.QueryRow(ctx, `
-		SELECT timezone, created_at, updated_at FROM cpt_schedules WHERE site_id = $1
-	`, string(siteId)).Scan(&timezone, &createdAt, &updatedAt)
+		SELECT timezone, created_at, updated_at, version FROM cpt_schedules WHERE site_id = $1
+	`, string(siteId)).Scan(&timezone, &createdAt, &updatedAt, &version)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -110,7 +126,7 @@ func (r *CPTScheduleRepo) FindBySiteID(ctx context.Context, siteId shared.SiteId
 		return nil, err
 	}
 
-	return cptschedule.Rehydrate(siteId, timezone, cutoffs, createdAt, updatedAt), nil
+	return cptschedule.Rehydrate(siteId, timezone, cutoffs, createdAt, updatedAt, version), nil
 }
 
 func weekdaysToStrings(ds []cptschedule.Weekday) []string {
