@@ -87,6 +87,13 @@ paths:
 - **ProcessPath.Deactivate**: idempotent — deactivating an
   already-deactivated path is a no-op success and does NOT republish
   `ProcessPathDeactivated`.
+- **A path named by a CPT schedule cannot be deactivated**: refused with 409
+  `path-referenced-by-cpt-schedule` (ADR 0026) until the schedule is revised.
+  The check and the schedule write are serialised in one transaction (ADR 0028):
+  `DefineCPTSchedule` locks the referenced path rows `FOR SHARE` in ascending id
+  order and requires them active; `DeactivatePath` re-reads the row `FOR UPDATE`
+  before the reference check. Two concurrent deactivations of one path
+  serialise (the loser gets the idempotent no-op).
 - **ProcessPath** (all writes): `cycleTimeP95` > 0
   (`ErrInvalidCycleTime`); `destinationLocationRole` empty or one of
   Drop/WorkCenter/Shipping. A revision is a no-op only if `matchPrefix`,
