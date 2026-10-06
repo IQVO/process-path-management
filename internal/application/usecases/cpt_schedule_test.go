@@ -3,6 +3,7 @@ package usecases_test
 import (
 	"context"
 	"errors"
+	"sort"
 	"sync"
 	"testing"
 	"time"
@@ -36,12 +37,37 @@ func (r *fakeCPTScheduleRepo) FindBySiteID(_ context.Context, siteId shared.Site
 	return r.schedules[siteId], nil
 }
 
+func (r *fakeCPTScheduleRepo) ListSiteIDsReferencingPath(_ context.Context, id shared.PathId) ([]shared.SiteId, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var sites []shared.SiteId
+	for siteId, s := range r.schedules {
+		for _, c := range s.Cutoffs() {
+			for _, p := range c.EligiblePathIds() {
+				if p == id {
+					sites = append(sites, siteId)
+				}
+			}
+		}
+	}
+	sort.Slice(sites, func(i, j int) bool { return sites[i] < sites[j] })
+	return sites, nil
+}
+
 // erroringCPTScheduleRepo forces every call to fail, so error-propagation
 // branches are exercised.
 type erroringCPTScheduleRepo struct {
 	*fakeCPTScheduleRepo
 	findErr error
 	saveErr error
+	listErr error
+}
+
+func (r *erroringCPTScheduleRepo) ListSiteIDsReferencingPath(ctx context.Context, id shared.PathId) ([]shared.SiteId, error) {
+	if r.listErr != nil {
+		return nil, r.listErr
+	}
+	return r.fakeCPTScheduleRepo.ListSiteIDsReferencingPath(ctx, id)
 }
 
 func (r *erroringCPTScheduleRepo) FindBySiteID(ctx context.Context, siteId shared.SiteId) (*cptschedule.CPTSchedule, error) {

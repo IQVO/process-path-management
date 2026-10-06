@@ -129,6 +129,34 @@ func (r *CPTScheduleRepo) FindBySiteID(ctx context.Context, siteId shared.SiteId
 	return cptschedule.Rehydrate(siteId, timezone, cutoffs, createdAt, updatedAt, version), nil
 }
 
+// ListSiteIDsReferencingPath implements ports.CPTScheduleRepo: every
+// site with at least one cutoff whose eligible_path_ids contains id, in
+// ascending order. It runs inside the caller's transaction when one is
+// bound to ctx (DeactivatePath's unit of work), so the answer is
+// consistent with the deactivation it guards.
+func (r *CPTScheduleRepo) ListSiteIDsReferencingPath(ctx context.Context, id shared.PathId) ([]shared.SiteId, error) {
+	rows, err := querierFrom(ctx, r.pool).Query(ctx, `
+		SELECT DISTINCT schedule_site_id
+		FROM cpt_schedule_cutoffs
+		WHERE $1 = ANY (eligible_path_ids)
+		ORDER BY schedule_site_id
+	`, string(id))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var sites []shared.SiteId
+	for rows.Next() {
+		var site string
+		if err := rows.Scan(&site); err != nil {
+			return nil, err
+		}
+		sites = append(sites, shared.SiteId(site))
+	}
+	return sites, rows.Err()
+}
+
 func weekdaysToStrings(ds []cptschedule.Weekday) []string {
 	out := make([]string, len(ds))
 	for i, d := range ds {

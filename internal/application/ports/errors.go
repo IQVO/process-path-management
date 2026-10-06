@@ -10,3 +10,9 @@ import "errors"
 // a client can tell "re-fetch and retry" apart from a domain-rule
 // rejection.
 var ErrConcurrentModification = errors.New("aggregate was concurrently modified; reload and retry")
+
+// ErrAlreadyExists is returned by a repo Create when a row with the same
+// natural key already exists. Create is insert-only, so it never
+// overwrites the existing row; the use case maps this to its own
+// domain-level "already exists" error (HTTP 409 path-already-exists).
+var ErrAlreadyExists = errors.New("aggregate already exists")
