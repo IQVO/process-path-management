@@ -123,5 +123,7 @@ this service's own `pathmgmt-projector`.
 On the wire every event is a CloudEvents 1.0 event (ADR 0016) with
 `type` `com.warehouse.wes.process-path-management.<processpath|cptschedule>.<EventName>`
 and `subject` = `path_id` / `site_id` (the Kafka key). These four full type
-strings are consumed byte-for-byte by four sibling services — see
+strings are consumed byte-for-byte by five sibling services
+(fulfillment-execution, wes-work-planning, workforce-management,
+order-management, network-fulfillment) — see
 `internal/adapters/kafka/cloudevents/types.go`.

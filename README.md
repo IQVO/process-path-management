@@ -18,7 +18,7 @@ boot-loaded by `fulfillment-execution`, `wes-work-planning`, and
 each site's **CPT schedule**, which `order-management` consumes to derive
 its promise.
 
-📚 **Full documentation site:** https://claudioed.github.io/process-path-management/
+📚 **Full documentation site:** https://iqvo.github.io/process-path-management/
 
 ## Why this context exists
 
@@ -46,7 +46,8 @@ onto `warehouse.process-path-management.events` when
 `EVENT_PUBLISHER=kafka`. `fulfillment-execution`, `wes-work-planning` and
 `workforce-management` each consume that topic into a local catalogue
 cache (cutover executed 2026-09-06, see ADR 0002); `order-management`
-consumes the same topic for path capability and CPT schedules (ADR 0010).
+and `network-fulfillment` consume the same topic for path capability and
+CPT schedules (ADR 0010).
 With a database
 configured, events go through a **transactional outbox** — committed in
 the same transaction as the aggregate and relayed to Kafka by an
@@ -88,9 +89,9 @@ internal/
     outbound/analyticsstore/      analytics projection/report store (Postgres + in-memory)
     outbound/telemetry/           OTel traces/metrics/logs
   architecture/                   arch-go + fitness tests
-migrations/                       golang-migrate SQL files (0001–0005); migrations/analytics/ for the report DB
-apis/openapi.yaml                 This service's OWN REST API (8 endpoints)
-apis/asyncapi.yaml                What this service PUBLISHES on the integration topic
+migrations/                       golang-migrate SQL files (0001–0007); migrations/analytics/ for the report DB
+apis/openapi.yaml                 This service's OWN REST API (8 operations; /readyz is served but not in the spec)
+apis/asyncapi.yaml                What this service PUBLISHES (integration + analytics topics)
 features/                         godog/Gherkin BDD acceptance tests
 web/                              process_path_mfe Module Federation remote (operator SPA)
 charts/process-path-management/   Helm chart (API, MCP, projector, reports, frontend)
@@ -200,13 +201,19 @@ surface (`kafka.enabled`, `config.eventPublisher`, `otel.enabled`,
 | --- | --- | --- |
 | `HTTP_ADDR` | `:8080` | Listen address. |
 | `DATABASE_URL` | *(unset)* | Postgres DSN. Unset ⇒ in-memory adapter. |
+| `MIGRATIONS_DATABASE_URL` | `DATABASE_URL` | Direct (non-PgBouncer) DSN used only for the startup migration step (ADR 0015). |
 | `MIGRATIONS_PATH` | `migrations` | golang-migrate source directory. |
 | `EVENT_PUBLISHER` | `log` | `log` (default) or `kafka`. Kafka publishing requires this to be set to `kafka`. |
 | `KAFKA_BROKERS` | `localhost:9092` | Comma-separated broker addresses (only read when `EVENT_PUBLISHER=kafka`). |
 | `OUTBOX_RELAY_INTERVAL` | `1s` | How long the outbox relay sleeps between empty passes (only used when both `DATABASE_URL` and `EVENT_PUBLISHER=kafka` are set). |
+| `HOUSEKEEPING_INTERVAL` | `1h` | Housekeeping sweeper interval (ADR 0018; only with `DATABASE_URL`). |
+| `IDEMPOTENCY_KEY_TTL` | `24h` | Age after which the sweeper deletes `idempotency_keys` rows. |
+| `OUTBOX_RETENTION` | `168h` | Age after which the sweeper deletes **published** `outbox_events` rows. |
 | `CORS_ALLOWED_ORIGINS` | `http://localhost:5173,http://localhost:5189` | Comma-separated allowed origins. |
 | `OTEL_SERVICE_NAME` | `process-path-management` | OTel `service.name` resource attribute. |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `localhost:4317` | OTLP/gRPC Collector endpoint. |
+| `SERVICE_VERSION` | `dev` | OTel `service.version` (a `-ldflags -X main.version=` build value wins). |
+| `ENVIRONMENT` | `local` | OTel `deployment.environment.name` resource attribute. |
 | `LOG_LEVEL` | `info` | `debug` \| `info` \| `warn` \| `error`. |
 
 The other binaries read:
@@ -214,17 +221,20 @@ The other binaries read:
 | Binary | Variable | Default | Purpose |
 | --- | --- | --- | --- |
 | `cmd/mcp` | `MCP_ADDR` | `:8090` | MCP Streamable HTTP listen address (`/`, `/mcp`; `/healthz`). |
-| `cmd/mcp` | `DATABASE_URL`, `MIGRATIONS_PATH` | *(unset)*, `migrations` | Same store as the API; unset ⇒ in-memory. |
+| `cmd/mcp` | `DATABASE_URL`, `MIGRATIONS_DATABASE_URL`, `MIGRATIONS_PATH` | *(unset)*, `DATABASE_URL`, `migrations` | Same store as the API; unset ⇒ in-memory. |
+| `cmd/mcp` | `OTEL_SERVICE_NAME` | `process-path-management-mcp` | OTel service name for MCP spans. |
 | `cmd/mcp` | `REPORTS_BASE_URL` | *(unset)* | When set, registers `get_catalogue_growth_report` (calls `pathmgmt-reports`). |
 | `cmd/pathmgmt-projector` | `ANALYTICS_DATABASE_URL` | *(required)* | Analytics Postgres DSN. |
 | `cmd/pathmgmt-projector` | `KAFKA_BROKERS` | `localhost:9092` | Broker for the analytics topic (consumer group `process-path-management-analytics`). |
-| `cmd/pathmgmt-projector` | `ADMIN_ADDR` / `ANALYTICS_MIGRATIONS_PATH` | `:8091` / `migrations/analytics` | Health endpoint; analytics migrations. |
+| `cmd/pathmgmt-projector` | `ADMIN_ADDR` / `ANALYTICS_MIGRATIONS_PATH` | `:8091` / `migrations/analytics` | Admin server (`/healthz`, `/readyz`); analytics migrations. |
 | `cmd/pathmgmt-reports` | `HTTP_ADDR` / `ANALYTICS_DATABASE_URL` | `:8092` / *(required)* | Read-only reports API. |
 
 ## API
 
-Eight endpoints. The full contract, including the RFC 7807 error schema, is in
-[`apis/openapi.yaml`](apis/openapi.yaml).
+Nine routes on `cmd/pathmgmt`. Eight are operations in
+[`apis/openapi.yaml`](apis/openapi.yaml) (the full contract, including the
+RFC 7807 error schema); `GET /readyz` is served by the router but is not in
+the spec.
 
 | Method | Path | Use case |
 | --- | --- | --- |
@@ -236,6 +246,7 @@ Eight endpoints. The full contract, including the RFC 7807 error schema, is in
 | `PUT` | `/sites/{siteId}/cpt-schedule` | DefineCPTSchedule (define or wholesale revise) |
 | `GET` | `/sites/{siteId}/cpt-schedule` | GetCPTSchedule |
 | `GET` | `/healthz` | Liveness probe |
+| `GET` | `/readyz` | Readiness probe — `503 {"status":"not_ready"}` once graceful shutdown starts (ADR 0012) |
 
 The separate `pathmgmt-reports` binary serves the analytics report (not in
 `apis/openapi.yaml`): `GET /reports/catalogue-growth?from=&to=[&granularity=day]`,
@@ -248,10 +259,13 @@ The MCP server (`cmd/mcp`) exposes read-only tools: `get_process_path`,
 Every error response is `application/problem+json` (RFC 7807), the same
 shape every other service in this fleet emits.
 
-`POST /process-paths` requires an `Idempotency-Key` request header (see
-ADR 0011): a byte-identical retry (same key + same body) replays the
-original response verbatim instead of hitting a natural-key `409`; the
-same key with a different body gets `422`; a missing header gets `400`.
+When `DATABASE_URL` is set, `POST /process-paths` requires an
+`Idempotency-Key` request header (see ADR 0011): a byte-identical retry
+(same key + same body) replays the original response verbatim instead of
+hitting a natural-key `409`; the same key with a different body gets
+`422`; a missing header gets `400`. The middleware needs the Postgres pool,
+so on the in-memory adapter (no `DATABASE_URL`) it is not applied and the
+header is ignored.
 
 Every REST route and MCP tool is unauthenticated — there is no auth layer
 in front of either (see ADR 0005, which supersedes ADR 0004's earlier
@@ -273,7 +287,7 @@ curl -s -X POST localhost:8080/process-paths \
   -H 'Content-Type: application/json' \
   -H 'Idempotency-Key: 3f9e2b1a-1e7a-4c9e-9a3f-1c2d3e4f5a6b' \
   -d '{"pathId":"PICK","matchPrefix":"pick","direct":true,"requiredCapabilities":["pick"],"cycleTimeP95":"2h"}'
-# 201 Created (omitting cycleTimeP95 is a 422; omitting Idempotency-Key is a 400)
+# 201 Created (omitting cycleTimeP95 is a 422; with DATABASE_URL set, omitting Idempotency-Key is a 400)
 ```
 
 **List (active only by default):**
@@ -329,17 +343,20 @@ make check-all   # check + coverage (90% gate) + arch-test + bdd
 | `coverage` | coverage profile + the 90% gate (domain + application + analytics; CI's `test` job measures domain + application) |
 | `bdd` | `go test ./... -run TestFeatures -v` (godog/Gherkin) |
 | `arch-test` | `go test ./internal/architecture/... -v` (arch-go fitness) |
-| `integration` | `go test -tags=integration ./... -race -count=1` (Postgres tests skip without `DATABASE_URL`/`ANALYTICS_DATABASE_URL`; the Kafka consumer test uses testcontainers) |
+| `integration` | `go build`/`go vet`/`go test -tags=integration ./... -race -count=1` (needs Docker: every Postgres and Kafka integration test boots its own container via testcontainers) |
 | `mutation-fast` / `mutation` | `gremlins unleash ./internal/domain` (see `.gremlins.yaml`) |
 | `api-lint` | Spectral on both specs |
 | `vuln` | `govulncheck ./...` |
+| `contract` | `scripts/contract-test.sh` — Schemathesis against `apis/openapi.yaml` (ADR 0025; needs `st` on PATH, not part of `check`) |
+| `check-fast` | `fmt-check` + `vet` + `arch-test` + tests of the Go packages changed vs `HEAD` |
+| `guide-lint` / `harness-test` | Agent-guide lint and the agent-hook unit tests (`scripts/harness/`) |
 
 Additional verification surfaces, each with its own CI job:
 
 ```bash
-go test ./... -run TestFeatures -v                  # BDD (godog/Gherkin) — 11/11 scenarios pass
+go test ./... -run TestFeatures -v                  # BDD (godog/Gherkin) — 30 scenarios in 6 feature files
 go test ./internal/architecture/... -v               # arch-fitness (arch-go)
-go test -tags=integration ./... -race -count=1       # Postgres integration
+go test -tags=integration ./... -race -count=1       # Postgres + Kafka integration (testcontainers)
 gremlins unleash ./internal/domain --workers 1 --timeout-coefficient 30   # mutation testing
 helm lint charts/process-path-management
 spectral lint apis/openapi.yaml --ruleset .spectral.yaml --fail-severity=warn
@@ -356,8 +373,12 @@ lefthook install
 ```
 
 CI (`.github/workflows/ci.yml`) runs the full fleet-standard matrix:
-**`lint`**, **`test`**, **`bdd`**, **`integration`** (Postgres service
-container), **`mutation-fast`** (blocking, `./internal/domain`),
+**`lint`**, **`guide-lint`** (agent guides), **`complexity`**
+(gocyclo/gocognit/cyclop/funlen/nestif), **`test`** (with the 90%
+domain + application coverage gate), **`bdd`**, **`contract`**
+(Schemathesis, ADR 0025), **`evals-tests`** (MCP E1–E3 evals, ADR 0023),
+**`integration`** (testcontainers — no service container),
+**`mutation-fast`** (blocking, `./internal/domain`),
 **`api-lint`** (Spectral against both `apis/openapi.yaml` and
 `apis/asyncapi.yaml`), **`vuln`** (govulncheck), **`arch-test`** (arch-go
 and fitness tests), **`docs-api-drift`** (regenerates
@@ -371,9 +392,10 @@ to skip, not fail), **`docker-publish`** (main-only, cosign keyless signing
 + SPDX SBOM attestation), and **`release`** (main-only, auto-tagged
 GitHub release + published Helm chart). Plus `.github/workflows/codeql.yml`
 (security-extended CodeQL analysis) and `.github/workflows/scorecard.yml`
-(OpenSSF Scorecard), and `.github/workflows/docs.yml`, which builds this
-documentation site and deploys it to GitHub Pages on pushes to `develop`
-that touch `docs/**`.
+(OpenSSF Scorecard), `.github/workflows/ai-review.yml` (advisory AI
+architecture review on PRs into `develop`, never blocking), and
+`.github/workflows/docs.yml`, which builds this documentation site and
+deploys it to GitHub Pages on pushes to `develop` that touch `docs/**`.
 
 **Mutation testing baseline (measured, not fabricated):** the first run on
 2026-09-05 found 11 mutants, all killed. Re-measured 2026-09-25 against
@@ -396,10 +418,17 @@ have all migrated to. `helm lint` and two real `helm template` renders
 
 ## Known gaps
 
-- **`destinationLocationRole` is published but not yet read by any
-  consumer.** None of the four consuming repos decodes
-  `destination_location_role` today. See
+- **`destinationLocationRole` is carried but not yet acted on.**
+  `fulfillment-execution`, `wes-work-planning` and `workforce-management`
+  decode `destination_location_role` into their local catalogue caches;
+  no routing decision in those repos reads it yet. See
   [docs/docs/ecosystem/context-map.md](docs/docs/ecosystem/context-map.md).
+- **No W3C trace context on Kafka messages.** `apis/asyncapi.yaml` says
+  trace context travels in `traceparent`/`tracestate` headers, but the
+  publishers only set the `content-type` header today.
+- **The ops agent's MCP client is wired but unused.** `warehouse-ops-agent`
+  constructs a client for this server's tools but no use case calls it
+  yet.
 
 ## Architecture Decision Records
 
@@ -414,7 +443,20 @@ have all migrated to. `helm lint` and two real `helm template` renders
 9. [0009 — Optional destination LocationRole on a ProcessPath](docs/docs/adr/0009-destination-location-role-on-process-path.md)
 10. [0010 — Process paths publish a fulfillment capability contract (cycle time, eligibility, CPT schedule)](docs/docs/adr/0010-fulfillment-capability-contract.md)
 11. [0011 — Transactional Idempotency-Key middleware for POST /process-paths](docs/docs/adr/0011-idempotency-key-middleware.md)
-12. [0016 — CloudEvents 1.0 as the mandatory event envelope](docs/docs/adr/0016-cloudevents-mandatory-event-envelope.md)
+12. [0012 — Analytics-consumer dead-letter queue and graceful shutdown hardening](docs/docs/adr/0012-kafka-dlq-and-graceful-shutdown.md)
+13. [0013 — Hash balancer for the outbound Kafka writers](docs/docs/adr/0013-kafka-writer-hash-balancer.md)
+14. [0014 — Per-workload HorizontalPodAutoscaler and pgxpool tuning](docs/docs/adr/0014-horizontal-autoscaling-and-pgxpool-tuning.md)
+15. [0015 — Run golang-migrate against a direct Postgres connection, not PgBouncer](docs/docs/adr/0015-migrations-direct-postgres-connection.md)
+16. [0016 — CloudEvents 1.0 as the mandatory event envelope](docs/docs/adr/0016-cloudevents-mandatory-event-envelope.md)
+17. [0017 — Optimistic concurrency (version column) on ProcessPath and CPTSchedule](docs/docs/adr/0017-optimistic-concurrency-version-column.md)
+18. [0018 — Outbox lag gauge and housekeeping sweeper](docs/docs/adr/0018-outbox-lag-gauge-and-housekeeping-sweeper.md)
+19. [0019 — Adopting the fleet standard-metrics convention](docs/docs/adr/0019-standard-metrics-convention.md)
+20. [0020 — Adopting RFC 7807 Problem Details for all HTTP error responses](docs/docs/adr/0020-rfc-7807-problem-details.md)
+21. [0021 — The architecture fitness test suite as a merge gate](docs/docs/adr/0021-architecture-fitness-suite.md)
+22. [0022 — The operator console MFE remote and its chart component](docs/docs/adr/0022-mfe-console-remote.md)
+23. [0023 — The MCP eval and governance harness](docs/docs/adr/0023-mcp-eval-and-governance-harness.md)
+24. [0024 — Boot-time dial retry for the Istio native-sidecar warm-up race](docs/docs/adr/0024-bootretry-for-istio-native-sidecar-warmup.md)
+25. [0025 — Schemathesis property-based contract testing against the live API](docs/docs/adr/0025-schemathesis-contract-job.md)
 
 ## License
 
