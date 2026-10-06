@@ -19,6 +19,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	inboundmcp "github.com/claudioed/process-path-management/internal/adapters/inbound/mcp"
 	"github.com/claudioed/process-path-management/internal/adapters/outbound/bootretry"
 	"github.com/claudioed/process-path-management/internal/adapters/outbound/memory"
@@ -76,16 +78,15 @@ func run() error {
 	migrationsDatabaseURL := getenv("MIGRATIONS_DATABASE_URL", databaseURL)
 	migrationsPath := getenv("MIGRATIONS_PATH", "migrations")
 
-	repo, closeAdapters, err := buildRepo(ctx, databaseURL, migrationsDatabaseURL, migrationsPath, logger)
+	repo, pool, closeAdapters, err := buildRepo(ctx, databaseURL, migrationsDatabaseURL, migrationsPath, logger)
 	if err != nil {
 		return err
 	}
 	defer closeAdapters()
-	scheduleRepo, err := buildCPTScheduleRepo(ctx, databaseURL, logger)
+	scheduleRepo, err := buildCPTScheduleRepo(ctx, databaseURL, pool, logger)
 	if err != nil {
 		return err
 	}
-
 	// The MCP adapter reuses the SAME read use cases the HTTP adapter
 	// uses: GetPath and ListPaths. It never writes, so no
 	// EventPublisher/UnitOfWork/Clock is needed here.
@@ -163,12 +164,18 @@ func newRouter(mcpHandler http.Handler) http.Handler {
 // doc comment for the full "why" a direct, non-pooled connection is
 // needed here even though the pgxpool opened just after (databaseURL)
 // stays on PgBouncer.
-func buildRepo(ctx context.Context, databaseURL, migrationsDatabaseURL, migrationsPath string, logger *slog.Logger) (ports.ProcessPathRepo, func(), error) {
+//
+// The ONE pool this function opens is also returned, so the caller can
+// share it with buildCPTScheduleRepo (ADR 0014's connection arithmetic
+// counts ONE MaxConns=10 pool per mcp pod, not two — this binary used to
+// open a second pool for the CPT schedule repo, silently doubling the
+// pod's ceiling to 20 connections). It is nil in the in-memory mode.
+func buildRepo(ctx context.Context, databaseURL, migrationsDatabaseURL, migrationsPath string, logger *slog.Logger) (ports.ProcessPathRepo, *pgxpool.Pool, func(), error) {
 	noop := func() {}
 
 	if databaseURL == "" {
 		logger.Info("DATABASE_URL not set, using in-memory ProcessPathRepo")
-		return memory.NewProcessPathRepo(), noop, nil
+		return memory.NewProcessPathRepo(), nil, noop, nil
 	}
 
 	// Retried, because in this fleet EVERY injected pod's first outbound
@@ -181,11 +188,11 @@ func buildRepo(ctx context.Context, databaseURL, migrationsDatabaseURL, migratio
 	if err := bootretry.Do(ctx, logger, "run migrations", func() error {
 		return postgres.RunMigrations(migrationsDatabaseURL, migrationsPath)
 	}); err != nil {
-		return nil, noop, err
+		return nil, nil, noop, err
 	}
 	pool, err := postgres.NewPool(ctx, databaseURL)
 	if err != nil {
-		return nil, noop, err
+		return nil, nil, noop, err
 	}
 	// ParseConfig/NewWithConfig do not themselves establish a connection,
 	// so without this the first real failure would surface inside a
@@ -194,34 +201,27 @@ func buildRepo(ctx context.Context, databaseURL, migrationsDatabaseURL, migratio
 		return pool.Ping(ctx)
 	}); err != nil {
 		pool.Close()
-		return nil, noop, err
+		return nil, nil, noop, err
 	}
-	return postgres.NewProcessPathRepo(pool), pool.Close, nil
+	return postgres.NewProcessPathRepo(pool), pool, pool.Close, nil
 }
 
 // buildCPTScheduleRepo wires the Postgres CPTScheduleRepo when
 // DATABASE_URL is set, or falls back to the in-memory repo otherwise
 // (ADR 0010) — mirroring buildRepo's own selection. Migrations have
 // already run via buildRepo's own call to postgres.RunMigrations by the
-// time this is invoked, so this does not re-run them; it only needs its
-// own pool since the two repos never share one across composition roots
-// in this binary. It still retries its own first dial (Ping) since this
-// pool is a distinct connection from buildRepo's, and can independently
-// hit the same sidecar warm-up race.
-func buildCPTScheduleRepo(ctx context.Context, databaseURL string, logger *slog.Logger) (ports.CPTScheduleRepo, error) {
+// time this is invoked, so this does not re-run them.
+//
+// pool is buildRepo's ALREADY-PINGED pool (nil in the in-memory mode):
+// both repos share it, holding this pod to ADR 0014's ONE MaxConns=10
+// OLTP pool per mcp pod — the same single-pool shape
+// cmd/pathmgmt/buildPersistence already uses for exactly the same two
+// repos. Sharing also means no second first-dial bootretry is needed
+// here: the one pool's Ping already proved the (shared) connection path.
+func buildCPTScheduleRepo(ctx context.Context, databaseURL string, pool *pgxpool.Pool, logger *slog.Logger) (ports.CPTScheduleRepo, error) {
 	if databaseURL == "" {
 		logger.Info("DATABASE_URL not set, using in-memory CPTScheduleRepo")
 		return memory.NewCPTScheduleRepo(), nil
-	}
-	pool, err := postgres.NewPool(ctx, databaseURL)
-	if err != nil {
-		return nil, err
-	}
-	if err := bootretry.Do(ctx, logger, "ping database (cpt schedule pool)", func() error {
-		return pool.Ping(ctx)
-	}); err != nil {
-		pool.Close()
-		return nil, err
 	}
 	return postgres.NewCPTScheduleRepo(pool), nil
 }

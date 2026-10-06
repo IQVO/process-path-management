@@ -32,7 +32,7 @@ type defineProcessPathRequest struct {
 	RequiredCapabilities []string `json:"requiredCapabilities"`
 	// DestinationLocationRole is an OPTIONAL declaration of what kind of
 	// facility-layout LocationRole this path's completed work is
-	// destined for (Drop | WorkCenter | Shipping) — see ADR 0006. Omitted
+	// destined for (Drop | WorkCenter | Shipping) — see ADR 0009. Omitted
 	// entirely means "no destination role declared", the default and
 	// most common case.
 	DestinationLocationRole string `json:"destinationLocationRole,omitempty"`

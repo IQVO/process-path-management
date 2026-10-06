@@ -19,8 +19,8 @@ company**.
 catalogue — a bounded-context Go service in the `warehouse-systems`
 fleet, alongside `order-management`, `inventory-storage`,
 `wes-work-planning`, `workforce-management`, `fulfillment-execution`,
-`facility-layout`, `warehouse-ops-agent`, `labor-performance`, and
-`network-fulfillment`.
+`facility-layout`, `warehouse-ops-agent`, `labor-performance`,
+`network-fulfillment`, and `warehouse-planning`.
 
 ## Why this context exists
 
@@ -54,7 +54,11 @@ than a synchronous HTTP read-through.
 Four binaries ship from `cmd/`: `pathmgmt` (REST API on `:8080`, plus the
 in-process outbox relay), `mcp` (read-only MCP server on `:8090`,
 [ADR 0006](/docs/adr/0006-mcp-server-second-inbound-adapter)),
-`pathmgmt-projector`, and `pathmgmt-reports` (`:8092`). Every REST route
+`pathmgmt-projector` (admin `:8091`), and `pathmgmt-reports` (`:8092`).
+`pathmgmt` also serves `/healthz` and `/readyz`; with `DATABASE_URL` set it
+runs the transactional outbox relay and the housekeeping sweeper
+([ADR 0018](/docs/adr/0018-outbox-lag-gauge-and-housekeeping-sweeper)) in
+the same process. Every REST route
 and MCP tool is unauthenticated
 ([ADR 0005](/docs/adr/0005-remove-rest-auth)).
 
@@ -69,7 +73,8 @@ and MCP tool is unauthenticated
   (`warehouse.process-path-management.events`). There is no REST or MCP
   client to a sibling context in this codebase, and an architecture
   fitness test keeps it that way. Siblings may read *this* service (the
-  ops agent over MCP); it never reads them.
+  console over REST; the ops agent has an MCP client wired for it but no
+  use case calls it yet); it never reads them.
 - **Does not validate against other contexts' vocabularies.** Capability
   names, product attributes, site ids and destination location roles are
   carried as declared values, never looked up live.
@@ -83,11 +88,13 @@ flowchart LR
   WWP["wes-work-planning<br/>(Core)"]
   WFM["workforce-management<br/>(Supporting)"]
   OM["order-management<br/>(Core)"]
+  NF["network-fulfillment"]
 
   PPM -- "warehouse.process-path-management.events<br/>ProcessPathCreated/Updated/Deactivated" --> FE
   PPM -- "same topic" --> WWP
   PPM -- "same topic" --> WFM
   PPM -- "same topic, incl. CPTScheduleChanged" --> OM
+  PPM -- "same topic, incl. CPTScheduleChanged" --> NF
 
   classDef this fill:#b45309,stroke:#78350f,color:#fff,stroke-width:4px;
   classDef core fill:#1e3a8a,stroke:#1e293b,color:#fff;
@@ -99,10 +106,11 @@ flowchart LR
   class WFM supporting;
 ```
 
-All four consumers are live: the three WES-tier services replaced their
+All five consumers are live: the three WES-tier services replaced their
 static YAML catalogue with this topic on 2026-09-06
 ([ADR 0002](/docs/adr/0002-yaml-to-kafka-cutover)), and
-`order-management` reads path capability and CPT schedules from it
+`order-management` and `network-fulfillment` read path capability and CPT
+schedules from it
 ([ADR 0010](/docs/adr/0010-fulfillment-capability-contract)). See the
 [Context Map](/docs/ecosystem/context-map) for each relationship,
 including the MCP and micro-frontend edges.
@@ -115,6 +123,9 @@ including the MCP and micro-frontend edges.
   comments.
 - **[Aggregates & invariants](/docs/ddd/aggregates-and-invariants)** — the
   ProcessPath and CPTSchedule aggregates and their invariants.
+- **[DDD artifact pack](/docs/ddd/ddd-artifacts)** — ddd-crew canvases,
+  core domain chart, EventStorming, message flows, and UML class, ER and
+  sequence diagrams derived from the code.
 - **[Context map](/docs/ecosystem/context-map)** — who consumes this
   service's events, who reads it over MCP, and why it calls no one.
 - **[API Reference](/docs/api-reference/rest/process-path-management-api)** — generated from the real,

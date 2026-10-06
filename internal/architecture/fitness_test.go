@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -306,26 +307,281 @@ func assertKafkaIntegrationTestFollowsFleetRules(t *testing.T, path, content str
 	}
 }
 
+// Postgres integration-test rule (fleet-wide, mirrors the Kafka rule above):
+// a `-tags=integration` test that touches Postgres MUST boot its own
+// container via testcontainers-go/modules/postgres. An env-gated test
+// (os.Getenv("DATABASE_URL") + t.Skip) silently skips on any runner that
+// does not provision that variable and proves nothing there.
+var (
+	// postgresEnvGateRE matches reading a database URL env var (any name
+	// ending in DATABASE_URL: DATABASE_URL, ANALYTICS_DATABASE_URL, ...).
+	postgresEnvGateRE = regexp.MustCompile(`os\.(Getenv|LookupEnv)\("[A-Z_]*DATABASE_URL"\)`)
+	// postgresSkipRE matches a t.Skip/t.Skipf/t.SkipNow call whose
+	// arguments name a database env var.
+	postgresSkipRE = regexp.MustCompile(`\bt\.Skip(f|Now)?\(.*DATABASE_URL`)
+	// postgresClientMarkers are the import paths that mean "this test
+	// talks to Postgres".
+	postgresClientMarkers = []string{"jackc/pgx", "database/sql"}
+)
+
+const testcontainersPostgresImport = "testcontainers-go/modules/postgres"
+
+// integrationTestTouchesPostgres reports whether src references a Postgres
+// client (pgx, pgxpool or database/sql).
+func integrationTestTouchesPostgres(src string) bool {
+	for _, m := range postgresClientMarkers {
+		if strings.Contains(src, m) {
+			return true
+		}
+	}
+	return false
+}
+
+// postgresIntegrationViolations returns one message per rule a file breaks.
+// dirHasTestcontainersHelper says whether some .go file in the same package
+// directory (the file itself, or a shared helper such as outboxDB) imports
+// testcontainers-go/modules/postgres. Comment lines are skipped so prose
+// that explains the banned shapes does not false-positive.
+func postgresIntegrationViolations(path, src string, dirHasTestcontainersHelper bool) []string {
+	var out []string
+
+	scanner := bufio.NewScanner(strings.NewReader(src))
+	lineNo := 0
+	for scanner.Scan() {
+		lineNo++
+		line := scanner.Text()
+		if strings.HasPrefix(strings.TrimSpace(line), "//") {
+			continue
+		}
+		if postgresEnvGateRE.MatchString(line) {
+			out = append(out, path+":"+itoa(lineNo)+": reads a DATABASE_URL env var — an env-gated Postgres test silently skips on runners that do not provision it; boot a real Postgres via testcontainers-go/modules/postgres instead")
+		}
+		if postgresSkipRE.MatchString(line) {
+			out = append(out, path+":"+itoa(lineNo)+": t.Skip tied to a missing DATABASE_URL env var — integration tests must start their own Postgres via testcontainers, never skip")
+		}
+	}
+
+	if integrationTestTouchesPostgres(src) && !dirHasTestcontainersHelper {
+		out = append(out, path+": touches Postgres (pgx/pgxpool/database/sql) but neither this file nor any sibling .go file in its package imports github.com/testcontainers/testcontainers-go/modules/postgres — Postgres integration tests in this fleet must start their own database via testcontainers")
+	}
+	return out
+}
+
+func itoa(n int) string { return strconv.Itoa(n) }
+
+// dirImportsTestcontainersPostgres reports whether any .go file directly in
+// dir imports testcontainers-go/modules/postgres (the shared per-package
+// helper pattern, e.g. outboxDB).
+func dirImportsTestcontainersPostgres(t *testing.T, dir string) bool {
+	t.Helper()
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read dir %s: %v", dir, err)
+	}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") {
+			continue
+		}
+		src, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		if err != nil {
+			t.Fatalf("read %s: %v", e.Name(), err)
+		}
+		if strings.Contains(string(src), testcontainersPostgresImport) {
+			return true
+		}
+	}
+	return false
+}
+
+// TestPostgresIntegrationTestsUseTestcontainers fails when a
+// `_integration_test.go` gates on DATABASE_URL / ANALYTICS_DATABASE_URL,
+// t.Skips on a missing DB env var, or touches Postgres without a
+// testcontainers Postgres helper in its package.
+func TestPostgresIntegrationTestsUseTestcontainers(t *testing.T) {
+	for _, path := range goFilesUnder(t, "..", true) {
+		if !strings.HasSuffix(path, "_integration_test.go") {
+			continue
+		}
+		src, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		hasHelper := dirImportsTestcontainersPostgres(t, filepath.Dir(path))
+		for _, v := range postgresIntegrationViolations(path, string(src), hasHelper) {
+			t.Error(v)
+		}
+	}
+}
+
+// TestPostgresIntegrationTestsUseTestcontainers_DetectsViolation proves the
+// sensor above fails on bad fixtures and stays quiet on good ones, so it
+// cannot be weakened to a no-op unnoticed.
+func TestPostgresIntegrationTestsUseTestcontainers_DetectsViolation(t *testing.T) {
+	const p = "fixture_integration_test.go"
+
+	bad := map[string]struct {
+		src       string
+		hasHelper bool
+	}{
+		"getenv DATABASE_URL": {
+			src: "package x\n\nfunc f() { _ = os.Getenv(\"DATABASE_URL\") }\n",
+		},
+		"getenv ANALYTICS_DATABASE_URL": {
+			src: "package x\n\nfunc f() { _ = os.Getenv(\"ANALYTICS_DATABASE_URL\") }\n",
+		},
+		"lookupenv DATABASE_URL": {
+			src: "package x\n\nfunc f() { _, _ = os.LookupEnv(\"DATABASE_URL\") }\n",
+		},
+		"skip tied to env var": {
+			src: "package x\n\nfunc f(t *testing.T) { t.Skip(\"DATABASE_URL not set\") }\n",
+		},
+		"skipf tied to env var": {
+			src: "package x\n\nfunc f(t *testing.T) { t.Skipf(\"%s unset\", \"DATABASE_URL\") }\n",
+		},
+		"pgx without testcontainers": {
+			src: "package x\n\nimport \"github.com/jackc/pgx/v5/pgxpool\"\n\nvar _ *pgxpool.Pool\n",
+		},
+		"database/sql without testcontainers": {
+			src: "package x\n\nimport \"database/sql\"\n\nvar _ *sql.DB\n",
+		},
+	}
+	for name, tc := range bad {
+		if got := postgresIntegrationViolations(p, tc.src, tc.hasHelper); len(got) == 0 {
+			t.Errorf("%s: violation was NOT detected — the sensor must flag it", name)
+		}
+	}
+
+	good := map[string]struct {
+		src       string
+		hasHelper bool
+	}{
+		"pgx with testcontainers helper in package": {
+			src:       "package x\n\nimport \"github.com/jackc/pgx/v5/pgxpool\"\n\nvar _ *pgxpool.Pool\n",
+			hasHelper: true,
+		},
+		"comment mentioning the banned shapes": {
+			src:       "// never os.Getenv(\"DATABASE_URL\") or t.Skip(\"DATABASE_URL\")\npackage x\n",
+			hasHelper: true,
+		},
+		"no postgres at all": {
+			src: "package x\n\nfunc f() {}\n",
+		},
+	}
+	for name, tc := range good {
+		if got := postgresIntegrationViolations(p, tc.src, tc.hasHelper); len(got) != 0 {
+			t.Errorf("%s: false positive: %v", name, got)
+		}
+	}
+}
+
 // TestNoSiblingContextOutboundCalls encodes this repo's stricter-than-fleet
 // rule (see AGENTS.md's "Strategic classification": zero inbound dependency
 // on any other bounded context, everything propagates only via Kafka
 // events this service publishes). Unlike most of the fleet, which allows a
 // synchronous HTTP client to a sibling context's REST or MCP surface,
-// process-path-management bans that outright: internal/adapters/outbound
-// must never import net/http as an HTTP CLIENT dependency, because there
-// is no legitimate outbound synchronous call this service should ever make
-// to another bounded context. (net/http appears elsewhere in this codebase
-// — e.g. the inbound HTTP server and the MCP adapter's http.Server — which
-// is fine and unrelated; this check is scoped to internal/adapters/outbound
-// only, where an outbound client package would live if one were added.)
+// process-path-management bans that outright: no adapter may hold an
+// HTTP CLIENT dependency, because there is no legitimate outbound
+// synchronous call this service should ever make to another bounded
+// context. (net/http the SERVER library appears legitimately across
+// internal/adapters/inbound — the chi router, the MCP Streamable HTTP
+// handler — which is why the scan matches client constructs, not the
+// bare import.)
+//
+// The scan covers BOTH internal/adapters/outbound and
+// internal/adapters/inbound: a sibling-context HTTP client could just as
+// easily hide inside an inbound adapter (the MCP report tool's client
+// did exactly that), and a scan that only reads outbound would never
+// see it. Each file that legitimately holds an HTTP client must appear
+// in sameContextHTTPClients with its reason; today that is exactly one:
+// the MCP catalogue-growth report tool calling this context's OWN
+// pathmgmt-reports service, which ADR 0007 §4 explicitly allows
+// (same-context, not a sibling bounded context).
+//
+// httpClientConstructs are the textual shapes an HTTP client takes in
+// this codebase: a field/parameter of type *http.Client, a client
+// literal, or an outbound request builder.
+var httpClientConstructs = []string{
+	"*http.Client",
+	"&http.Client{",
+	"http.NewRequest",
+	"http.NewRequestWithContext",
+	"http.Get(",
+	"http.Post(",
+	"http.DefaultClient",
+}
+
+// containsHTTPClient reports whether src holds any HTTP-client construct.
+func containsHTTPClient(src string) bool {
+	for _, s := range httpClientConstructs {
+		if strings.Contains(src, s) {
+			return true
+		}
+	}
+	return false
+}
+
+var sameContextHTTPClients = map[string]string{
+	"adapters/inbound/mcp/report_tool.go": "calls this context's OWN pathmgmt-reports REST service (ADR 0007 §4: same-context reads are not sibling-context coupling)",
+}
+
 func TestNoSiblingContextOutboundCalls(t *testing.T) {
-	for _, path := range goFilesUnder(t, "../adapters/outbound", false) {
-		src, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatalf("read %s: %v", path, err)
+	for _, root := range []string{"../adapters/outbound", "../adapters/inbound"} {
+		for _, path := range goFilesUnder(t, root, false) {
+			src, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatalf("read %s: %v", path, err)
+			}
+			if !containsHTTPClient(string(src)) {
+				continue
+			}
+			rel, err := filepath.Rel("..", path)
+			if err != nil {
+				t.Fatalf("rel %s: %v", path, err)
+			}
+			if reason, ok := sameContextHTTPClients[rel]; ok {
+				t.Logf("%s: HTTP client allowed — %s", rel, reason)
+				continue
+			}
+			t.Errorf("%s: holds an HTTP client under internal/adapters — process-path-management is a zero-inbound-dependency Open Host Service (see AGENTS.md): it must never issue a synchronous HTTP call to a sibling bounded context. Every cross-context integration here happens exclusively via Kafka events this service publishes. If this file calls only this context's own service, add it (with its reason) to sameContextHTTPClients in this test.", path)
 		}
-		if strings.Contains(string(src), `"net/http"`) {
-			t.Errorf("%s: imports net/http under internal/adapters/outbound — process-path-management is a zero-inbound-dependency Open Host Service (see AGENTS.md): it must never issue a synchronous HTTP call to a sibling bounded context. Every cross-context integration here happens exclusively via Kafka events this service publishes.", path)
+	}
+}
+
+// TestNoSiblingContextOutboundCalls_DetectsViolation proves the guard
+// above fires: given a fixture that looks exactly like a smuggled
+// sibling-context HTTP client, the detector must reject it. This is the
+// guard's own test — a scanner that has never seen a violation prove
+// anything is a scanner nobody trusts — and it fails the moment someone
+// weakens containsHTTPClient or the allowlist lookup to a no-op.
+func TestNoSiblingContextOutboundCalls_DetectsViolation(t *testing.T) {
+	fixturePath := filepath.Join("adapters", "inbound", "sibling_context_client_fixture.go")
+	if _, ok := sameContextHTTPClients[fixturePath]; ok {
+		t.Fatalf("%s must NOT be in the allowlist for this test to mean anything", fixturePath)
+	}
+
+	// The exact shapes a smuggled client takes; every one must be caught.
+	violations := []string{
+		"package inbound\n\nimport \"net/http\"\n\nvar c *http.Client\n",
+		"package inbound\n\nimport \"net/http\"\n\nvar c = &http.Client{Timeout: time.Second}\n",
+		"package inbound\n\nimport \"net/http\"\n\nfunc f() { req, _ := http.NewRequest(http.MethodGet, url, nil); _ = req }\n",
+		"package inbound\n\nimport \"net/http\"\n\nfunc f(ctx context.Context, url string) { req, _ := http.NewRequestWithContext(ctx, http.MethodGet, url, nil); _ = req }\n",
+	}
+	for i, src := range violations {
+		if !containsHTTPClient(src) {
+			t.Fatalf("violation shape %d was NOT detected — containsHTTPClient must match every client construct a smuggler would use", i)
 		}
+	}
+
+	// And the allowlist lookup this test relies on: a detected client not
+	// on the allowlist is the failing condition the real scan reports.
+	if _, allowed := sameContextHTTPClients[fixturePath]; allowed {
+		t.Fatal("fixture unexpectedly allowlisted")
+	}
+
+	// A clean file (server-only net/http use) must NOT be flagged.
+	clean := "package inbound\n\nimport (\n	\"net/http\"\n)\n\nfunc Handler() http.Handler { return nil }\n"
+	if containsHTTPClient(clean) {
+		t.Fatal("server-only net/http use was flagged as a client — the detector is too broad and would drown the signal in false positives")
 	}
 }

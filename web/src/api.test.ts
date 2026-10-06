@@ -51,6 +51,28 @@ describe("apiPost", () => {
 
     await expect(apiPost("/process-paths", {})).rejects.toThrow("500 Internal Server Error");
   });
+
+  it("sends a non-empty Idempotency-Key header, different per submit (ADR 0011)", async () => {
+    const seenKeys: string[] = [];
+    globalThis.fetch = vi.fn().mockImplementation((_input: RequestInfo | URL, init?: RequestInit) => {
+      const headers = init?.headers as Record<string, string>;
+      seenKeys.push(headers["Idempotency-Key"]);
+      return Promise.resolve({
+        ok: true,
+        status: 201,
+        json: async () => ({ pathId: "PICK" }),
+      });
+    }) as unknown as typeof fetch;
+
+    await apiPost("/process-paths", { pathId: "PICK" });
+    await apiPost("/process-paths", { pathId: "PACK" });
+
+    expect(seenKeys).toHaveLength(2);
+    for (const key of seenKeys) {
+      expect(key).toBeTruthy();
+    }
+    expect(seenKeys[0]).not.toBe(seenKeys[1]);
+  });
 });
 
 describe("apiPut", () => {

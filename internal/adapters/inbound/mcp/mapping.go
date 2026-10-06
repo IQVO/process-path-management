@@ -48,17 +48,23 @@ type GetCPTScheduleQuery interface {
 // (ADR 0010), added here since they are cheap to include (the read use
 // case already loads the full aggregate) and the tool's whole purpose is
 // giving an AI client the full definition of a path.
+// DestinationLocationRole (ADR 0006/0009) is included for the same
+// reason: the REST wire already carries it, and an AI client reading a
+// path's routing intent should not have to fall back to REST for one
+// field. It is omitted (omitempty) when unset, mirroring the REST DTO's
+// own omit-when-unknown discipline.
 type processPathDTO struct {
-	PathId               string         `json:"pathId"`
-	MatchPrefix          string         `json:"matchPrefix"`
-	Direct               bool           `json:"direct"`
-	RequiredCapabilities []string       `json:"requiredCapabilities"`
-	Status               string         `json:"status"`
-	Active               bool           `json:"active"`
-	CreatedAt            string         `json:"createdAt"`
-	UpdatedAt            string         `json:"updatedAt"`
-	CycleTimeP95         string         `json:"cycleTimeP95"`
-	Eligibility          eligibilityDTO `json:"eligibility"`
+	PathId                  string         `json:"pathId"`
+	MatchPrefix             string         `json:"matchPrefix"`
+	Direct                  bool           `json:"direct"`
+	RequiredCapabilities    []string       `json:"requiredCapabilities"`
+	DestinationLocationRole string         `json:"destinationLocationRole,omitempty"`
+	Status                  string         `json:"status"`
+	Active                  bool           `json:"active"`
+	CreatedAt               string         `json:"createdAt"`
+	UpdatedAt               string         `json:"updatedAt"`
+	CycleTimeP95            string         `json:"cycleTimeP95"`
+	Eligibility             eligibilityDTO `json:"eligibility"`
 }
 
 // eligibilityDTO is the tool-boundary representation of
@@ -80,15 +86,16 @@ func toProcessPathDTO(p *processpath.ProcessPath) processPathDTO {
 	}
 	e := p.Eligibility()
 	return processPathDTO{
-		PathId:               string(p.ID()),
-		MatchPrefix:          p.MatchPrefix(),
-		Direct:               p.Direct(),
-		RequiredCapabilities: capStrs,
-		Status:               string(p.Status()),
-		Active:               p.IsActive(),
-		CreatedAt:            p.CreatedAt().Format(timeLayout),
-		UpdatedAt:            p.UpdatedAt().Format(timeLayout),
-		CycleTimeP95:         p.CycleTimeP95().String(),
+		PathId:                  string(p.ID()),
+		MatchPrefix:             p.MatchPrefix(),
+		Direct:                  p.Direct(),
+		RequiredCapabilities:    capStrs,
+		DestinationLocationRole: string(p.DestinationLocationRole()),
+		Status:                  string(p.Status()),
+		Active:                  p.IsActive(),
+		CreatedAt:               p.CreatedAt().Format(timeLayout),
+		UpdatedAt:               p.UpdatedAt().Format(timeLayout),
+		CycleTimeP95:            p.CycleTimeP95().String(),
 		Eligibility: eligibilityDTO{
 			MaxUnitsPerLine:           e.MaxUnitsPerLine(),
 			RequiredProductAttributes: e.RequiredProductAttributes(),

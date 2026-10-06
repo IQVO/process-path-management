@@ -93,6 +93,17 @@ spec:
             - name: KAFKA_BROKERS
               value: {{ .Values.kafka.brokers | quote }}
             {{- end }}
+            {{- with .Values.config.housekeeping }}
+            # Housekeeping sweeper (ADR 0018): bounds idempotency_keys and
+            # published outbox_events. A zero value ("0s") disables the
+            # corresponding half; interval "0s" disables the whole job.
+            - name: HOUSEKEEPING_INTERVAL
+              value: {{ .interval | quote }}
+            - name: IDEMPOTENCY_KEY_TTL
+              value: {{ .idempotencyKeyTtl | quote }}
+            - name: OUTBOX_RETENTION
+              value: {{ .outboxRetention | quote }}
+            {{- end }}
             {{- range .Values.extraEnv }}
             - {{ toYaml . | nindent 14 | trim }}
             {{- end }}

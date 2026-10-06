@@ -144,3 +144,18 @@ publisher's `apis/asyncapi.yaml`.
   updated).
 - A new dependency, `github.com/cloudevents/sdk-go/v2` (event package
   only).
+
+### Note (2026-10-04): one id per occurrence on the direct fan-out path
+
+On the dev-only no-Postgres path (`EVENT_PUBLISHER=kafka`, no
+`DATABASE_URL`), the composition root fans each event out to the
+integration and analytics publishers directly. When that path was first
+wired each publisher minted its own `id`, so the two topics carried
+*different* ids for the same occurrence — diverging from
+`postgres.OutboxPublisher`, which mints one `id` and reuses it for every
+topic's row (its `newId` doc comment: "so a redelivery carries the same
+id on every topic it was enqueued for"). Fixed by
+`kafka.NewSharedIdFanOut`: the fan-out mints ONE id per occurrence and
+publishes under it on both topics (`Publisher.PublishWithId` /
+`AnalyticsPublisher.PublishWithId`). In-cluster behaviour (Postgres
+configured) was never affected — the outbox path already shared the id.

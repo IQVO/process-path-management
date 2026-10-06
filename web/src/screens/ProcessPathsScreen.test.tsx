@@ -15,6 +15,9 @@ describe("ProcessPathsScreen", () => {
             matchPrefix: "pick",
             direct: true,
             requiredCapabilities: ["pick-heavy"],
+            destinationLocationRole: "Drop",
+            cycleTimeP95: "2h0m0s",
+            eligibility: { maxUnitsPerLine: 1 },
             status: "ACTIVE",
             createdAt: "2026-09-06T00:00:00Z",
             updatedAt: "2026-09-06T00:00:00Z",
@@ -28,19 +31,40 @@ describe("ProcessPathsScreen", () => {
     expect(await screen.findByText("PICK")).toBeInTheDocument();
     expect(screen.getByText("pick")).toBeInTheDocument();
     expect(screen.getByText("pick-heavy")).toBeInTheDocument();
+    expect(screen.getByText("Drop")).toBeInTheDocument();
+    expect(screen.getByText("2h")).toBeInTheDocument();
+    expect(screen.getByText("max 1/line")).toBeInTheDocument();
   });
 
   it("defines a new process path and shows a success message", async () => {
     server.use(
       http.get(`${PROCESS_PATH_API_BASE}/process-paths`, () => HttpResponse.json([])),
       http.post(`${PROCESS_PATH_API_BASE}/process-paths`, async ({ request }) => {
-        const body = (await request.json()) as { pathId: string; matchPrefix: string };
+        const body = (await request.json()) as {
+          pathId: string;
+          matchPrefix: string;
+          cycleTimeP95: string;
+          eligibility?: { nonSortable: boolean };
+        };
+        if (body.cycleTimeP95 !== "90m") {
+          return HttpResponse.json(
+            {
+              type: "https://errors.process-path-management.warehouse-systems.dev/invalid-cycle-time-p95",
+              title: "cycleTimeP95 must be a positive duration",
+              status: 422,
+              detail: `cycleTimeP95 must be a positive duration, got ${body.cycleTimeP95}`,
+            },
+            { status: 422 },
+          );
+        }
         return HttpResponse.json(
           {
             pathId: body.pathId,
             matchPrefix: body.matchPrefix,
             direct: true,
             requiredCapabilities: ["pack"],
+            cycleTimeP95: body.cycleTimeP95,
+            eligibility: body.eligibility ?? {},
             status: "ACTIVE",
             createdAt: "2026-09-06T00:00:00Z",
             updatedAt: "2026-09-06T00:00:00Z",
@@ -57,6 +81,10 @@ describe("ProcessPathsScreen", () => {
       screen.getByLabelText("Required capabilities (comma-separated) *"),
       "pack",
     );
+    const cycleInput = screen.getByLabelText(/Cycle time p95/);
+    await userEvent.clear(cycleInput);
+    await userEvent.type(cycleInput, "90m");
+    await userEvent.click(screen.getByRole("checkbox", { name: "Non-sortable" }));
     await userEvent.click(screen.getByRole("button", { name: "Define path" }));
 
     await waitFor(() =>
@@ -104,6 +132,7 @@ describe("ProcessPathsScreen", () => {
             matchPrefix: revised ? "pick-v2" : "pick",
             direct: true,
             requiredCapabilities: revised ? ["pick", "pick-heavy"] : ["pick-standard"],
+            cycleTimeP95: revised ? "3h0m0s" : "2h0m0s",
             status: "ACTIVE",
             createdAt: "2026-09-06T00:00:00Z",
             updatedAt: "2026-09-06T00:00:00Z",
@@ -114,13 +143,26 @@ describe("ProcessPathsScreen", () => {
         const body = (await request.json()) as {
           matchPrefix: string;
           requiredCapabilities: string[];
+          cycleTimeP95: string;
         };
+        if (body.cycleTimeP95 !== "3h") {
+          return HttpResponse.json(
+            {
+              type: "https://errors.process-path-management.warehouse-systems.dev/invalid-cycle-time-p95",
+              title: "cycleTimeP95 must be a positive duration",
+              status: 422,
+              detail: `cycleTimeP95 must be a positive duration, got ${body.cycleTimeP95}`,
+            },
+            { status: 422 },
+          );
+        }
         revised = true;
         return HttpResponse.json({
           pathId: "PICK",
           matchPrefix: body.matchPrefix,
           direct: true,
           requiredCapabilities: body.requiredCapabilities,
+          cycleTimeP95: body.cycleTimeP95,
           status: "ACTIVE",
           createdAt: "2026-09-06T00:00:00Z",
           updatedAt: "2026-09-06T01:00:00Z",
@@ -132,10 +174,13 @@ describe("ProcessPathsScreen", () => {
     expect(await screen.findByText("pick")).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: "Revise" }));
-    const prefixInputs = screen.getAllByRole("textbox");
-    const prefixInput = prefixInputs.find((el) => (el as HTMLInputElement).value === "pick")!;
+    const textboxes = screen.getAllByRole("textbox");
+    const prefixInput = textboxes.find((el) => (el as HTMLInputElement).value === "pick")!;
     await userEvent.clear(prefixInput);
     await userEvent.type(prefixInput, "pick-v2");
+    const cycleInput = textboxes.find((el) => (el as HTMLInputElement).value === "2h0m0s")!;
+    await userEvent.clear(cycleInput);
+    await userEvent.type(cycleInput, "3h");
     await userEvent.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() => expect(screen.getByText("pick-v2")).toBeInTheDocument());

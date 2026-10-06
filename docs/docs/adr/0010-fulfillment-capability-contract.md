@@ -112,8 +112,10 @@ Both are revisable via `Revise` while Active, raise `ProcessPathUpdated`
 when they change, and are frozen on deactivation, exactly like
 `matchPrefix` and `requiredCapabilities`. Both are additive fields on
 the existing `ProcessPathCreated`/`ProcessPathUpdated` payloads; the
-migration backfills `cycleTimeP95` from the retired YAML's implied
-`PROMISE_PATH_LEAD_TIMES` values so no existing row is invalid.
+migration backfills `cycleTimeP95` with a flat 2-hour default (no
+single value was universal in the retired YAML's implied
+`PROMISE_PATH_LEAD_TIMES`, so operators revise per path after the
+migration) so no existing row is invalid.
 
 ### 2. A new `CPTSchedule` aggregate, site-scoped
 
@@ -157,9 +159,9 @@ order-management, not a coupling here.
   on the existing REST adapter, RFC 7807 errors as today.
 - `cycleTimeP95` and `eligibility` on the existing path create/revise
   DTOs and on `process-path-mfe`.
-- Two read-only MCP tools (`get_cpt_schedule`, `list_paths` widened),
-  consistent with ADR 0006's curated intent-level tool posture. No write
-  tools.
+- Two read-only MCP tools (`get_cpt_schedule`, `list_process_paths`
+  widened), consistent with ADR 0006's curated intent-level tool
+  posture. No write tools.
 
 ### 4. What is explicitly out of scope here
 
@@ -234,9 +236,13 @@ order-management, not a coupling here.
 
 ## Rollout (Phase 1 of the promise plan)
 
-1. Migration `0003_capability.up.sql`: `cycle_time_p95` (interval, NOT
-   NULL, backfilled), `eligibility` (jsonb, NOT NULL, default `{}`),
-   new `cpt_schedules` table.
+1. Migration `0005_capability.up.sql`: `cycle_time_p95` (interval, NOT
+   NULL, backfilled with a flat `'2 hours'` default — no YAML-derived
+   per-path backfill shipped; no single value was universal across the
+   retired catalogue's path families, so the conservative flat default
+   this service's own validation accepts was chosen and operators revise
+   per path via PUT), `eligibility` (jsonb, NOT NULL, default `{}`), new
+   `cpt_schedules` table.
 2. Domain + use cases + tests (90% gate, gremlins baseline held).
 3. `apis/openapi.yaml`, `apis/asyncapi.yaml` (new message, widened
    payloads), regenerate docs.

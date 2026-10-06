@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/claudioed/process-path-management/internal/application/ports"
 	"github.com/claudioed/process-path-management/internal/domain/processpath"
 	"github.com/claudioed/process-path-management/internal/domain/shared"
 )
@@ -32,24 +33,43 @@ func NewProcessPathRepo(pool *pgxpool.Pool) *ProcessPathRepo {
 	return &ProcessPathRepo{pool: pool}
 }
 
+// Save upserts a's current state, version-guarded against a concurrent
+// writer (ADR 0017): on an existing row it only applies when the row's
+// current version still matches p.Version(), and always advances the row
+// by exactly one version. ports.ErrConcurrentModification is returned
+// when the row exists but its version no longer matches — the caller
+// must re-fetch and retry, not blindly re-Save the same in-memory
+// aggregate. A fresh INSERT (no conflicting row) always succeeds and
+// starts at version 1.
 func (r *ProcessPathRepo) Save(ctx context.Context, p *processpath.ProcessPath) error {
-	_, err := querierFrom(ctx, r.pool).Exec(ctx, `
-		INSERT INTO process_paths (id, match_prefix, direct, required_capabilities, destination_location_role, cycle_time_p95, eligibility, status, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+	tag, err := querierFrom(ctx, r.pool).Exec(ctx, `
+		INSERT INTO process_paths (id, match_prefix, direct, required_capabilities, destination_location_role, cycle_time_p95, eligibility, status, created_at, updated_at, version)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 1)
 		ON CONFLICT (id) DO UPDATE
 		  SET match_prefix          = EXCLUDED.match_prefix,
 		      required_capabilities = EXCLUDED.required_capabilities,
 		      cycle_time_p95        = EXCLUDED.cycle_time_p95,
 		      eligibility           = EXCLUDED.eligibility,
 		      status                = EXCLUDED.status,
-		      updated_at            = EXCLUDED.updated_at
-	`, string(p.ID()), p.MatchPrefix(), p.Direct(), capabilitiesToStrings(p.RequiredCapabilities()), destinationLocationRoleToColumn(p.DestinationLocationRole()), durationToInterval(p.CycleTimeP95()), eligibilityToRow(p.Eligibility()), string(p.Status()), p.CreatedAt(), p.UpdatedAt())
-	return err
+		      updated_at            = EXCLUDED.updated_at,
+		      version               = process_paths.version + 1
+		WHERE process_paths.version = $11
+	`, string(p.ID()), p.MatchPrefix(), p.Direct(), capabilitiesToStrings(p.RequiredCapabilities()), destinationLocationRoleToColumn(p.DestinationLocationRole()), durationToInterval(p.CycleTimeP95()), eligibilityToRow(p.Eligibility()), string(p.Status()), p.CreatedAt(), p.UpdatedAt(), p.Version())
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		// The row exists (this is the ON CONFLICT arm; a plain INSERT
+		// into an empty slot always affects exactly 1 row) but its
+		// version no longer matches what p was loaded at.
+		return ports.ErrConcurrentModification
+	}
+	return nil
 }
 
 func (r *ProcessPathRepo) FindByID(ctx context.Context, id shared.PathId) (*processpath.ProcessPath, error) {
 	row := querierFrom(ctx, r.pool).QueryRow(ctx, `
-		SELECT id, match_prefix, direct, required_capabilities, destination_location_role, cycle_time_p95, eligibility, status, created_at, updated_at
+		SELECT id, match_prefix, direct, required_capabilities, destination_location_role, cycle_time_p95, eligibility, status, created_at, updated_at, version
 		FROM process_paths
 		WHERE id = $1
 	`, string(id))
@@ -58,7 +78,7 @@ func (r *ProcessPathRepo) FindByID(ctx context.Context, id shared.PathId) (*proc
 
 func (r *ProcessPathRepo) ListActive(ctx context.Context) ([]*processpath.ProcessPath, error) {
 	return r.list(ctx, `
-		SELECT id, match_prefix, direct, required_capabilities, destination_location_role, cycle_time_p95, eligibility, status, created_at, updated_at
+		SELECT id, match_prefix, direct, required_capabilities, destination_location_role, cycle_time_p95, eligibility, status, created_at, updated_at, version
 		FROM process_paths
 		WHERE status = 'ACTIVE'
 		ORDER BY id
@@ -67,7 +87,7 @@ func (r *ProcessPathRepo) ListActive(ctx context.Context) ([]*processpath.Proces
 
 func (r *ProcessPathRepo) ListAll(ctx context.Context) ([]*processpath.ProcessPath, error) {
 	return r.list(ctx, `
-		SELECT id, match_prefix, direct, required_capabilities, destination_location_role, cycle_time_p95, eligibility, status, created_at, updated_at
+		SELECT id, match_prefix, direct, required_capabilities, destination_location_role, cycle_time_p95, eligibility, status, created_at, updated_at, version
 		FROM process_paths
 		ORDER BY id
 	`)
@@ -102,8 +122,9 @@ func scanProcessPath(row pgx.Row) (*processpath.ProcessPath, error) {
 		eligibility             eligibilityRow
 		status                  string
 		createdAt, updatedAt    time.Time
+		version                 int
 	)
-	err := row.Scan(&id, &matchPrefix, &direct, &requiredCapabilities, &destinationLocationRole, &cycleTimeP95, &eligibility, &status, &createdAt, &updatedAt)
+	err := row.Scan(&id, &matchPrefix, &direct, &requiredCapabilities, &destinationLocationRole, &cycleTimeP95, &eligibility, &status, &createdAt, &updatedAt, &version)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -121,6 +142,7 @@ func scanProcessPath(row pgx.Row) (*processpath.ProcessPath, error) {
 		processpath.Status(status),
 		createdAt,
 		updatedAt,
+		version,
 	), nil
 }
 

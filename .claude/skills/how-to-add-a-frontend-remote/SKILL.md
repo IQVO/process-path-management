@@ -1,3 +1,8 @@
+---
+name: how-to-add-a-frontend-remote
+description: Add or change a micro-frontend remote under web/ (vite federation config in object form, /mfes/<context>/ base, remoteEntry, Docker/nginx packaging, console integration). Use when touching web/.
+---
+
 # How to add a frontend remote
 
 Use when adding a new screen/feature to this repo's `web/` Module
@@ -17,9 +22,8 @@ cluster — not lazy-loaded inside the console shell today. If you're
 adding a NEW remote for a different bounded context and want it to
 behave differently (embedded in the console), that's a deliberate
 divergence from this repo's own pattern — check
-`warehouse-console`'s `.claude/rules/mfe-remotes.md` for the shell-side
-contract rather than assuming this repo's standalone posture is the
-default.
+the `warehouse-console` repo's own guides for the shell-side contract
+rather than assuming this repo's standalone posture is the default.
 
 ## `vite.config.ts` must stay in OBJECT form, always
 

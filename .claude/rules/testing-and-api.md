@@ -1,9 +1,20 @@
+---
+paths:
+  - "internal/adapters/inbound/http/**"
+  - "apis/openapi*.yaml"
+  - "apis/openapi/**"
+  - "**/*_test.go"
+  - "features/**"
+---
+
 # Testing discipline, CI matrix, and REST API reference
 
 ## REST API (inbound adapter — `internal/adapters/inbound/http`)
 
-Eight endpoints, all unauthenticated (ADR 0005 removed the REST auth layer
-ADR 0004 had added — do not re-add auth without checking that ADR first):
+Nine routes, all unauthenticated (ADR 0005 removed the REST auth layer
+ADR 0004 had added — do not re-add auth without checking that ADR first).
+Eight are operations in `apis/openapi.yaml`; `GET /readyz` is served by the
+router (`readiness.go`) but is not in the spec:
 
 | Method | Path | Use case |
 | --- | --- | --- |
@@ -15,6 +26,10 @@ ADR 0004 had added — do not re-add auth without checking that ADR first):
 | `PUT` | `/sites/{siteId}/cpt-schedule` | DefineCPTSchedule — 200, wholesale define/revise; 422 if an eligiblePathId is not an Active path |
 | `GET` | `/sites/{siteId}/cpt-schedule` | GetCPTSchedule — 404 if none |
 | `GET` | `/healthz` | Liveness probe |
+| `GET` | `/readyz` | Readiness probe — 503 once graceful shutdown starts (ADR 0012) |
+
+`POST /process-paths` is wrapped by the Idempotency-Key middleware (ADR
+0011) only when a Postgres pool is wired (`DATABASE_URL` set).
 
 `POST`/`PUT /process-paths*` require `cycleTimeP95` (Go duration string,
 > 0; 422 otherwise). The separate `cmd/pathmgmt-reports` binary serves
@@ -41,20 +56,21 @@ here, including this file.
   `usecases_test.go`, `unit_of_work_test.go`, `fakes_test.go`,
   `server_test.go`).
 - **BDD**: `features/*.feature` (godog/Gherkin) — `define_and_read.feature`,
-  `revise.feature`, `deactivate.feature`, driven through `features_test.go`.
-  Run via `make bdd`.
+  `define_validation.feature`, `revise.feature`, `revise_and_events.feature`,
+  `deactivate.feature`, `cpt_schedule.feature` (30 scenarios), driven
+  through `features_test.go`. Run via `make bdd`.
 - **Architecture fitness**: `internal/architecture/architecture_test.go`
   (arch-go) enforces the hexagonal dependency rule described above —
   every PR that reshapes package imports must keep this green, not just
   `go build`.
-- **Integration** (`-tags=integration`):
-  `internal/adapters/outbound/postgres/*_integration_test.go` (skip without
-  `DATABASE_URL`), `internal/adapters/outbound/analyticsstore/postgres_integration_test.go`
-  (skips without `ANALYTICS_DATABASE_URL`), and
-  `internal/adapters/inbound/kafka/analytics_consumer_integration_test.go`,
-  which starts its own broker via testcontainers — the fleet convention for
-  anything Kafka-touching (`TestKafkaIntegrationTestsUseTestcontainers`
-  enforces it). Files behind
+- **Integration** (`-tags=integration`, needs Docker):
+  `internal/adapters/outbound/postgres/*_integration_test.go`,
+  `internal/adapters/outbound/analyticsstore/postgres_integration_test.go`
+  and `internal/adapters/inbound/kafka/*_integration_test.go` each boot
+  their own Postgres/Kafka container via testcontainers — no
+  `DATABASE_URL`, no CI service container
+  (`TestPostgresIntegrationTestsUseTestcontainers` and
+  `TestKafkaIntegrationTestsUseTestcontainers` enforce it). Files behind
   `//go:build integration` are invisible to default `go build`/`go test
   ./...` — always also run `go build -tags=integration ./...` and `go vet
   -tags=integration ./...` before pushing any change to a constructor or
@@ -67,8 +83,9 @@ here, including this file.
 - **API contract linting**: `spectral lint` against both
   `apis/openapi.yaml` (`.spectral.yaml`) and `apis/asyncapi.yaml`
   (`.spectral.asyncapi.yaml`), CI job `api-lint`.
-- CI (`.github/workflows/ci.yml`) full matrix: `lint`, `test`, `bdd`,
-  `integration` (Postgres service container), `mutation-fast` (blocking),
+- CI (`.github/workflows/ci.yml`) full matrix: `lint`, `guide-lint`,
+  `complexity`, `test`, `bdd`, `contract` (Schemathesis), `evals-tests`
+  (MCP E1–E3), `integration` (testcontainers), `mutation-fast` (blocking),
   `api-lint`, `vuln` (govulncheck), `arch-test`, `docs-api-drift`
   (regenerates `docs/docs/api-reference/rest` and fails on any diff —
   run `npm run clean-api-docs pathmgmt && npm run gen-api-docs pathmgmt`
@@ -76,6 +93,7 @@ here, including this file.
   test, build of `web/`), `drift` (advisory, schedule/manual only),
   `helm-lint`/`trivy-scan` (gated to PRs targeting `main` only),
   `docker-publish` and `release` (main-only). Plus
-  `.github/workflows/codeql.yml`, `.github/workflows/scorecard.yml`, and
+  `.github/workflows/codeql.yml`, `.github/workflows/scorecard.yml`,
+  `.github/workflows/ai-review.yml` (advisory), and
   `.github/workflows/docs.yml` (builds the docs site and deploys GitHub
   Pages on pushes to `develop` touching `docs/**`).

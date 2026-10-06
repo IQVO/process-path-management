@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -292,5 +293,22 @@ func TestDeactivatePath_ValidRequest_Returns204(t *testing.T) {
 	router.ServeHTTP(deleteRR, deleteReq)
 	if deleteRR.Code != http.StatusNoContent {
 		t.Fatalf("want 204, got %d: %s", deleteRR.Code, deleteRR.Body.String())
+	}
+}
+
+func TestCORSPreflight_AllowsIdempotencyKeyHeader(t *testing.T) {
+	router := newTestServer(t)
+	req := httptest.NewRequest(http.MethodOptions, "/process-paths", nil)
+	req.Header.Set("Origin", "http://localhost:5173")
+	req.Header.Set("Access-Control-Request-Method", http.MethodPost)
+	req.Header.Set("Access-Control-Request-Headers", "Content-Type, Idempotency-Key")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("preflight: want 200, got %d", rr.Code)
+	}
+	allowHeaders := rr.Header().Get("Access-Control-Allow-Headers")
+	if !strings.Contains(allowHeaders, inboundhttp.IdempotencyKeyHeader) {
+		t.Fatalf("Access-Control-Allow-Headers = %q, want it to include %q — without it the browser blocks the SPA's idempotent POST before it ever reaches the middleware (ADR 0011)", allowHeaders, inboundhttp.IdempotencyKeyHeader)
 	}
 }
