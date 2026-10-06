@@ -64,7 +64,7 @@ flowchart LR
     P1["Policy: whenever a path event is raised, enqueue it on the events and analytics topics in the same transaction"]:::policy
     X1["fulfillment-execution, wes-work-planning, workforce-management, order-management, network-fulfillment"]:::external
     RM1["Sites whose CPT schedule lists the path - ListSiteIDsReferencingPath"]:::readmodel
-    P2["Policy: whenever a deactivation targets a path a CPT schedule lists, refuse it with 409 - ADR 0026"]:::policy
+    P2["Policy: whenever a deactivation targets a path a CPT schedule lists, refuse it with 409 - ADR 0026; the path row is locked FOR UPDATE first so no schedule can slip in - ADR 0028"]:::policy
     H2["Hotspot: ICQA path family left undecided - ADR 0008"]:::hotspot
 
     RM0 -.-> OP
@@ -102,7 +102,7 @@ deactivation (policy P2) raises nothing and leaves the path ACTIVE.
 ```mermaid
 flowchart LR
     OP["Operator"]:::actor
-    RM1["Active process paths - own ProcessPathRepo"]:::readmodel
+    RM1["Active process paths - own ProcessPathRepo, share-locked until commit - ADR 0028"]:::readmodel
     C1["DefineCPTSchedule - PUT /sites/siteId/cpt-schedule"]:::command
     A1["CPTSchedule"]:::aggregate
     E1["CPTScheduleChanged"]:::event
@@ -125,7 +125,7 @@ flowchart LR
 ```
 
 Source: `internal/application/usecases/cpt_schedule.go`
-(`validateEligiblePathIds`), `internal/domain/cptschedule/cpt_schedule.go`,
+(`lockAndValidateEligiblePathIds`), `internal/domain/cptschedule/cpt_schedule.go`,
 `internal/domain/cptschedule/events.go` (`ToSnapshot`),
 `docs/docs/adr/0010-fulfillment-capability-contract.md`. Omits: the
 identical-schedule no-op and `GetCPTSchedule`.
@@ -179,8 +179,8 @@ projector commits and skips.
 | Dedupe and bump the day bucket | Policy | `AnalyticsConsumer.handleFetchedMessage` then `ApplyProcessPath*` |
 | Dead-letter and commit | Policy | `AnalyticsConsumer.deadLetterAndCommit` (ADR 0012) |
 | Process path list | Read model | `usecases.ListPaths` (`GET /process-paths`, MCP `list_process_paths`) |
-| Active process paths | Read model | `ProcessPathRepo.FindByID` inside `validateEligiblePathIds` |
-| Sites whose CPT schedule lists the path | Read model | `ports.CPTScheduleRepo.ListSiteIDsReferencingPath` inside `DeactivatePath` |
+| Active process paths | Read model | `ProcessPathRepo.LockByIDsForShare` inside `lockAndValidateEligiblePathIds` (rows share-locked until commit, ADR 0028) |
+| Sites whose CPT schedule lists the path | Read model | `ports.CPTScheduleRepo.ListSiteIDsReferencingPath` inside `DeactivatePath`, after `ProcessPathRepo.FindByIDForUpdate` (ADR 0028) |
 | Refuse deactivation while a schedule lists the path | Policy | `usecases.DeactivatePath` returning `ErrPathReferencedByCPTSchedule` (ADR 0026) |
 | catalogue_growth_rollup | Read model | `migrations/analytics/0001_report.up.sql`, served by `pathmgmt-reports` |
 | Five consumer contexts | External system | sibling consumer files on the [Context Map](../ecosystem/context-map.md) |
@@ -192,4 +192,4 @@ projector commits and skips.
 | --- | --- |
 | `siteId` is never validated | ADR 0010: "A schedule for an unknown site is an operator error that shows up as an unroutable order in order-management, not a coupling here." |
 | ICQA path family left undecided | ADR 0008: "ICQA remains a genuinely open question, deliberately not decided here." |
-| A schedule written concurrently with the deactivation of a path it lists can slip through | ADR 0026: the reference check and the deactivation share one READ COMMITTED transaction and neither locks the other's rows; the next `PUT` of that schedule is rejected by the Active-path check. |
+| A schedule written concurrently with the deactivation of a path it lists can slip through | Decided 2026-10-06: closed (ADR 0028). `DefineCPTSchedule` locks the listed path rows `FOR SHARE` and `DeactivatePath` locks the path row `FOR UPDATE` before checking for referencing schedules, both inside their unit of work; the 409 of ADR 0026 is kept. Proven by the Postgres race test `TestCPTSchedule_DefineVsDeactivate_NeverNamesAnInactivePath`. |

@@ -456,6 +456,7 @@ have all migrated to. `helm lint` and two real `helm template` renders
 25. [0025 — Schemathesis property-based contract testing against the live API](docs/docs/adr/0025-schemathesis-contract-job.md)
 26. [0026 — Refuse to deactivate a process path that a CPT schedule still lists](docs/docs/adr/0026-reject-deactivation-of-paths-in-cpt-schedules.md)
 27. [0027 — Propagate W3C trace context in Kafka headers](docs/docs/adr/0027-w3c-trace-context-on-kafka-headers.md)
+28. [0028 — Close the path / CPT-schedule race with row locks](docs/docs/adr/0028-close-path-cpt-schedule-race-with-row-locks.md)
 
 ## License
 

@@ -20,7 +20,10 @@ import (
 // eligiblePathIds must reference an Active ProcessPath in this service's
 // own store — is enforced HERE, via the injected ProcessPathRepo, not in
 // the cptschedule domain package: it is a use-case-level check against a
-// sibling aggregate's repo, never a foreign key.
+// sibling aggregate's repo, never a foreign key. ADR 0028 makes it
+// race-free: the whole use case runs in one unit of work and the listed
+// paths are locked FOR SHARE (sorted) until commit, serialising it against
+// DeactivatePath.
 type DefineCPTSchedule struct {
 	Repo            ports.CPTScheduleRepo
 	ProcessPathRepo ports.ProcessPathRepo

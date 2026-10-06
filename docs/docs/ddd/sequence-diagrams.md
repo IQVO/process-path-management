@@ -181,6 +181,12 @@ sequenceDiagram
         H-->>Client: 204 No Content
     else ACTIVE
         UC->>UOW: Execute(fn)
+        UOW->>REPO: FindByIDForUpdate(id)
+        REPO->>DB: SELECT ... FROM process_paths WHERE id FOR UPDATE (waits for any define holding FOR SHARE, ADR 0028)
+        alt deactivated meanwhile
+            UC-->>H: nil, nothing saved or published
+            H-->>Client: 204 No Content
+        end
         UOW->>SREPO: ListSiteIDsReferencingPath(id)
         SREPO->>DB: SELECT DISTINCT schedule_site_id FROM cpt_schedule_cutoffs WHERE id = ANY(eligible_path_ids)
         alt a CPT schedule still lists the path (ADR 0026)
@@ -205,13 +211,17 @@ sequenceDiagram
 
 Source: `internal/application/usecases/deactivate_path.go`,
 `internal/domain/processpath/process_path.go` (`Deactivate`),
+`internal/adapters/outbound/postgres/process_path_repo.go`
+(`FindByIDForUpdate`),
 `internal/adapters/outbound/postgres/cpt_schedule_repo.go`
 (`ListSiteIDsReferencingPath`),
 `internal/adapters/inbound/http/server.go` (`handleDeactivatePath`).
 Omits: 500 branches. The row is never deleted; `DELETE` is a soft
-deactivation. The reference check and the deactivation share one
-transaction at READ COMMITTED, so a schedule written concurrently with
-the deactivation can still slip through (see ADR 0026).
+deactivation. The path row is locked `FOR UPDATE` before the reference
+check, and `DefineCPTSchedule` holds `FOR SHARE` on every path it lists
+until it commits, so the two serialise: the race between a schedule
+listing the path and its deactivation is **closed** (ADR 0028, which
+closes the residual race ADR 0026 recorded).
 
 ## 4. Define or revise a site's CPT schedule
 
@@ -234,14 +244,16 @@ sequenceDiagram
         H-->>Client: 422 problem+json
     end
     H->>UC: Execute(siteId, timezone, cutoffs)
-    UC->>SREPO: FindBySiteID(siteId)
-    loop each distinct eligiblePathId
-        UC->>PREPO: FindByID(pathId)
-    end
+    UC->>UOW: Execute(fn)
+    UOW->>PREPO: LockByIDsForShare(distinct eligiblePathIds, sorted)
+    PREPO->>DB: SELECT ... FROM process_paths WHERE id = ANY(ids) ORDER BY id FOR SHARE (held to COMMIT, ADR 0028)
     alt a path is unknown or not ACTIVE
         UC-->>H: ErrIneligiblePathId
+        UOW->>DB: ROLLBACK
         H-->>Client: 422 ineligible-path-id
-    else no schedule yet
+    end
+    UC->>SREPO: FindBySiteID(siteId)
+    alt no schedule yet
         UC->>AGG: Define(siteId, timezone, cutoffs, now)
     else schedule exists
         UC->>AGG: Revise(timezone, cutoffs, now)
@@ -251,7 +263,6 @@ sequenceDiagram
         end
     end
     Note over UC,AGG: Define or Revise may still fail with a schedule-level Err sentinel, answered 422
-    UC->>UOW: Execute(fn)
     UOW->>SREPO: Save(schedule)
     SREPO->>DB: UPSERT cpt_schedules WHERE version matches
     alt version moved on
@@ -268,11 +279,15 @@ sequenceDiagram
 Source: `internal/adapters/inbound/http/server.go`
 (`handleDefineCPTSchedule`, `toCutoffs`),
 `internal/application/usecases/cpt_schedule.go`
-(`DefineCPTSchedule.Execute`, `validateEligiblePathIds`),
+(`DefineCPTSchedule.Execute`, `lockAndValidateEligiblePathIds`),
 `internal/domain/cptschedule/cpt_schedule.go`,
 `internal/domain/cptschedule/events.go` (`ToSnapshot`),
+`internal/adapters/outbound/postgres/process_path_repo.go`
+(`LockByIDsForShare`),
 `internal/adapters/outbound/postgres/cpt_schedule_repo.go` (`Save`).
-Omits: 500 branches.
+Omits: 500 branches. The whole use case runs in one unit of work and the
+share locks on the listed paths are held until `COMMIT`, which is what
+serialises it against `DeactivatePath` (ADR 0028).
 
 ## 5. Outbox relay to Kafka
 

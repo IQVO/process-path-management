@@ -152,6 +152,15 @@ naming the sites) and the operator revises those schedules first.
 Nothing is pruned automatically and no `CPTScheduleChanged` is raised by a
 deactivation.
 
+**Decided 2026-10-06 (ADR 0028):** the invariant holds under concurrency
+too. `DefineCPTSchedule` locks every path it lists `FOR SHARE` (sorted by
+id, one statement) inside its unit of work before writing, and
+`DeactivatePath` reads the path row `FOR UPDATE` before looking for
+referencing schedules. The two serialise per path: a deactivation either
+sees the committed schedule (409) or commits first and the define is
+refused (422 `ineligible-path-id`). The lock lives behind
+`ports.ProcessPathRepo`, never in the domain.
+
 A schedule is revised **wholesale** (`PUT /sites/{siteId}/cpt-schedule`
 replaces timezone and cutoffs together). `Revise` returns `changed`; an
 identical re-submission raises nothing, and a real change publishes a

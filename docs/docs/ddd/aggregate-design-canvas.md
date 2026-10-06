@@ -62,7 +62,7 @@ transition).
 | only an Active path can be revised | `processpath.ErrPathDeactivated` in `Revise` |
 | `pathId`, `direct`, `destinationLocationRole` immutable | `Revise` has no parameter for them |
 | an id is never re-defined, active or deactivated | `usecases.ErrPathAlreadyExists` in `DefinePath` (use case, needs the repo): a `FindByID` pre-check, backed by the insert-only `ports.ProcessPathRepo.Create` (`INSERT ... ON CONFLICT (id) DO NOTHING` → `ports.ErrAlreadyExists`) so two concurrent defines of one id cannot both succeed |
-| a path that a CPT schedule lists cannot be deactivated | `usecases.ErrPathReferencedByCPTSchedule` in `DeactivatePath`, via `ports.CPTScheduleRepo.ListSiteIDsReferencingPath` (409 `path-referenced-by-cpt-schedule`, ADR 0026) |
+| a path that a CPT schedule lists cannot be deactivated | `usecases.ErrPathReferencedByCPTSchedule` in `DeactivatePath`, via `ports.CPTScheduleRepo.ListSiteIDsReferencingPath` (409 `path-referenced-by-cpt-schedule`, ADR 0026); race-free since the path row is read `FOR UPDATE` first and `DefineCPTSchedule` holds `FOR SHARE` on every path it lists until commit (`ports.ProcessPathRepo.FindByIDForUpdate` / `LockByIDsForShare`, ADR 0028) |
 | no lost update between load and save | `ports.ErrConcurrentModification` from the version-guarded upsert in `postgres.ProcessPathRepo.Save` (ADR 0017) — used by revise and deactivate, not by create |
 
 ### 5. Corrective Policies
