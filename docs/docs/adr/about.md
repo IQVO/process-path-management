@@ -83,6 +83,7 @@ Typos, broken links and formatting are of course fair game.
 | [0023](./0023-mcp-eval-and-governance-harness.md) | The MCP eval and governance harness | Accepted |
 | [0024](./0024-bootretry-for-istio-native-sidecar-warmup.md) | Boot-time dial retry for the Istio native-sidecar warm-up race | Accepted |
 | [0025](./0025-schemathesis-contract-job.md) | Schemathesis property-based contract testing against the live API | Accepted |
+| [0026](./0026-reject-deactivation-of-paths-in-cpt-schedules.md) | Refuse to deactivate a process path that a CPT schedule still lists | Accepted |
 
 Each of these reconstructs a decision that is actually visible in this
 repository's history or code — none is a generic placeholder.

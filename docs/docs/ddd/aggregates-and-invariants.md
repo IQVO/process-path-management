@@ -143,6 +143,15 @@ not the domain, because it needs the `ProcessPathRepo`: every
 `eligiblePathIds` entry must reference an **Active** process path in this
 service's own store (`ErrIneligiblePathId`, 422).
 
+The same rule is kept true from the other side by the `DeactivatePath` use
+case ([ADR 0026](/docs/adr/0026-reject-deactivation-of-paths-in-cpt-schedules)):
+a path that any site's schedule still lists in a cutoff's `eligiblePathIds`
+cannot be deactivated. The command is refused with
+`ErrPathReferencedByCPTSchedule` (409 `path-referenced-by-cpt-schedule`,
+naming the sites) and the operator revises those schedules first.
+Nothing is pruned automatically and no `CPTScheduleChanged` is raised by a
+deactivation.
+
 A schedule is revised **wholesale** (`PUT /sites/{siteId}/cpt-schedule`
 replaces timezone and cutoffs together). `Revise` returns `changed`; an
 identical re-submission raises nothing, and a real change publishes a

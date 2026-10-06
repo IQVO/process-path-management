@@ -19,6 +19,7 @@ func statusFor(err error) int {
 		return http.StatusNotFound
 
 	case errors.Is(err, usecases.ErrPathAlreadyExists),
+		errors.Is(err, usecases.ErrPathReferencedByCPTSchedule),
 		errors.Is(err, ports.ErrConcurrentModification):
 		// ErrConcurrentModification is a different 409 than the
 		// natural-key conflict: a concurrent writer committed a version
@@ -82,6 +83,7 @@ func problemCatalog() []struct {
 	}{
 		{usecases.ErrPathNotFound, problemInfo{"path-not-found", "No process path exists with this id"}},
 		{usecases.ErrPathAlreadyExists, problemInfo{"path-already-exists", "A process path with this id already exists (active or deactivated)"}},
+		{usecases.ErrPathReferencedByCPTSchedule, problemInfo{"path-referenced-by-cpt-schedule", "The process path is still listed by a CPT schedule; revise those schedules before deactivating it"}},
 		{ports.ErrConcurrentModification, problemInfo{"concurrent-modification", "The resource was modified by another request; reload and retry"}},
 		{processpath.ErrPathDeactivated, problemInfo{"path-deactivated", "This process path has been deactivated and can no longer be revised"}},
 		{processpath.ErrEmptyPathId, problemInfo{"empty-path-id", "pathId must not be empty"}},

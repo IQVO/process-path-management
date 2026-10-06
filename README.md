@@ -354,7 +354,7 @@ make check-all   # check + coverage (90% gate) + arch-test + bdd
 Additional verification surfaces, each with its own CI job:
 
 ```bash
-go test ./... -run TestFeatures -v                  # BDD (godog/Gherkin) — 30 scenarios in 6 feature files
+go test ./... -run TestFeatures -v                  # BDD (godog/Gherkin) — 32 scenarios in 6 feature files
 go test ./internal/architecture/... -v               # arch-fitness (arch-go)
 go test -tags=integration ./... -race -count=1       # Postgres + Kafka integration (testcontainers)
 gremlins unleash ./internal/domain --workers 1 --timeout-coefficient 30   # mutation testing
@@ -457,6 +457,7 @@ have all migrated to. `helm lint` and two real `helm template` renders
 23. [0023 — The MCP eval and governance harness](docs/docs/adr/0023-mcp-eval-and-governance-harness.md)
 24. [0024 — Boot-time dial retry for the Istio native-sidecar warm-up race](docs/docs/adr/0024-bootretry-for-istio-native-sidecar-warmup.md)
 25. [0025 — Schemathesis property-based contract testing against the live API](docs/docs/adr/0025-schemathesis-contract-job.md)
+26. [0026 — Refuse to deactivate a process path that a CPT schedule still lists](docs/docs/adr/0026-reject-deactivation-of-paths-in-cpt-schedules.md)
 
 ## License
 

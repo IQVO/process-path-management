@@ -68,6 +68,7 @@ const sidebars: SidebarsConfig = {
         'adr/0023-mcp-eval-and-governance-harness',
         'adr/0024-bootretry-for-istio-native-sidecar-warmup',
         'adr/0025-schemathesis-contract-job',
+        'adr/0026-reject-deactivation-of-paths-in-cpt-schedules',
       ],
     },
   ],

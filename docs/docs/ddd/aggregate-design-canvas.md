@@ -61,8 +61,9 @@ transition).
 | `cycleTimeP95` strictly positive | `processpath.ErrInvalidCycleTime` in `validate` (also returned by the HTTP adapter for an unparsable duration) |
 | only an Active path can be revised | `processpath.ErrPathDeactivated` in `Revise` |
 | `pathId`, `direct`, `destinationLocationRole` immutable | `Revise` has no parameter for them |
-| an id is never re-defined, active or deactivated | `usecases.ErrPathAlreadyExists` in `DefinePath` (use case, needs the repo; a read-then-write check — see the concurrent-define hotspot on the [EventStorming](./eventstorming.md) page) |
-| no lost update between load and save | `ports.ErrConcurrentModification` from the version-guarded upsert in `postgres.ProcessPathRepo.Save` (ADR 0017) |
+| an id is never re-defined, active or deactivated | `usecases.ErrPathAlreadyExists` in `DefinePath` (use case, needs the repo): a `FindByID` pre-check, backed by the insert-only `ports.ProcessPathRepo.Create` (`INSERT ... ON CONFLICT (id) DO NOTHING` → `ports.ErrAlreadyExists`) so two concurrent defines of one id cannot both succeed |
+| a path that a CPT schedule lists cannot be deactivated | `usecases.ErrPathReferencedByCPTSchedule` in `DeactivatePath`, via `ports.CPTScheduleRepo.ListSiteIDsReferencingPath` (409 `path-referenced-by-cpt-schedule`, ADR 0026) |
+| no lost update between load and save | `ports.ErrConcurrentModification` from the version-guarded upsert in `postgres.ProcessPathRepo.Save` (ADR 0017) — used by revise and deactivate, not by create |
 
 ### 5. Corrective Policies
 
@@ -75,10 +76,11 @@ transition).
   `applyDeactivated` handlers in the sibling `kafkacatalog` /
   `processpathcache` consumers). What happens to work already in flight
   is each consumer's decision.
-- A CPT schedule naming a path that is later deactivated is **not**
-  corrected automatically — only the next schedule write re-checks
-  eligibility (see Hotspots on the [EventStorming](./eventstorming.md)
-  page).
+- A path that any CPT schedule still lists is **not** deactivated: the
+  command is refused with `409 path-referenced-by-cpt-schedule` naming the
+  sites, and the operator revises those schedules first (ADR 0026). The
+  schedule is never pruned automatically and no `CPTScheduleChanged` is
+  raised as a side effect of a deactivation.
 
 ### 6. Handled Commands
 

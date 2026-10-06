@@ -63,13 +63,19 @@ sequenceDiagram
                 AGG-->>UC: ProcessPath ACTIVE, version 1
                 UC->>UOW: Execute(fn)
                 Note over UOW: joins the middleware transaction
-                UOW->>REPO: Save(p)
-                REPO->>DB: INSERT process_paths ON CONFLICT DO UPDATE WHERE version matches
-                UOW->>OB: Publish(ProcessPathCreated)
-                OB->>DB: INSERT outbox_events for the events topic
-                OB->>DB: INSERT outbox_events for the analytics topic, same event_id
-                UC-->>H: ProcessPath
-                H-->>MW: 201 processPathResponse
+                UOW->>REPO: Create(p)
+                REPO->>DB: INSERT process_paths ON CONFLICT (id) DO NOTHING
+                alt a concurrent define committed the id first
+                    REPO-->>UOW: ErrAlreadyExists, zero rows inserted
+                    UC-->>H: ErrPathAlreadyExists
+                    H-->>MW: 409 path-already-exists, nothing published
+                else inserted
+                    UOW->>OB: Publish(ProcessPathCreated)
+                    OB->>DB: INSERT outbox_events for the events topic
+                    OB->>DB: INSERT outbox_events for the analytics topic, same event_id
+                    UC-->>H: ProcessPath
+                    H-->>MW: 201 processPathResponse
+                end
             end
         end
         MW->>DB: UPDATE idempotency_keys with the outcome, COMMIT
@@ -87,7 +93,10 @@ Omits: the `PathMetrics` accepted/rejected counter calls, the 400 for a
 malformed JSON body, and 500 branches. `UnitOfWork.Execute` reuses the
 transaction already in the context (`txFrom`) instead of opening its
 own, so the path row, both outbox rows and the idempotency row commit
-together.
+together. Creation is insert-only (`ProcessPathRepo.Create`), never the
+version-guarded upsert `Save` that revise and deactivate use: two defines
+of one id that both pass the `FindByID` check serialize on the primary
+key, and the loser gets the same 409 as a define of an existing id.
 
 ## 2. Revise a process path
 
@@ -155,6 +164,7 @@ sequenceDiagram
     participant H as http.Server handleDeactivatePath
     participant UC as usecases.DeactivatePath
     participant REPO as postgres.ProcessPathRepo
+    participant SREPO as postgres.CPTScheduleRepo
     participant AGG as processpath.ProcessPath
     participant UOW as postgres.UnitOfWork
     participant OB as postgres.OutboxPublisher
@@ -170,26 +180,38 @@ sequenceDiagram
         UC-->>H: nil, nothing saved or published
         H-->>Client: 204 No Content
     else ACTIVE
-        UC->>AGG: Deactivate(now)
         UC->>UOW: Execute(fn)
-        UOW->>REPO: Save(p)
-        REPO->>DB: UPSERT status DEACTIVATED WHERE version matches
-        alt version moved on
-            H-->>Client: 409 concurrent-modification
-        else saved
-            UOW->>OB: Publish(ProcessPathDeactivated)
-            OB->>DB: INSERT outbox_events, events and analytics topics
-            UOW->>DB: COMMIT
-            H-->>Client: 204 No Content
+        UOW->>SREPO: ListSiteIDsReferencingPath(id)
+        SREPO->>DB: SELECT DISTINCT schedule_site_id FROM cpt_schedule_cutoffs WHERE id = ANY(eligible_path_ids)
+        alt a CPT schedule still lists the path (ADR 0026)
+            UC-->>H: ErrPathReferencedByCPTSchedule naming the sites
+            UOW->>DB: ROLLBACK
+            H-->>Client: 409 path-referenced-by-cpt-schedule, path stays ACTIVE, nothing published
+        else no schedule lists it
+            UC->>AGG: Deactivate(now)
+            UOW->>REPO: Save(p)
+            REPO->>DB: UPSERT status DEACTIVATED WHERE version matches
+            alt version moved on
+                H-->>Client: 409 concurrent-modification
+            else saved
+                UOW->>OB: Publish(ProcessPathDeactivated)
+                OB->>DB: INSERT outbox_events, events and analytics topics
+                UOW->>DB: COMMIT
+                H-->>Client: 204 No Content
+            end
         end
     end
 ```
 
 Source: `internal/application/usecases/deactivate_path.go`,
 `internal/domain/processpath/process_path.go` (`Deactivate`),
+`internal/adapters/outbound/postgres/cpt_schedule_repo.go`
+(`ListSiteIDsReferencingPath`),
 `internal/adapters/inbound/http/server.go` (`handleDeactivatePath`).
 Omits: 500 branches. The row is never deleted; `DELETE` is a soft
-deactivation.
+deactivation. The reference check and the deactivation share one
+transaction at READ COMMITTED, so a schedule written concurrently with
+the deactivation can still slip through (see ADR 0026).
 
 ## 4. Define or revise a site's CPT schedule
 

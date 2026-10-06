@@ -5,6 +5,7 @@ package usecases
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/claudioed/process-path-management/internal/application/ports"
@@ -47,7 +48,11 @@ func (uc *DefinePath) Execute(ctx context.Context, id shared.PathId, matchPrefix
 		return nil, err
 	}
 	err = atomically(ctx, uc.UnitOfWork, func(ctx context.Context) error {
-		if err := uc.Repo.Save(ctx, p); err != nil {
+		// Create is insert-only: a concurrent define that won the race
+		// between the FindByID above and this insert makes Create report
+		// ErrAlreadyExists instead of upserting over the winner's row and
+		// publishing a second ProcessPathCreated.
+		if err := uc.Repo.Create(ctx, p); err != nil {
 			return err
 		}
 		return uc.Publisher.Publish(ctx, shared.ProcessPathCreated{
@@ -61,6 +66,10 @@ func (uc *DefinePath) Execute(ctx context.Context, id shared.PathId, matchPrefix
 			At:                      now,
 		})
 	})
+	if errors.Is(err, ports.ErrAlreadyExists) {
+		uc.recordRejected(ctx)
+		return nil, ErrPathAlreadyExists
+	}
 	if err != nil {
 		return nil, err
 	}
