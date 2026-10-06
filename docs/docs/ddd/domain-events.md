@@ -32,7 +32,7 @@ Every message is a CloudEvents 1.0 event in **structured content mode**
 Topics: `warehouse.process-path-management.events` (integration) and
 `warehouse.process-path-management.analytics` (analytics, ADR 0007). Every
 event is written to **both** — in one outbox transaction when
-`DATABASE_URL` is set, or by `SharedIdFanOut` direct to Kafka otherwise.
+`DATABASE_URL` is set, or by the `FanOutPublisher` from `NewSharedIdFanOut` direct to Kafka otherwise.
 Writers use the `kafkago.Hash` balancer (ADR 0013), so all events with the
 same key land on the same partition.
 

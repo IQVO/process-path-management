@@ -16,11 +16,27 @@ const sidebars: SidebarsConfig = {
     'ddd/aggregates-and-invariants',
     {
       type: 'category',
+      label: 'DDD artifacts (ddd-crew)',
+      link: {type: 'doc', id: 'ddd/ddd-artifacts'},
+      items: [
+        'ddd/core-domain-chart',
+        'ddd/bounded-context-canvas',
+        'ecosystem/context-map',
+        'ddd/aggregate-design-canvas',
+        'ddd/domain-message-flow',
+        'ddd/eventstorming',
+        'ddd/class-diagram',
+        'ddd/entity-relationship',
+        'ddd/sequence-diagrams',
+        'ddd/domain-events',
+      ],
+    },
+    {
+      type: 'category',
       label: 'API Reference',
       link: {type: 'doc', id: 'api-reference/rest/process-path-management-api'},
       items: [...apiSidebar],
     },
-    'ecosystem/context-map',
     'mcp/governance-charter',
     {
       type: 'category',
