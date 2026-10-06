@@ -89,7 +89,7 @@ internal/
     outbound/analyticsstore/      analytics projection/report store (Postgres + in-memory)
     outbound/telemetry/           OTel traces/metrics/logs
   architecture/                   arch-go + fitness tests
-migrations/                       golang-migrate SQL files (0001–0007); migrations/analytics/ for the report DB
+migrations/                       golang-migrate SQL files (0001–0008); migrations/analytics/ for the report DB
 apis/openapi.yaml                 This service's OWN REST API (8 operations; /readyz is served but not in the spec)
 apis/asyncapi.yaml                What this service PUBLISHES (integration + analytics topics)
 features/                         godog/Gherkin BDD acceptance tests
@@ -423,9 +423,6 @@ have all migrated to. `helm lint` and two real `helm template` renders
   decode `destination_location_role` into their local catalogue caches;
   no routing decision in those repos reads it yet. See
   [docs/docs/ecosystem/context-map.md](docs/docs/ecosystem/context-map.md).
-- **No W3C trace context on Kafka messages.** `apis/asyncapi.yaml` says
-  trace context travels in `traceparent`/`tracestate` headers, but the
-  publishers only set the `content-type` header today.
 - **The ops agent's MCP client is wired but unused.** `warehouse-ops-agent`
   constructs a client for this server's tools but no use case calls it
   yet.
@@ -458,6 +455,7 @@ have all migrated to. `helm lint` and two real `helm template` renders
 24. [0024 — Boot-time dial retry for the Istio native-sidecar warm-up race](docs/docs/adr/0024-bootretry-for-istio-native-sidecar-warmup.md)
 25. [0025 — Schemathesis property-based contract testing against the live API](docs/docs/adr/0025-schemathesis-contract-job.md)
 26. [0026 — Refuse to deactivate a process path that a CPT schedule still lists](docs/docs/adr/0026-reject-deactivation-of-paths-in-cpt-schedules.md)
+27. [0027 — Propagate W3C trace context in Kafka headers](docs/docs/adr/0027-w3c-trace-context-on-kafka-headers.md)
 
 ## License
 

@@ -69,6 +69,7 @@ const sidebars: SidebarsConfig = {
         'adr/0024-bootretry-for-istio-native-sidecar-warmup',
         'adr/0025-schemathesis-contract-job',
         'adr/0026-reject-deactivation-of-paths-in-cpt-schedules',
+        'adr/0027-w3c-trace-context-on-kafka-headers',
       ],
     },
   ],

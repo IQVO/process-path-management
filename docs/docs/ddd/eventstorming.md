@@ -141,12 +141,10 @@ flowchart LR
     X1["warehouse-console context reports"]:::external
     P2["Policy: whenever a message is not a CloudEvent or keeps failing, dead-letter it and commit"]:::policy
     X2["warehouse.process-path-management.analytics.dlq"]:::external
-    H1["Hotspot: asyncapi promises traceparent headers the publisher never sets"]:::hotspot
 
     E0 --> P1 --> RM1
     E0 --> P2 --> X2
     RM1 -.-> X1 -.-> U
-    H1 -.- E0
 
     classDef actor fill:#fef9c3,stroke:#a16207,color:#000,font-size:11px
     classDef command fill:#4aa3df,stroke:#1f6391,color:#000
@@ -195,4 +193,3 @@ projector commits and skips.
 | `siteId` is never validated | ADR 0010: "A schedule for an unknown site is an operator error that shows up as an unroutable order in order-management, not a coupling here." |
 | ICQA path family left undecided | ADR 0008: "ICQA remains a genuinely open question, deliberately not decided here." |
 | A schedule written concurrently with the deactivation of a path it lists can slip through | ADR 0026: the reference check and the deactivation share one READ COMMITTED transaction and neither locks the other's rows; the next `PUT` of that schedule is rejected by the Active-path check. |
-| Trace context on Kafka | `apis/asyncapi.yaml` says W3C trace context travels in `traceparent`/`tracestate` headers; `kafka.Publisher.Send` sets only the `content-type` header. |

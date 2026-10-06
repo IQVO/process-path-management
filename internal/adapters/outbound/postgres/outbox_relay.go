@@ -100,7 +100,7 @@ func (r *OutboxRelay) RelayOnce(ctx context.Context) (int, error) {
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	rows, err := tx.Query(ctx, `
-		SELECT id, event_id, event_type, aggregate_id, payload, topic
+		SELECT id, event_id, event_type, aggregate_id, payload, topic, COALESCE(traceparent, ''), COALESCE(tracestate, '')
 		FROM outbox_events
 		WHERE published_at IS NULL
 		ORDER BY id
@@ -117,7 +117,7 @@ func (r *OutboxRelay) RelayOnce(ctx context.Context) (int, error) {
 	var batch []pending
 	for rows.Next() {
 		var p pending
-		if err := rows.Scan(&p.id, &p.enc.EventId, &p.enc.EventType, &p.enc.Key, &p.enc.Value, &p.enc.Topic); err != nil {
+		if err := rows.Scan(&p.id, &p.enc.EventId, &p.enc.EventType, &p.enc.Key, &p.enc.Value, &p.enc.Topic, &p.enc.Trace.Traceparent, &p.enc.Trace.Tracestate); err != nil {
 			rows.Close()
 			return 0, fmt.Errorf("postgres: scan outbox row: %w", err)
 		}

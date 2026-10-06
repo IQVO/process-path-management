@@ -151,7 +151,5 @@ Top terms: **ProcessPath**, **PathId**, **MatchPrefix**, **Direct**,
   load-to-save window inside one request?
 - Will `warehouse-ops-agent` use its wired MCP client, or should the
   surface stay unused?
-- Should W3C trace context be propagated on Kafka messages, as
-  `apis/asyncapi.yaml` already claims?
 - Does `Direct`'s reserved multi-hop meaning need modelling before a
   consumer needs it?

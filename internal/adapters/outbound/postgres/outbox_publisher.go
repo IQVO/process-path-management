@@ -49,17 +49,23 @@ func NewOutboxPublisher(pool *pgxpool.Pool, newId func() string, encoders ...out
 // the outbox. It never touches Kafka.
 func (p *OutboxPublisher) Publish(ctx context.Context, event shared.DomainEvent) error {
 	eventId := p.newId()
+	trace := outboundkafka.TraceContextFrom(ctx)
 	q := querierFrom(ctx, p.pool)
 	for _, enc := range p.encoders {
 		encoded, err := enc.Encode(event, eventId)
 		if err != nil {
 			return err
 		}
+		// Capture the trace context HERE, while the request span is still
+		// in ctx: the relay runs on a background loop later (ADR 0027).
+		// Empty strings are stored as NULL so untraced rows stay clean.
+		encoded.Trace = trace
 		_, err = q.Exec(ctx, `
-			INSERT INTO outbox_events (event_id, event_type, aggregate_id, payload, occurred_at, topic)
-			VALUES ($1, $2, $3, $4, $5, $6)
+			INSERT INTO outbox_events (event_id, event_type, aggregate_id, payload, occurred_at, topic, traceparent, tracestate)
+			VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7, ''), NULLIF($8, ''))
 			ON CONFLICT (event_id, topic) DO NOTHING
-		`, encoded.EventId, encoded.EventType, encoded.Key, encoded.Value, event.OccurredAt(), encoded.Topic)
+		`, encoded.EventId, encoded.EventType, encoded.Key, encoded.Value, event.OccurredAt(), encoded.Topic,
+			encoded.Trace.Traceparent, encoded.Trace.Tracestate)
 		if err != nil {
 			return fmt.Errorf("postgres: enqueue outbox event %s for %s: %w", encoded.EventType, encoded.Topic, err)
 		}
