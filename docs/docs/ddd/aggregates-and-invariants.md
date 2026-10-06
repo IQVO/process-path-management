@@ -25,7 +25,7 @@ should be the single source of truth for what a path IS.
 | `fulfillment-execution` | Core | The Pick/Pack/SLAM task lifecycle; throughput and accuracy at scale. |
 | `wes-work-planning` | Core | The conductor — waveless release and flow balance. |
 | `workforce-management` | Supporting | Labor & workforce allocation. |
-| `order-management` | Core | Order intake, allocation, and the customer promise. |
+| `order-management` | Generic/Supporting | Order intake, allocation, and the customer promise. |
 | `labor-performance` | Supporting | Actual-vs-standard performance scoring. |
 | `facility-layout` | Generic | Physical warehouse structure, extracted once rather than duplicated. |
 | **`process-path-management`** | **Generic** | **The process-path catalogue — extracted once rather than duplicated across its consumers.** |
