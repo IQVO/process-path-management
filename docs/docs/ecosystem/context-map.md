@@ -36,7 +36,7 @@ flowchart LR
     FE["fulfillment-execution<br/>Core"]
     WWP["wes-work-planning<br/>Core"]
     WFM["workforce-management<br/>Supporting"]
-    OM["order-management<br/>Core"]
+    OM["order-management<br/>Generic/Supporting"]
     NF["network-fulfillment"]
     AGENT["warehouse-ops-agent"]
     CONSOLE["warehouse-console<br/>MFE shell"]
@@ -59,8 +59,8 @@ flowchart LR
     classDef supporting fill:#0f766e,stroke:#134e4a,color:#fff;
     classDef generic fill:#4b5563,stroke:#1f2937,color:#fff;
     class P,PROJ,REP this;
-    class FE,WWP,OM core;
-    class WFM supporting;
+    class FE,WWP core;
+    class WFM,OM supporting;
     class FL generic;
 ```
 
