@@ -4,6 +4,7 @@ import (
 	"context"
 	"sync"
 
+	"github.com/claudioed/process-path-management/internal/application/ports"
 	"github.com/claudioed/process-path-management/internal/domain/processpath"
 	"github.com/claudioed/process-path-management/internal/domain/shared"
 )
@@ -18,6 +19,16 @@ type ProcessPathRepo struct {
 // NewProcessPathRepo constructs an empty ProcessPathRepo.
 func NewProcessPathRepo() *ProcessPathRepo {
 	return &ProcessPathRepo{paths: make(map[shared.PathId]*processpath.ProcessPath)}
+}
+
+func (r *ProcessPathRepo) Create(_ context.Context, p *processpath.ProcessPath) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, exists := r.paths[p.ID()]; exists {
+		return ports.ErrAlreadyExists
+	}
+	r.paths[p.ID()] = p
+	return nil
 }
 
 func (r *ProcessPathRepo) Save(_ context.Context, p *processpath.ProcessPath) error {

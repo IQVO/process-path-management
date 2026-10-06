@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/claudioed/process-path-management/internal/application/ports"
 	"github.com/claudioed/process-path-management/internal/domain/processpath"
 	"github.com/claudioed/process-path-management/internal/domain/shared"
 )
@@ -21,6 +22,16 @@ type fakeRepo struct {
 
 func newFakeRepo() *fakeRepo {
 	return &fakeRepo{paths: make(map[shared.PathId]*processpath.ProcessPath)}
+}
+
+func (r *fakeRepo) Create(_ context.Context, p *processpath.ProcessPath) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, exists := r.paths[p.ID()]; exists {
+		return ports.ErrAlreadyExists
+	}
+	r.paths[p.ID()] = p
+	return nil
 }
 
 func (r *fakeRepo) Save(_ context.Context, p *processpath.ProcessPath) error {
@@ -107,6 +118,13 @@ func (r *erroringRepo) FindByID(ctx context.Context, id shared.PathId) (*process
 		return nil, r.findErr
 	}
 	return r.fakeRepo.FindByID(ctx, id)
+}
+
+func (r *erroringRepo) Create(ctx context.Context, p *processpath.ProcessPath) error {
+	if r.saveErr != nil {
+		return r.saveErr
+	}
+	return r.fakeRepo.Create(ctx, p)
 }
 
 func (r *erroringRepo) Save(ctx context.Context, p *processpath.ProcessPath) error {

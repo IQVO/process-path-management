@@ -103,7 +103,8 @@ Top terms: **ProcessPath**, **PathId**, **MatchPrefix**, **Direct**,
 4. `destinationLocationRole` is optional, one of `Drop`/`WorkCenter`/
    `Shipping`, immutable, never validated live against facility-layout.
 5. A path id is permanent: re-defining any existing id (active or
-   deactivated) is a 409 (`ErrPathAlreadyExists`).
+   deactivated) is a 409 (`ErrPathAlreadyExists`), including when two
+   defines of the same id race (creation is insert-only).
 6. Deactivation is terminal and idempotent; a deactivated path cannot be
    revised (`ErrPathDeactivated`).
 7. No-op revisions and repeated deactivations publish nothing.
@@ -113,6 +114,9 @@ Top terms: **ProcessPath**, **PathId**, **MatchPrefix**, **Direct**,
    checked in the use case).
 9. Concurrent writers are detected by a version column and answered with
    409 `concurrent-modification` (ADR 0017).
+10. A path that a CPT schedule still lists cannot be deactivated: 409
+    `path-referenced-by-cpt-schedule` until the schedule is revised
+    (`ErrPathReferencedByCPTSchedule`, ADR 0026).
 
 ## Assumptions
 
@@ -135,7 +139,7 @@ Top terms: **ProcessPath**, **PathId**, **MatchPrefix**, **Direct**,
   read-model lag (ADR 0007).
 - Number of live consumers of `warehouse.process-path-management.events`:
   5 today (see the [Context Map](../ecosystem/context-map.md)).
-- BDD: 30 Gherkin scenarios; mutation testing on `internal/domain` gated at
+- BDD: 32 Gherkin scenarios; mutation testing on `internal/domain` gated at
   99%.
 
 ## Open Questions
@@ -147,7 +151,5 @@ Top terms: **ProcessPath**, **PathId**, **MatchPrefix**, **Direct**,
   load-to-save window inside one request?
 - Will `warehouse-ops-agent` use its wired MCP client, or should the
   surface stay unused?
-- Should W3C trace context be propagated on Kafka messages, as
-  `apis/asyncapi.yaml` already claims?
 - Does `Direct`'s reserved multi-hop meaning need modelling before a
   consumer needs it?

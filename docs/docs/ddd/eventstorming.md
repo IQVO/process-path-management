@@ -63,15 +63,17 @@ flowchart LR
     E3["ProcessPathDeactivated"]:::event
     P1["Policy: whenever a path event is raised, enqueue it on the events and analytics topics in the same transaction"]:::policy
     X1["fulfillment-execution, wes-work-planning, workforce-management, order-management, network-fulfillment"]:::external
-    H1["Hotspot: concurrent DefinePath of the same id is not rejected"]:::hotspot
+    RM1["Sites whose CPT schedule lists the path - ListSiteIDsReferencingPath"]:::readmodel
+    P2["Policy: whenever a deactivation targets a path a CPT schedule lists, refuse it with 409 - ADR 0026"]:::policy
     H2["Hotspot: ICQA path family left undecided - ADR 0008"]:::hotspot
 
     RM0 -.-> OP
     OP --> C1 --> A1 --> E1 --> P1
     OP --> C2 --> A2 --> E2 --> P1
     OP --> C3 --> A3 --> E3 --> P1
+    RM1 -.-> C3
+    C3 --> P2
     P1 --> X1
-    H1 -.- A1
     H2 -.- A1
 
     classDef actor fill:#fef9c3,stroke:#a16207,color:#000,font-size:11px
@@ -90,7 +92,10 @@ Source: `internal/application/usecases/define_path.go`,
 `internal/adapters/outbound/postgres/outbox_publisher.go`;
 `cmd/pathmgmt/main.go` (`buildEventPublisher`). Omits: the no-op branches
 (an unchanged revision and a repeated deactivation raise no event) and
-validation failures (422, nothing raised).
+validation failures (422, nothing raised). `DefinePath` persists through
+the insert-only `ProcessPathRepo.Create`, so two concurrent defines of one
+id raise `ProcessPathCreated` once and the loser gets 409. A refused
+deactivation (policy P2) raises nothing and leaves the path ACTIVE.
 
 ## Process 2 — publish a site's CPT schedule
 
@@ -103,12 +108,10 @@ flowchart LR
     E1["CPTScheduleChanged"]:::event
     P1["Policy: whenever a schedule changes, publish the full snapshot, never a diff"]:::policy
     X1["order-management, network-fulfillment"]:::external
-    H1["Hotspot: deactivating a path does not revisit schedules that name it"]:::hotspot
     H2["Hotspot: siteId is never validated - an unknown site surfaces downstream - ADR 0010"]:::hotspot
 
     RM1 -.-> C1
     OP --> C1 --> A1 --> E1 --> P1 --> X1
-    H1 -.- A1
     H2 -.- A1
 
     classDef actor fill:#fef9c3,stroke:#a16207,color:#000,font-size:11px
@@ -138,12 +141,10 @@ flowchart LR
     X1["warehouse-console context reports"]:::external
     P2["Policy: whenever a message is not a CloudEvent or keeps failing, dead-letter it and commit"]:::policy
     X2["warehouse.process-path-management.analytics.dlq"]:::external
-    H1["Hotspot: asyncapi promises traceparent headers the publisher never sets"]:::hotspot
 
     E0 --> P1 --> RM1
     E0 --> P2 --> X2
     RM1 -.-> X1 -.-> U
-    H1 -.- E0
 
     classDef actor fill:#fef9c3,stroke:#a16207,color:#000,font-size:11px
     classDef command fill:#4aa3df,stroke:#1f6391,color:#000
@@ -179,6 +180,8 @@ projector commits and skips.
 | Dead-letter and commit | Policy | `AnalyticsConsumer.deadLetterAndCommit` (ADR 0012) |
 | Process path list | Read model | `usecases.ListPaths` (`GET /process-paths`, MCP `list_process_paths`) |
 | Active process paths | Read model | `ProcessPathRepo.FindByID` inside `validateEligiblePathIds` |
+| Sites whose CPT schedule lists the path | Read model | `ports.CPTScheduleRepo.ListSiteIDsReferencingPath` inside `DeactivatePath` |
+| Refuse deactivation while a schedule lists the path | Policy | `usecases.DeactivatePath` returning `ErrPathReferencedByCPTSchedule` (ADR 0026) |
 | catalogue_growth_rollup | Read model | `migrations/analytics/0001_report.up.sql`, served by `pathmgmt-reports` |
 | Five consumer contexts | External system | sibling consumer files on the [Context Map](../ecosystem/context-map.md) |
 | warehouse-console context reports | External system | warehouse-console `src/features/context-reports/processPathManagement.config.tsx` |
@@ -187,8 +190,6 @@ projector commits and skips.
 
 | Hotspot | Evidence |
 | --- | --- |
-| Concurrent `DefinePath` of the same id is not rejected | `DefinePath` checks `FindByID` and then saves; `ProcessPathRepo.Save` is `INSERT ... ON CONFLICT (id) DO UPDATE ... WHERE process_paths.version = $11`. Two concurrent defines both see no row and both carry version 1, so the second one updates the first row instead of failing with `path-already-exists`, and both publish `ProcessPathCreated`. ADR 0017 states that "a fresh INSERT always affects exactly one row", which does not cover this race. |
-| Deactivating a path does not revisit CPT schedules that name it | `usecases.DeactivatePath` touches only `ProcessPathRepo`; the Active-path rule for `eligiblePathIds` is checked only when a schedule is written (`validateEligiblePathIds`). |
 | `siteId` is never validated | ADR 0010: "A schedule for an unknown site is an operator error that shows up as an unroutable order in order-management, not a coupling here." |
 | ICQA path family left undecided | ADR 0008: "ICQA remains a genuinely open question, deliberately not decided here." |
-| Trace context on Kafka | `apis/asyncapi.yaml` says W3C trace context travels in `traceparent`/`tracestate` headers; `kafka.Publisher.Send` sets only the `content-type` header. |
+| A schedule written concurrently with the deactivation of a path it lists can slip through | ADR 0026: the reference check and the deactivation share one READ COMMITTED transaction and neither locks the other's rows; the next `PUT` of that schedule is rejected by the Active-path check. |

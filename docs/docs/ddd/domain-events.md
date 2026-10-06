@@ -27,7 +27,7 @@ Every message is a CloudEvents 1.0 event in **structured content mode**
 | `time` | the domain event's `At`, UTC |
 | `datacontenttype` | `application/json` |
 | `dataschema` | `urn:warehouse:process-path-management:events:<EventName>:v1` (integration) or `urn:warehouse:process-path-management:analytics:<EventName>:v1` (analytics) |
-| Kafka header | `content-type: application/cloudevents+json; charset=UTF-8` (the only header set) |
+| Kafka headers | `content-type: application/cloudevents+json; charset=UTF-8` on every message; plus `traceparent` (and `tracestate` when set) when the event was raised inside a traced operation — captured at enqueue time and stored on the outbox row (ADR 0027). Baggage is never propagated; an untraced event carries neither header. |
 
 Topics: `warehouse.process-path-management.events` (integration) and
 `warehouse.process-path-management.analytics` (analytics, ADR 0007). Every
@@ -140,9 +140,3 @@ Source: `internal/domain/shared/events.go`,
 `internal/adapters/inbound/kafka/analytics_consumer.go`,
 `apis/asyncapi.yaml`.
 
-:::note[Spec vs code]
-`apis/asyncapi.yaml` states that W3C trace context travels in
-`traceparent`/`tracestate` Kafka headers; the publishers set only the
-`content-type` header today. The spec also does not mention that
-`direct: false` is omitted from the payload.
-:::
