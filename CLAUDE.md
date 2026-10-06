@@ -6,7 +6,7 @@ The fleet's **operator-configurable process-path catalogue** (`PathId`, `matchPr
 and a **transactional outbox** (ADR 0003, the fleet's reference implementation).
 It is the Open Host Service / Published Language SOURCE for
 `warehouse.process-path-management.events`; `fulfillment-execution`, `wes-work-planning`,
-`workforce-management` and `order-management` are Conformist consumers.
+`workforce-management`, `order-management` and `network-fulfillment` are Conformist consumers.
 
 ## Hard rules
 
