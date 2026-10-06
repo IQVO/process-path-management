@@ -22,6 +22,24 @@ import (
 	"github.com/claudioed/process-path-management/internal/adapters/outbound/analyticsstore"
 )
 
+// newDLQReader reads partition 0 of the (single-partition) dead-letter topic
+// from the first offset WITHOUT a consumer group: the assertions only need
+// to see what was written, and a group join would add a coordinator
+// round-trip (and a rebalance wait) to every test for nothing.
+func newDLQReader(t *testing.T, brokerList []string, dlqTopic string) *kafkago.Reader {
+	t.Helper()
+	r := kafkago.NewReader(kafkago.ReaderConfig{
+		Brokers:   brokerList,
+		Topic:     dlqTopic,
+		Partition: 0,
+		MaxWait:   250 * time.Millisecond,
+	})
+	if err := r.SetOffset(kafkago.FirstOffset); err != nil {
+		t.Fatalf("set dlq reader offset: %v", err)
+	}
+	return r
+}
+
 // alwaysFailingProcessedEventsFor wraps a real inboundkafka.ProcessedEvents
 // so MarkProcessed fails with a genuine infrastructure error for exactly
 // poisonEventID, on EVERY call, while every other event_id is delegated
@@ -64,22 +82,11 @@ func TestAnalyticsConsumer_PoisonMessage_GoesToDeadLetterTopicWithoutBlockingPar
 	processed := newMemoryProcessedEvents()
 	failingProcessed := &alwaysFailingProcessedEventsFor{ProcessedEvents: processed, poisonEventID: poisonEventID}
 
-	consumer := inboundkafka.NewAnalyticsConsumer(brokerList, topic, store, failingProcessed, nil)
-	defer func() { _ = consumer.Close() }()
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	runErr := make(chan error, 1)
-	go func() { runErr <- consumer.Run(ctx) }()
+	ctx := startConsumer(t, brokerList, topic, store, failingProcessed)
 
 	// Start reading the DLQ topic BEFORE publishing, so the poison
 	// message's eventual dead-letter write is never missed to a race.
-	dlqReader := kafkago.NewReader(kafkago.ReaderConfig{
-		Brokers:     brokerList,
-		Topic:       dlqTopic,
-		GroupID:     fmt.Sprintf("dlq-reader-%d", time.Now().UnixNano()),
-		StartOffset: kafkago.FirstOffset,
-	})
+	dlqReader := newDLQReader(t, brokerList, dlqTopic)
 	defer func() { _ = dlqReader.Close() }()
 
 	publish(t, brokerList, topic,
@@ -118,7 +125,7 @@ func TestAnalyticsConsumer_PoisonMessage_GoesToDeadLetterTopicWithoutBlockingPar
 
 	// Prove the partition was never blocked: the healthy message
 	// published right after the poison one is projected without delay.
-	deadline := time.Now().Add(30 * time.Second)
+	deadline := time.Now().Add(projectionDeadline)
 	for time.Now().Before(deadline) {
 		rep, err := store.Query(context.Background(), reportQuery(base))
 		if err == nil && len(rep.Rows) == 1 && rep.Rows[0].PathsDefined == 1 {
@@ -143,19 +150,10 @@ func TestAnalyticsConsumer_LegacyFlatEnvelope_IsDeadLetteredNotParsed(t *testing
 
 	base := time.Now().UTC().Truncate(time.Second)
 	store := analyticsstore.NewMemoryStore()
-	consumer := inboundkafka.NewAnalyticsConsumer(brokerList, topic, store, newMemoryProcessedEvents(), nil)
-	defer func() { _ = consumer.Close() }()
+	startConsumer(t, brokerList, topic, store, newMemoryProcessedEvents())
+	ctx := context.Background()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go func() { _ = consumer.Run(ctx) }()
-
-	dlqReader := kafkago.NewReader(kafkago.ReaderConfig{
-		Brokers:     brokerList,
-		Topic:       dlqTopic,
-		GroupID:     fmt.Sprintf("dlq-legacy-reader-%d", time.Now().UnixNano()),
-		StartOffset: kafkago.FirstOffset,
-	})
+	dlqReader := newDLQReader(t, brokerList, dlqTopic)
 	defer func() { _ = dlqReader.Close() }()
 
 	legacy := legacyFlatMsg(t, "PICK", "evt-legacy-flat", base)
@@ -171,7 +169,7 @@ func TestAnalyticsConsumer_LegacyFlatEnvelope_IsDeadLetteredNotParsed(t *testing
 		t.Fatalf("dead-letter payload = %s, want the raw legacy message %s", dlqMsg.Value, legacy.Value)
 	}
 
-	deadline := time.Now().Add(30 * time.Second)
+	deadline := time.Now().Add(projectionDeadline)
 	for time.Now().Before(deadline) {
 		rep, err := store.Query(context.Background(), reportQuery(base))
 		if err == nil && len(rep.Rows) == 1 && rep.Rows[0].PathsDefined == 1 {
