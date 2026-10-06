@@ -21,3 +21,9 @@ var ErrCPTScheduleNotFound = errors.New("usecases: cpt schedule not found")
 // in this service's own store (ADR 0010's one cross-aggregate
 // invariant, enforced here rather than by a foreign key).
 var ErrIneligiblePathId = errors.New("usecases: eligiblePathIds must reference an Active process path")
+
+// ErrPathReferencedByCPTSchedule is returned by DeactivatePath when at
+// least one site's CPT schedule still lists the path in a cutoff's
+// eligiblePathIds (ADR 0026). The wrapped message names the sites, so an
+// operator knows which schedules to revise first.
+var ErrPathReferencedByCPTSchedule = errors.New("usecases: process path is still referenced by a CPT schedule")

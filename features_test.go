@@ -91,7 +91,7 @@ func newServer() (*httptest.Server, *recordingPublisher) {
 	s := &inboundhttp.Server{
 		DefinePath:        &usecases.DefinePath{Repo: repo, Publisher: pub, Clock: clock},
 		RevisePath:        &usecases.RevisePath{Repo: repo, Publisher: pub, Clock: clock},
-		DeactivatePath:    &usecases.DeactivatePath{Repo: repo, Publisher: pub, Clock: clock},
+		DeactivatePath:    &usecases.DeactivatePath{Repo: repo, Publisher: pub, Clock: clock, CPTSchedules: scheduleRepo},
 		GetPath:           &usecases.GetPath{Repo: repo},
 		ListPaths:         &usecases.ListPaths{Repo: repo},
 		DefineCPTSchedule: &usecases.DefineCPTSchedule{Repo: scheduleRepo, ProcessPathRepo: repo, Publisher: pub, Clock: clock},
