@@ -18,7 +18,11 @@ info:
     event in structured content mode (Kafka protocol binding). The Kafka
     message value is the JSON event format and every message carries the
     Kafka header `content-type: application/cloudevents+json; charset=UTF-8`.
-    W3C trace context stays in the `traceparent`/`tracestate` headers.
+    W3C trace context travels in the `traceparent` (and, when present,
+    `tracestate`) Kafka headers of every message raised inside a traced
+    operation (ADR 0027); a message raised outside any trace carries no
+    trace headers. Baggage is never propagated. The CloudEvent body does
+    not carry the trace context.
     There is no other envelope, no dual-write and no envelope toggle.
 
     ```json
@@ -621,7 +625,11 @@ components:
           example: pick
         direct:
           type: boolean
-          description: A structural fact about this path's routing shape.
+          description: >-
+            A structural fact about this path's routing shape. Omitted
+            from the payload when `false` (the Go field is `omitempty`);
+            it is present, as `true`, only for a direct path. Consumers
+            must treat an absent `direct` as `false`.
         required_capabilities:
           type: array
           items:

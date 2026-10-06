@@ -109,6 +109,7 @@ func (p *Publisher) PublishWithId(ctx context.Context, event shared.DomainEvent,
 	if err != nil {
 		return err
 	}
+	enc.Trace = TraceContextFrom(ctx)
 	return p.Send(ctx, enc)
 }
 
@@ -158,6 +159,11 @@ type Encoded struct {
 	EventType string
 	Key       string
 	Value     []byte
+	// Trace is the W3C trace context of the operation that raised the
+	// event (ADR 0027). Zero when none was active. It is NOT part of
+	// Value: it rides in the traceparent/tracestate Kafka headers, so the
+	// CloudEvent body is unchanged and stays stable across redelivery.
+	Trace TraceContext
 }
 
 // Encoder turns a domain event into its Kafka wire form for one topic,
@@ -284,6 +290,7 @@ func (p *Publisher) Publish(ctx context.Context, event shared.DomainEvent) error
 	if err != nil {
 		return err
 	}
+	enc.Trace = TraceContextFrom(ctx)
 	return p.Send(ctx, enc)
 }
 
@@ -297,7 +304,7 @@ func (p *Publisher) Send(ctx context.Context, enc Encoded) error {
 		Topic:   enc.Topic,
 		Key:     []byte(enc.Key),
 		Value:   enc.Value,
-		Headers: []kafkago.Header{cloudevents.ContentTypeHeader()},
+		Headers: enc.messageHeaders(),
 	}
 	if err := p.Writer.WriteMessages(ctx, msg); err != nil {
 		return fmt.Errorf("kafka: publish %s: %w", enc.EventType, err)

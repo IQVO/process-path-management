@@ -107,13 +107,25 @@ type AnalyticsConsumer struct {
 // derived as topic+analyticsDlqTopicSuffix, so an isolated test topic
 // gets its own isolated DLQ topic for free.
 func NewAnalyticsConsumer(brokers []string, topic string, projection report.ProjectionStore, processed ProcessedEvents, logger *slog.Logger) *AnalyticsConsumer {
+	return NewAnalyticsConsumerInGroup(brokers, topic, AnalyticsConsumerGroup, projection, processed, logger)
+}
+
+// NewAnalyticsConsumerInGroup is NewAnalyticsConsumer with an explicit
+// consumer group. Production always uses AnalyticsConsumerGroup (via
+// NewAnalyticsConsumer); the explicit form exists so integration tests that
+// share ONE broker can give every test its own group instead of all of
+// them joining (and rebalancing) the same group through one broker's
+// lifetime — membership is group-wide state, not per-topic state, so a
+// previous test's leaving member could otherwise hold the next test's join
+// behind a rebalance.
+func NewAnalyticsConsumerInGroup(brokers []string, topic, groupID string, projection report.ProjectionStore, processed ProcessedEvents, logger *slog.Logger) *AnalyticsConsumer {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	reader := kafkago.NewReader(kafkago.ReaderConfig{
 		Brokers: brokers,
 		Topic:   topic,
-		GroupID: AnalyticsConsumerGroup,
+		GroupID: groupID,
 		// Start a brand-new consumer group at the EARLIEST offset. The
 		// analytics projection must see the full history of the topic
 		// (it is a replayable read model, not a live integration

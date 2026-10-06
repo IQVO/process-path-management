@@ -1,6 +1,7 @@
 package http
 
 import (
+	"fmt"
 	"net/http"
 	"testing"
 
@@ -26,5 +27,19 @@ func TestStatusFor_ConcurrentModification_Returns409(t *testing.T) {
 	// It must remain DISTINCT from the natural-key conflict category.
 	if info.slug == problemFor(usecases.ErrPathAlreadyExists).slug {
 		t.Fatal("concurrent-modification must not collapse into path-already-exists")
+	}
+}
+
+// TestStatusFor_PathReferencedByCPTSchedule_Returns409 pins ADR 0026's
+// HTTP contract: refusing to deactivate a path a CPT schedule still lists
+// is a 409 with its own RFC 7807 category (and the detail, which wraps the
+// sentinel, still maps to it).
+func TestStatusFor_PathReferencedByCPTSchedule_Returns409(t *testing.T) {
+	err := fmt.Errorf("%w: sites [sp1]", usecases.ErrPathReferencedByCPTSchedule)
+	if got := statusFor(err); got != http.StatusConflict {
+		t.Fatalf("want 409, got %d", got)
+	}
+	if got := problemFor(err).slug; got != "path-referenced-by-cpt-schedule" {
+		t.Fatalf("want path-referenced-by-cpt-schedule, got %q", got)
 	}
 }

@@ -5,6 +5,7 @@ package kafka_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"testing"
@@ -29,6 +30,13 @@ var (
 	sharedBrokers   []string
 	sharedContainer testcontainers.Container
 )
+
+// projectionDeadline bounds how long a test waits for the consumer to
+// project a message. The work itself is sub-second; the budget is dominated
+// by the consumer-group join (kafka-go retries a not-yet-available group
+// coordinator every 5s) and must absorb a CPU-starved CI runner executing
+// several -race packages and containers at once.
+const projectionDeadline = 60 * time.Second
 
 func TestMain(m *testing.M) {
 	code := m.Run()
@@ -66,29 +74,95 @@ func uniqueTopic(t *testing.T) string {
 	return fmt.Sprintf("warehouse.process-path-management.analytics.itest-%d", time.Now().UnixNano())
 }
 
+// startConsumer runs an AnalyticsConsumer over topic in its OWN consumer
+// group (never the production AnalyticsConsumerGroup) and tears it down in
+// t.Cleanup: cancel, wait for Run to return, then Close so the member
+// cleanly leaves its group before the next test starts. A group per test
+// keeps group membership (group-wide state on the shared broker) from
+// leaking from one test into the next. It returns the consumer's context,
+// cancelled on cleanup.
+func startConsumer(t *testing.T, brokerList []string, topic string, projection report.ProjectionStore, processed inboundkafka.ProcessedEvents) context.Context {
+	t.Helper()
+	group := fmt.Sprintf("itest-group-%d", time.Now().UnixNano())
+	consumer := inboundkafka.NewAnalyticsConsumerInGroup(brokerList, topic, group, projection, processed, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = consumer.Run(ctx)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(15 * time.Second):
+			t.Log("analytics consumer did not stop within 15s of cancellation")
+		}
+		_ = consumer.Close()
+	})
+	return ctx
+}
+
 func createTopic(t *testing.T, brokerList []string, topic string) {
 	t.Helper()
+	// A freshly started broker can still refuse a dial or answer
+	// NOT_CONTROLLER / COORDINATOR_NOT_AVAILABLE for a moment after its
+	// "started" log line; retry instead of failing the test (and, via the
+	// shared broker, every test after it) on the first hiccup.
+	deadline := time.Now().Add(60 * time.Second)
+	var lastErr error
+	for {
+		lastErr = tryCreateTopic(brokerList[0], topic)
+		if lastErr == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("create topic %s: %v", topic, lastErr)
+		}
+		time.Sleep(300 * time.Millisecond)
+	}
+
 	conn, err := kafkago.Dial("tcp", brokerList[0])
 	if err != nil {
 		t.Fatalf("dial %s: %v", brokerList[0], err)
 	}
 	defer func() { _ = conn.Close() }()
 
-	if err := conn.CreateTopics(kafkago.TopicConfig{
-		Topic: topic, NumPartitions: 1, ReplicationFactor: 1,
-	}); err != nil {
-		t.Fatalf("create topic %s: %v", topic, err)
-	}
-
-	deadline := time.Now().Add(30 * time.Second)
+	// Readable is not writable: wait until every partition has an elected
+	// leader. Without this the first publish raced leader election and
+	// spent seconds in its retry loop (LEADER_NOT_AVAILABLE), eating the
+	// budget of the test that follows.
+	deadline = time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
 		partitions, err := conn.ReadPartitions(topic)
-		if err == nil && len(partitions) > 0 {
+		if err == nil && len(partitions) > 0 && allHaveLeader(partitions) {
 			return
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
-	t.Fatalf("topic %s never became readable", topic)
+	t.Fatalf("topic %s never got a partition leader", topic)
+}
+
+func tryCreateTopic(broker, topic string) error {
+	conn, err := kafkago.Dial("tcp", broker)
+	if err != nil {
+		return fmt.Errorf("dial %s: %w", broker, err)
+	}
+	defer func() { _ = conn.Close() }()
+	err = conn.CreateTopics(kafkago.TopicConfig{Topic: topic, NumPartitions: 1, ReplicationFactor: 1})
+	if err != nil && !errors.Is(err, kafkago.TopicAlreadyExists) {
+		return err
+	}
+	return nil
+}
+
+func allHaveLeader(partitions []kafkago.Partition) bool {
+	for _, p := range partitions {
+		if p.Leader.ID < 0 || p.Leader.Host == "" {
+			return false
+		}
+	}
+	return true
 }
 
 func publish(t *testing.T, brokerList []string, topic string, msgs ...kafkago.Message) {
@@ -158,14 +232,9 @@ func TestAnalyticsConsumer_ReplaysFromFirstOffsetIntoMemoryStore(t *testing.T) {
 	)
 
 	store := analyticsstore.NewMemoryStore()
-	consumer := inboundkafka.NewAnalyticsConsumer(brokerList, topic, store, newMemoryProcessedEvents(), nil)
-	defer func() { _ = consumer.Close() }()
+	startConsumer(t, brokerList, topic, store, newMemoryProcessedEvents())
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go func() { _ = consumer.Run(ctx) }()
-
-	deadline := time.Now().Add(30 * time.Second)
+	deadline := time.Now().Add(projectionDeadline)
 	for time.Now().Before(deadline) {
 		rep, err := store.Query(context.Background(), reportQuery(base))
 		if err == nil && len(rep.Rows) == 1 && rep.Rows[0].PathsDefined == 1 && rep.Rows[0].PathsRevised == 1 && rep.Rows[0].PathsDeactivated == 1 {
@@ -189,14 +258,9 @@ func TestAnalyticsConsumer_IsIdempotentAcrossRedelivery(t *testing.T) {
 	publish(t, brokerList, topic, msg, msg)
 
 	store := analyticsstore.NewMemoryStore()
-	consumer := inboundkafka.NewAnalyticsConsumer(brokerList, topic, store, newMemoryProcessedEvents(), nil)
-	defer func() { _ = consumer.Close() }()
+	startConsumer(t, brokerList, topic, store, newMemoryProcessedEvents())
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go func() { _ = consumer.Run(ctx) }()
-
-	deadline := time.Now().Add(30 * time.Second)
+	deadline := time.Now().Add(projectionDeadline)
 	for time.Now().Before(deadline) {
 		rep, err := store.Query(context.Background(), reportQuery(base))
 		if err == nil && len(rep.Rows) == 1 {
