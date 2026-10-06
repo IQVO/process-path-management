@@ -2,6 +2,7 @@ package usecases
 
 import (
 	"context"
+	"sort"
 
 	"github.com/claudioed/process-path-management/internal/application/ports"
 	"github.com/claudioed/process-path-management/internal/domain/cptschedule"
@@ -31,40 +32,42 @@ type DefineCPTSchedule struct {
 }
 
 func (uc *DefineCPTSchedule) Execute(ctx context.Context, siteId shared.SiteId, timezone string, cutoffs []cptschedule.Cutoff) (*cptschedule.CPTSchedule, error) {
-	existing, err := uc.Repo.FindBySiteID(ctx, siteId)
-	if err != nil {
-		return nil, err
-	}
-
-	// The cross-aggregate eligiblePathIds check: every referenced PathId
-	// must resolve to an Active ProcessPath in this service's own store.
-	// Checked against the union across all cutoffs up front, before any
-	// domain construction, so a caller gets one clear error rather than a
-	// partial write.
-	if err := uc.validateEligiblePathIds(ctx, cutoffs); err != nil {
-		return nil, err
-	}
-
 	now := uc.Clock.Now()
 
 	var schedule *cptschedule.CPTSchedule
-	if existing == nil {
-		schedule, err = cptschedule.Define(siteId, timezone, cutoffs, now)
-		if err != nil {
-			return nil, err
+	err := atomically(ctx, uc.UnitOfWork, func(ctx context.Context) error {
+		// The cross-aggregate eligiblePathIds check: every referenced
+		// PathId must resolve to an Active ProcessPath in this service's
+		// own store. It runs INSIDE the unit of work and takes the paths'
+		// share locks, which are held until commit (ADR 0028): a
+		// DeactivatePath of any of them blocks until this schedule is
+		// committed, and then refuses with 409. Checked against the union
+		// across all cutoffs before any domain construction, so a caller
+		// gets one clear error rather than a partial write.
+		if err := uc.lockAndValidateEligiblePathIds(ctx, cutoffs); err != nil {
+			return err
 		}
-	} else {
-		schedule = existing
-		changed, err := schedule.Revise(timezone, cutoffs, now)
-		if err != nil {
-			return nil, err
-		}
-		if !changed {
-			return schedule, nil
-		}
-	}
 
-	err = atomically(ctx, uc.UnitOfWork, func(ctx context.Context) error {
+		existing, err := uc.Repo.FindBySiteID(ctx, siteId)
+		if err != nil {
+			return err
+		}
+		if existing == nil {
+			schedule, err = cptschedule.Define(siteId, timezone, cutoffs, now)
+			if err != nil {
+				return err
+			}
+		} else {
+			schedule = existing
+			changed, err := schedule.Revise(timezone, cutoffs, now)
+			if err != nil {
+				return err
+			}
+			if !changed {
+				return nil
+			}
+		}
+
 		if err := uc.Repo.Save(ctx, schedule); err != nil {
 			return err
 		}
@@ -76,25 +79,42 @@ func (uc *DefineCPTSchedule) Execute(ctx context.Context, siteId shared.SiteId, 
 	return schedule, nil
 }
 
-// validateEligiblePathIds enforces ADR 0010's one cross-aggregate
+// lockAndValidateEligiblePathIds enforces ADR 0010's one cross-aggregate
 // invariant: every eligiblePathIds entry across every cutoff must
-// reference an Active ProcessPath. Deduplicates lookups so a PathId
-// referenced by several cutoffs is only looked up once.
-func (uc *DefineCPTSchedule) validateEligiblePathIds(ctx context.Context, cutoffs []cptschedule.Cutoff) error {
-	checked := make(map[shared.PathId]bool)
+// reference an Active ProcessPath. The distinct ids are sorted and locked
+// FOR SHARE in one repository call (ADR 0028) — the sort is the stable lock
+// order that keeps concurrent definers from deadlocking — and each locked
+// row is judged on its committed state at lock time, so a deactivation that
+// committed first is seen here.
+func (uc *DefineCPTSchedule) lockAndValidateEligiblePathIds(ctx context.Context, cutoffs []cptschedule.Cutoff) error {
+	seen := make(map[shared.PathId]bool)
+	var ids []shared.PathId
 	for _, c := range cutoffs {
 		for _, id := range c.EligiblePathIds() {
-			if checked[id] {
-				continue
+			if !seen[id] {
+				seen[id] = true
+				ids = append(ids, id)
 			}
-			checked[id] = true
-			p, err := uc.ProcessPathRepo.FindByID(ctx, id)
-			if err != nil {
-				return err
-			}
-			if p == nil || !p.IsActive() {
-				return ErrIneligiblePathId
-			}
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+
+	locked, err := uc.ProcessPathRepo.LockByIDsForShare(ctx, ids)
+	if err != nil {
+		return err
+	}
+	active := make(map[shared.PathId]bool, len(locked))
+	for _, p := range locked {
+		if p != nil && p.IsActive() {
+			active[p.ID()] = true
+		}
+	}
+	for _, id := range ids {
+		if !active[id] {
+			return ErrIneligiblePathId
 		}
 	}
 	return nil

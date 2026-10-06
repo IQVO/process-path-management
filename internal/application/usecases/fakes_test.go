@@ -2,6 +2,8 @@ package usecases_test
 
 import (
 	"context"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -18,6 +20,7 @@ import (
 type fakeRepo struct {
 	mu    sync.Mutex
 	paths map[shared.PathId]*processpath.ProcessPath
+	calls []string
 }
 
 func newFakeRepo() *fakeRepo {
@@ -67,6 +70,47 @@ func (r *fakeRepo) ListAll(_ context.Context) ([]*processpath.ProcessPath, error
 		out = append(out, p)
 	}
 	return out, nil
+}
+
+// FindByIDForUpdate records the call (ADR 0028 lock-order assertions) and
+// otherwise behaves like FindByID.
+func (r *fakeRepo) FindByIDForUpdate(_ context.Context, id shared.PathId) (*processpath.ProcessPath, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.calls = append(r.calls, "for-update:"+string(id))
+	return r.paths[id], nil
+}
+
+// LockByIDsForShare records the ids it was asked to lock, in the order
+// received, and returns the known paths in ascending id order like the
+// Postgres adapter.
+func (r *fakeRepo) LockByIDsForShare(_ context.Context, ids []shared.PathId) ([]*processpath.ProcessPath, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.calls = append(r.calls, "for-share:"+joinIDs(ids))
+	sorted := append([]shared.PathId(nil), ids...)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
+	var out []*processpath.ProcessPath
+	for _, id := range sorted {
+		if p, ok := r.paths[id]; ok {
+			out = append(out, p)
+		}
+	}
+	return out, nil
+}
+
+func (r *fakeRepo) callLog() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.calls...)
+}
+
+func joinIDs(ids []shared.PathId) string {
+	ss := make([]string, len(ids))
+	for i, id := range ids {
+		ss[i] = string(id)
+	}
+	return strings.Join(ss, ",")
 }
 
 // fakePublisher records every event published, for assertions.
@@ -146,6 +190,35 @@ func (r *erroringRepo) ListAll(ctx context.Context) ([]*processpath.ProcessPath,
 		return nil, r.listErr
 	}
 	return r.fakeRepo.ListAll(ctx)
+}
+
+func (r *erroringRepo) FindByIDForUpdate(ctx context.Context, id shared.PathId) (*processpath.ProcessPath, error) {
+	if r.findErr != nil {
+		return nil, r.findErr
+	}
+	return r.fakeRepo.FindByIDForUpdate(ctx, id)
+}
+
+func (r *erroringRepo) LockByIDsForShare(ctx context.Context, ids []shared.PathId) ([]*processpath.ProcessPath, error) {
+	if r.findErr != nil {
+		return nil, r.findErr
+	}
+	return r.fakeRepo.LockByIDsForShare(ctx, ids)
+}
+
+// recordingUoW logs the unit-of-work boundaries into the same call log as
+// fakeRepo, so a test can assert a lock was taken INSIDE the unit of work.
+type recordingUoW struct{ repo *fakeRepo }
+
+func (u recordingUoW) Execute(ctx context.Context, fn func(ctx context.Context) error) error {
+	u.repo.mu.Lock()
+	u.repo.calls = append(u.repo.calls, "uow-begin")
+	u.repo.mu.Unlock()
+	err := fn(ctx)
+	u.repo.mu.Lock()
+	u.repo.calls = append(u.repo.calls, "uow-end")
+	u.repo.mu.Unlock()
+	return err
 }
 
 // erroringPublisher always fails Publish, so use-case error-propagation

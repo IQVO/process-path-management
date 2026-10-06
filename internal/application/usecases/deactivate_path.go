@@ -20,6 +20,14 @@ import (
 // true after the write by refusing the deactivation with
 // ErrPathReferencedByCPTSchedule (HTTP 409) until the operator revises
 // the schedule.
+//
+// ADR 0028 closes the race ADR 0026 left open: the path row is read
+// FOR UPDATE inside the unit of work, and only then are the referencing
+// schedules looked up. A DefineCPTSchedule that lists the path holds the
+// matching FOR SHARE lock until it commits, so the two serialise: either
+// the schedule is committed (and visible to the check below, so this is
+// refused with 409) or the deactivation commits first (and the define
+// sees an inactive path and is refused with ErrIneligiblePathId).
 type DeactivatePath struct {
 	Repo      ports.ProcessPathRepo
 	Publisher ports.EventPublisher
@@ -35,6 +43,11 @@ type DeactivatePath struct {
 }
 
 func (uc *DeactivatePath) Execute(ctx context.Context, id shared.PathId) error {
+	// Cheap unlocked pre-check: an unknown path is a 404 and an
+	// already-deactivated one an idempotent no-op that never opens a unit of
+	// work. Deactivation is terminal (nothing reactivates a path), so the
+	// unlocked "inactive" answer cannot go stale; the authoritative "still
+	// active" decision is re-taken on the locked row below.
 	p, err := uc.Repo.FindByID(ctx, id)
 	if err != nil {
 		return err
@@ -48,6 +61,16 @@ func (uc *DeactivatePath) Execute(ctx context.Context, id shared.PathId) error {
 
 	now := uc.Clock.Now()
 	return atomically(ctx, uc.UnitOfWork, func(ctx context.Context) error {
+		p, err := uc.Repo.FindByIDForUpdate(ctx, id)
+		if err != nil {
+			return err
+		}
+		if p == nil {
+			return ErrPathNotFound
+		}
+		if !p.IsActive() {
+			return nil
+		}
 		if err := uc.rejectIfReferenced(ctx, id); err != nil {
 			return err
 		}
@@ -63,7 +86,10 @@ func (uc *DeactivatePath) Execute(ctx context.Context, id shared.PathId) error {
 }
 
 // rejectIfReferenced fails with ErrPathReferencedByCPTSchedule, naming the
-// sites, when any CPT schedule still lists id.
+// sites, when any CPT schedule still lists id. It runs after the path row
+// is locked FOR UPDATE (ADR 0028), so a schedule that lists id and commits
+// concurrently is either already visible here or still blocked on the
+// path's share lock.
 func (uc *DeactivatePath) rejectIfReferenced(ctx context.Context, id shared.PathId) error {
 	if uc.CPTSchedules == nil {
 		return nil
