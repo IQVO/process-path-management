@@ -46,8 +46,11 @@ or otherwise; every change propagates exclusively via Kafka.
 **Consumers (live):** the three above replaced their static YAML catalogue
 with this topic on 2026-09-06 (ADR 0002); `order-management` also
 consumes it for `cycle_time_p95`/`eligibility` and `CPTScheduleChanged`
-(ADR 0010). `warehouse-ops-agent` reads this service over MCP;
-`warehouse-console` mounts its `web/` remote. See
+(ADR 0010), and `network-fulfillment` consumes it (ProcessPath* +
+`CPTScheduleChanged`) into its `processpathcache`. `warehouse-ops-agent`
+has an MCP client for this service wired but not yet used by a use case;
+`warehouse-console` mounts its `web/` remote and reads the
+`pathmgmt-reports` catalogue-growth report. See
 `docs/docs/ecosystem/context-map.md`, and verify against the sibling
 repos' `origin/develop` before relying on it.
 

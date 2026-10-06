@@ -75,7 +75,10 @@ paths:
           description: >
             The request body is missing or not valid JSON (including a JSON
             number too large for eligibility.maxUnitsPerLine's int64
-            range), or the Idempotency-Key header is absent/empty.
+            range, or a null element inside requiredCapabilities,
+            eligibility.requiredProductAttributes or
+            eligibility.excludedProductAttributes — every array element must
+            be a string), or the Idempotency-Key header is absent/empty.
           content:
             application/problem+json:
               schema:
@@ -177,7 +180,13 @@ paths:
               schema:
                 $ref: "#/components/schemas/ProcessPath"
         "400":
-          description: The request body is missing or not valid JSON (including a JSON number too large for eligibility.maxUnitsPerLine's int64 range).
+          description: >-
+            The request body is missing or not valid JSON (including a JSON
+            number too large for eligibility.maxUnitsPerLine's int64 range,
+            or a null element inside requiredCapabilities,
+            eligibility.requiredProductAttributes or
+            eligibility.excludedProductAttributes — every array element must
+            be a string).
           content:
             application/problem+json:
               schema:
@@ -212,9 +221,13 @@ paths:
         Idempotent: deactivating an already-deactivated path is a no-op
         success and does NOT republish ProcessPathDeactivated. Publishes
         ProcessPathDeactivated the first time a path transitions to
-        Deactivated. This service takes no position on work already
-        assigned to this path in a downstream context — that is each
-        consumer's own operational concern.
+        Deactivated. A path that any site's CPT schedule still lists in a
+        cutoff's eligiblePathIds cannot be deactivated (ADR 0026): the
+        request is refused with 409 path-referenced-by-cpt-schedule, naming
+        the sites, and nothing changes — revise those schedules first. This
+        service takes no position on work already assigned to this path in
+        a downstream context — that is each consumer's own operational
+        concern.
       parameters:
         - $ref: "#/components/parameters/PathIdPathParam"
       responses:
@@ -222,6 +235,18 @@ paths:
           description: Path deactivated (or already was)
         "404":
           description: No process path exists with this id
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetails"
+        "409":
+          description: >-
+            path-referenced-by-cpt-schedule: at least one site's CPT
+            schedule still lists this path in a cutoff's eligiblePathIds
+            (ADR 0026). The path stays Active and nothing is published.
+            Also concurrent-modification when another request committed a
+            change to this path between this call's load and write (ADR
+            0017).
           content:
             application/problem+json:
               schema:

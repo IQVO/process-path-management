@@ -6,7 +6,7 @@ The fleet's **operator-configurable process-path catalogue** (`PathId`, `matchPr
 and a **transactional outbox** (ADR 0003, the fleet's reference implementation).
 It is the Open Host Service / Published Language SOURCE for
 `warehouse.process-path-management.events`; `fulfillment-execution`, `wes-work-planning`,
-`workforce-management` and `order-management` are Conformist consumers.
+`workforce-management`, `order-management` and `network-fulfillment` are Conformist consumers.
 
 ## Hard rules
 
@@ -69,7 +69,7 @@ make check         # fmt-check vet build lint test
 make check-all     # check + coverage (90% gate on domain + application) + arch-test + bdd — run before pushing
 make arch-test     # hexagonal dependency rule
 make bdd           # godog/Gherkin acceptance tests
-make integration   # -tags=integration, needs DATABASE_URL (testcontainers)
+make integration   # -tags=integration, needs Docker (testcontainers boots its own Postgres/Kafka)
 make mutation-fast # gremlins on ./internal/domain, CI-blocking (threshold 99%)
 make api-lint      # Spectral on apis/openapi.yaml + apis/asyncapi.yaml
 ```

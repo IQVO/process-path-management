@@ -3,15 +3,50 @@
 // boundary — every response below is a DTO owned by this package.
 package http
 
+import (
+	"encoding/json"
+	"errors"
+)
+
+// nonNullStrings is a JSON array of strings that rejects a null element.
+// encoding/json turns a null element of a plain []string into "" without
+// error, so a body such as {"requiredCapabilities":["pick",null]} used to
+// be accepted although the published schema types every element as a
+// (non-null) string — the Schemathesis contract job's
+// negative_data_rejection check found exactly that. A null array itself
+// (or an absent field) still decodes to a nil slice, as before.
+type nonNullStrings []string
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (s *nonNullStrings) UnmarshalJSON(data []byte) error {
+	var raw []*string
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	if raw == nil {
+		*s = nil
+		return nil
+	}
+	out := make(nonNullStrings, len(raw))
+	for i, v := range raw {
+		if v == nil {
+			return errors.New("array elements must be strings, found null")
+		}
+		out[i] = *v
+	}
+	*s = out
+	return nil
+}
+
 // eligibilityRequest is the wire shape of shared.Eligibility on the
 // define/revise request bodies. Every field is optional; an absent
 // eligibility object is the fully permissive zero value, matching ADR
 // 0010's "a permissive eligibility ({}) is valid" requirement.
 type eligibilityRequest struct {
-	MaxUnitsPerLine           *int     `json:"maxUnitsPerLine,omitempty"`
-	RequiredProductAttributes []string `json:"requiredProductAttributes,omitempty"`
-	ExcludedProductAttributes []string `json:"excludedProductAttributes,omitempty"`
-	NonSortable               bool     `json:"nonSortable,omitempty"`
+	MaxUnitsPerLine           *int           `json:"maxUnitsPerLine,omitempty"`
+	RequiredProductAttributes nonNullStrings `json:"requiredProductAttributes,omitempty"`
+	ExcludedProductAttributes nonNullStrings `json:"excludedProductAttributes,omitempty"`
+	NonSortable               bool           `json:"nonSortable,omitempty"`
 }
 
 // eligibilityResponse mirrors eligibilityRequest for the response side —
@@ -26,10 +61,10 @@ type eligibilityResponse struct {
 
 // defineProcessPathRequest is the POST /process-paths request body.
 type defineProcessPathRequest struct {
-	PathId               string   `json:"pathId"`
-	MatchPrefix          string   `json:"matchPrefix"`
-	Direct               bool     `json:"direct"`
-	RequiredCapabilities []string `json:"requiredCapabilities"`
+	PathId               string         `json:"pathId"`
+	MatchPrefix          string         `json:"matchPrefix"`
+	Direct               bool           `json:"direct"`
+	RequiredCapabilities nonNullStrings `json:"requiredCapabilities"`
 	// DestinationLocationRole is an OPTIONAL declaration of what kind of
 	// facility-layout LocationRole this path's completed work is
 	// destined for (Drop | WorkCenter | Shipping) — see ADR 0009. Omitted
@@ -50,8 +85,8 @@ type defineProcessPathRequest struct {
 // (see the aggregate's own doc comment on why they are immutable), so
 // this DTO deliberately does not carry them.
 type reviseProcessPathRequest struct {
-	MatchPrefix          string   `json:"matchPrefix"`
-	RequiredCapabilities []string `json:"requiredCapabilities"`
+	MatchPrefix          string         `json:"matchPrefix"`
+	RequiredCapabilities nonNullStrings `json:"requiredCapabilities"`
 	// CycleTimeP95 and Eligibility are revisable (ADR 0010).
 	CycleTimeP95 string              `json:"cycleTimeP95"`
 	Eligibility  *eligibilityRequest `json:"eligibility,omitempty"`

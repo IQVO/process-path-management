@@ -18,9 +18,16 @@ import (
 // matching the retired YAML file's own schema where `id` was already the
 // identity).
 type ProcessPathRepo interface {
-	// Save upserts a ProcessPath. Used for both first Define and every
-	// subsequent Revise/Deactivate — the aggregate's own Status field is
-	// what distinguishes a live path from a deactivated one, not deletion.
+	// Create inserts a brand-new ProcessPath and nothing else: when a
+	// row with the same id already exists (Active OR Deactivated) it
+	// writes nothing and returns ErrAlreadyExists. It is the only way
+	// DefinePath persists, so two concurrent defines of one PathId can
+	// never both succeed (the loser would otherwise upsert over the
+	// winner's row and publish a second ProcessPathCreated).
+	Create(ctx context.Context, p *processpath.ProcessPath) error
+	// Save upserts a ProcessPath. Used for every Revise/Deactivate of an
+	// already-created path — the aggregate's own Status field is what
+	// distinguishes a live path from a deactivated one, not deletion.
 	Save(ctx context.Context, p *processpath.ProcessPath) error
 	FindByID(ctx context.Context, id shared.PathId) (*processpath.ProcessPath, error)
 	// ListActive returns every path currently Active — the read model the
@@ -38,6 +45,11 @@ type ProcessPathRepo interface {
 type CPTScheduleRepo interface {
 	Save(ctx context.Context, s *cptschedule.CPTSchedule) error
 	FindBySiteID(ctx context.Context, siteId shared.SiteId) (*cptschedule.CPTSchedule, error)
+	// ListSiteIDsReferencingPath returns, in ascending order, the SiteId
+	// of every schedule that has at least one cutoff whose
+	// eligiblePathIds names id. DeactivatePath uses it to refuse retiring
+	// a path a schedule still depends on (ADR 0026).
+	ListSiteIDsReferencingPath(ctx context.Context, id shared.PathId) ([]shared.SiteId, error)
 }
 
 // EventPublisher publishes a domain event raised by a use case. Mirrors
