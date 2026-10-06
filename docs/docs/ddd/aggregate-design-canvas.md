@@ -61,7 +61,7 @@ transition).
 | `cycleTimeP95` strictly positive | `processpath.ErrInvalidCycleTime` in `validate` (also returned by the HTTP adapter for an unparsable duration) |
 | only an Active path can be revised | `processpath.ErrPathDeactivated` in `Revise` |
 | `pathId`, `direct`, `destinationLocationRole` immutable | `Revise` has no parameter for them |
-| an id is never re-defined, active or deactivated | `usecases.ErrPathAlreadyExists` in `DefinePath` (use case, needs the repo) |
+| an id is never re-defined, active or deactivated | `usecases.ErrPathAlreadyExists` in `DefinePath` (use case, needs the repo; a read-then-write check — see the concurrent-define hotspot on the [EventStorming](./eventstorming.md) page) |
 | no lost update between load and save | `ports.ErrConcurrentModification` from the version-guarded upsert in `postgres.ProcessPathRepo.Save` (ADR 0017) |
 
 ### 5. Corrective Policies
@@ -69,8 +69,12 @@ transition).
 - Invalid input is rejected synchronously (422 RFC 7807); nothing is
   persisted or published — no compensating action is needed.
 - `409 concurrent-modification`: the client reloads and retries.
-- Deactivation does not cancel in-flight work downstream; each consumer
-  stops accepting **new** work on `ProcessPathDeactivated`.
+- Deactivation is not a compensating action for anything downstream:
+  this context only publishes `ProcessPathDeactivated`, and each consumer
+  applies it to its own local catalogue (for example the
+  `applyDeactivated` handlers in the sibling `kafkacatalog` /
+  `processpathcache` consumers). What happens to work already in flight
+  is each consumer's decision.
 - A CPT schedule naming a path that is later deactivated is **not**
   corrected automatically — only the next schedule write re-checks
   eligibility (see Hotspots on the [EventStorming](./eventstorming.md)

@@ -110,6 +110,7 @@ This context consumes **no other context's events**. Its only consumer,
 | `...processpath.ProcessPathDeactivated` | `paths_deactivated += 1` |
 | `...cptschedule.CPTScheduleChanged` and any unknown type | committed and skipped |
 | non-CloudEvents message | dead-lettered to `warehouse.process-path-management.analytics.dlq`, then committed |
+| projecting type whose dedupe or projection still fails after `maxAnalyticsHandlerAttempts` (3) | dead-lettered to the same DLQ, then committed (ADR 0012) |
 
 Dedupe is on the CloudEvents `id`, twice: `analytics_consumed_events`
 (consumer gate) and `analytics_processed_events` (claimed inside the

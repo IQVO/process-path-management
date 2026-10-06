@@ -41,7 +41,7 @@ Omits: sibling contexts (each owns its own chart) and any time dimension.
 | Axis | Position | Evidence |
 | --- | --- | --- |
 | Business differentiation | Low (0.22) | ADR 0001 classifies it Generic. It decides nothing about dispatch, routing or assignment; it declares what a path is. Competitive behaviour (pick/pack/SLAM execution, waveless release, the order promise) lives in its consumers. |
-| Model complexity | Moderate (0.58) | 2 aggregate roots (`ProcessPath`, `CPTSchedule`), 1 child entity (`Cutoff`), 3 value types with rules (`Eligibility`, `DestinationLocationRole`, `Weekday`), 18 domain error sentinels (6 in `processpath`, 11 in `cptschedule`, 1 in `shared`) plus 1 cross-aggregate rule in a use case (`ErrIneligiblePathId`), 4 published event types, a two-state lifecycle. Infrastructure is heavier than the domain: transactional outbox, idempotency keys, optimistic concurrency, analytics projector (ADRs 0003, 0011, 0017, 0007). |
+| Model complexity | Moderate (0.58) | 2 aggregate roots (`ProcessPath`, `CPTSchedule`), 1 child entity (`Cutoff`), 3 value types (`Eligibility`, which has no invariant of its own, plus the closed sets `DestinationLocationRole` and `Weekday`), 18 domain error sentinels (6 in `processpath`, 11 in `cptschedule`, 1 in `shared`) plus 1 cross-aggregate rule in a use case (`ErrIneligiblePathId`), 4 published event types, a two-state lifecycle. Infrastructure is heavier than the domain: transactional outbox, idempotency keys, optimistic concurrency, analytics projector (ADRs 0003, 0011, 0017, 0007). |
 
 The point sits right of centre because the CPT schedule (ADR 0010) and the
 fulfillment capability contract added real rules. It is still

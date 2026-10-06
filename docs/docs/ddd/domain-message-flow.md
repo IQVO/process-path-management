@@ -66,17 +66,18 @@ sequenceDiagram
     UI->>PPM: cmd: DELETE /process-paths/PACK
     Note over UI,PPM: 204 No Content
     PPM->>T: evt: com.warehouse.wes.process-path-management.processpath.ProcessPathDeactivated
-    T-->>FE: evt: ProcessPathDeactivated - stop accepting new work on PACK
-    T-->>OM: evt: ProcessPathDeactivated - drop from catalogue
-    T-->>NF: evt: ProcessPathDeactivated - delete from capability cache
+    T-->>FE: evt: ProcessPathDeactivated into kafkacatalog applyDeactivated
+    T-->>OM: evt: ProcessPathDeactivated into kafkacatalog applyDeactivated
+    T-->>NF: evt: ProcessPathDeactivated into processpathcache applyDeactivated
     Op->>UI: cmd: deactivate PACK again
     UI->>PPM: cmd: DELETE /process-paths/PACK
     Note over UI,PPM: 204 No Content and no event - idempotent
 ```
 
 Source: `internal/application/usecases/deactivate_path.go`,
-`internal/domain/processpath/process_path.go`; network-fulfillment
-`processpathcache/consumer.go` (`applyDeactivated`). Omits:
+`internal/domain/processpath/process_path.go`; fulfillment-execution and
+order-management `kafkacatalog/consumer.go`, network-fulfillment
+`processpathcache/consumer.go` (each `applyDeactivated`). Omits:
 wes-work-planning and workforce-management (same as fulfillment-execution).
 
 ## 3. Operator publishes a site's CPT schedule
@@ -91,7 +92,7 @@ sequenceDiagram
     participant NF as network-fulfillment
 
     Op->>PPM: cmd: PUT /sites/sp1/cpt-schedule
-    PPM->>PPM: qry: every eligiblePathId is an Active path in the own store
+    Note over PPM: every eligiblePathId must be an Active path in the own store
     alt an eligible path is unknown or deactivated
         Note over Op,PPM: 422 ineligible-path-id and no event
     else schedule valid and changed
@@ -118,6 +119,7 @@ sequenceDiagram
     participant REP as pathmgmt-reports
     participant UI as warehouse-console
     participant AG as MCP host
+    participant MCP as process-path-management cmd/mcp
 
     PPM->>A: evt: com.warehouse.wes.process-path-management.processpath.ProcessPathCreated analytics copy
     A-->>PROJ: evt: ProcessPathCreated - paths_defined plus 1
@@ -125,7 +127,8 @@ sequenceDiagram
     Note over UI,REP: rows of dayBucket, pathsDefined, pathsRevised, pathsDeactivated
     UI->>REP: qry: GET /reports/catalogue-growth/freshness
     Note over UI,REP: lagSeconds
-    AG->>REP: qry: MCP get_catalogue_growth_report via cmd/mcp
+    AG->>MCP: qry: MCP get_catalogue_growth_report
+    MCP->>REP: qry: GET /reports/catalogue-growth
 ```
 
 Source: `internal/adapters/outbound/kafka/analytics_publisher.go`,
@@ -133,5 +136,5 @@ Source: `internal/adapters/outbound/kafka/analytics_publisher.go`,
 `internal/adapters/inbound/http/reports_handler.go`,
 `internal/adapters/inbound/mcp/report_tool.go`; warehouse-console
 `src/features/context-reports/processPathManagement.config.tsx`.
-Omits: the MCP server as a separate hop (it forwards to the reports REST
-API), the DLQ path.
+Omits: the DLQ path, and the fact that the MCP report tool is only
+registered when `REPORTS_BASE_URL` is set.
