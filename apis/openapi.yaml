@@ -75,7 +75,10 @@ paths:
           description: >
             The request body is missing or not valid JSON (including a JSON
             number too large for eligibility.maxUnitsPerLine's int64
-            range), or the Idempotency-Key header is absent/empty.
+            range, or a null element inside requiredCapabilities,
+            eligibility.requiredProductAttributes or
+            eligibility.excludedProductAttributes — every array element must
+            be a string), or the Idempotency-Key header is absent/empty.
           content:
             application/problem+json:
               schema:
@@ -177,7 +180,13 @@ paths:
               schema:
                 $ref: "#/components/schemas/ProcessPath"
         "400":
-          description: The request body is missing or not valid JSON (including a JSON number too large for eligibility.maxUnitsPerLine's int64 range).
+          description: >-
+            The request body is missing or not valid JSON (including a JSON
+            number too large for eligibility.maxUnitsPerLine's int64 range,
+            or a null element inside requiredCapabilities,
+            eligibility.requiredProductAttributes or
+            eligibility.excludedProductAttributes — every array element must
+            be a string).
           content:
             application/problem+json:
               schema:
