@@ -28,7 +28,7 @@ help:
 	@echo "  coverage          CI coverage command + the $(COVERAGE_THRESHOLD)% gate"
 	@echo "  bdd               go test ./... -run TestFeatures -v (godog/Gherkin)"
 	@echo "  arch-test         go test ./internal/architecture/... -v"
-	@echo "  integration       go test -tags=integration ./... -race -count=1 (needs DATABASE_URL)"
+	@echo "  integration       go test -tags=integration ./... -race -count=1 (needs Docker; testcontainers)"
 	@echo "  mutation-fast     gremlins unleash ./internal/domain — CI's blocking job (only ~11 mutants here, so full-domain IS the fast subset)"
 	@echo "  mutation          alias for mutation-fast (see .gremlins.yaml)"
 	@echo "  api-lint          Spectral lint on openapi.yaml and asyncapi.yaml"
@@ -86,8 +86,8 @@ bdd:
 arch-test:
 	$(GO) test ./internal/architecture/... -v
 
-# Requires a running Postgres: docker compose up -d postgres, and
-# DATABASE_URL pointed at it.
+# Requires a running Docker daemon: every integration test boots its own
+# Postgres/Kafka via testcontainers (no DATABASE_URL, no compose service).
 integration:
 	$(GO) build -tags=integration ./...
 	$(GO) vet -tags=integration ./...

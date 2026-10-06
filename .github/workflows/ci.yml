@@ -194,27 +194,16 @@ jobs:
   integration:
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: pathmgmt
-          POSTGRES_PASSWORD: pathmgmt
-          POSTGRES_DB: pathmgmt
-        ports: ["5432:5432"]
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 5s
-          --health-timeout 3s
-          --health-retries 10
+    # No `services:` Postgres and no DATABASE_URL: every Postgres/Kafka
+    # integration test boots its own container via testcontainers-go (the
+    # runner's Docker daemon), and the architecture fitness test
+    # TestPostgresIntegrationTestsUseTestcontainers keeps it that way.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
       - name: Integration tests
-        env:
-          DATABASE_URL: "postgres://pathmgmt:${{ 'pathmgmt' }}@localhost:5432/pathmgmt?sslmode=disable"
         run: |
           set -euo pipefail
           go build -tags=integration ./...
