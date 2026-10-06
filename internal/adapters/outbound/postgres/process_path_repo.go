@@ -33,6 +33,32 @@ func NewProcessPathRepo(pool *pgxpool.Pool) *ProcessPathRepo {
 	return &ProcessPathRepo{pool: pool}
 }
 
+// Create inserts p as a brand-new row at version 1 and refuses to touch an
+// existing one: ON CONFLICT (id) DO NOTHING means a concurrent define of
+// the same PathId that committed first (or any existing row, Active or
+// Deactivated) makes this affect zero rows, reported as
+// ports.ErrAlreadyExists (HTTP 409 path-already-exists). Creation must be
+// insert-only: routing it through Save's version-guarded upsert let a
+// fresh aggregate (version 1) match the winner's row (also version 1) and
+// overwrite it, so both racers published ProcessPathCreated. Two
+// concurrent inserts of one id serialize on the primary-key index, so the
+// loser blocks until the winner commits and then reliably sees the
+// conflict.
+func (r *ProcessPathRepo) Create(ctx context.Context, p *processpath.ProcessPath) error {
+	tag, err := querierFrom(ctx, r.pool).Exec(ctx, `
+		INSERT INTO process_paths (id, match_prefix, direct, required_capabilities, destination_location_role, cycle_time_p95, eligibility, status, created_at, updated_at, version)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 1)
+		ON CONFLICT (id) DO NOTHING
+	`, string(p.ID()), p.MatchPrefix(), p.Direct(), capabilitiesToStrings(p.RequiredCapabilities()), destinationLocationRoleToColumn(p.DestinationLocationRole()), durationToInterval(p.CycleTimeP95()), eligibilityToRow(p.Eligibility()), string(p.Status()), p.CreatedAt(), p.UpdatedAt())
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ports.ErrAlreadyExists
+	}
+	return nil
+}
+
 // Save upserts a's current state, version-guarded against a concurrent
 // writer (ADR 0017): on an existing row it only applies when the row's
 // current version still matches p.Version(), and always advances the row

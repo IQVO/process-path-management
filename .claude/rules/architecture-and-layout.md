@@ -56,8 +56,8 @@ internal/
     outbound/analyticsstore/      analytics projection/report store
     outbound/telemetry/           OTel traces/metrics/logs
   architecture/                   arch-go + fitness tests (architecture_test.go, fitness_test.go)
-migrations/                       golang-migrate SQL files (0001–0005); migrations/analytics/ for the report DB
-apis/openapi.yaml                 This service's OWN REST API (8 endpoints)
+migrations/                       golang-migrate SQL files (0001–0007); migrations/analytics/ for the report DB
+apis/openapi.yaml                 This service's OWN REST API (8 operations; /readyz is served but not in the spec)
 apis/asyncapi.yaml                What this service PUBLISHES (integration + analytics topics, CloudEvents 1.0)
 features/                         godog/Gherkin BDD acceptance tests
 web/                              process_path_mfe: Vite + React Module Federation remote (operator SPA)

@@ -71,10 +71,11 @@ func (p *AnalyticsPublisher) PublishWithId(ctx context.Context, event shared.Dom
 	if err != nil {
 		return err
 	}
+	enc.Trace = TraceContextFrom(ctx)
 	msg := kafkago.Message{
 		Key:     []byte(enc.Key),
 		Value:   enc.Value,
-		Headers: []kafkago.Header{cloudevents.ContentTypeHeader()},
+		Headers: enc.messageHeaders(),
 	}
 	if err := p.writer.WriteMessages(ctx, msg); err != nil {
 		return fmt.Errorf("kafka: publish %s analytics event: %w", enc.EventType, err)
@@ -113,10 +114,11 @@ func (p *AnalyticsPublisher) Publish(ctx context.Context, event shared.DomainEve
 	if err != nil {
 		return err
 	}
+	enc.Trace = TraceContextFrom(ctx)
 	msg := kafkago.Message{
 		Key:     []byte(enc.Key),
 		Value:   enc.Value,
-		Headers: []kafkago.Header{cloudevents.ContentTypeHeader()},
+		Headers: enc.messageHeaders(),
 	}
 	if err := p.writer.WriteMessages(ctx, msg); err != nil {
 		return fmt.Errorf("kafka: publish %s analytics event: %w", enc.EventType, err)

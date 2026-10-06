@@ -25,7 +25,7 @@ should be the single source of truth for what a path IS.
 | `fulfillment-execution` | Core | The Pick/Pack/SLAM task lifecycle; throughput and accuracy at scale. |
 | `wes-work-planning` | Core | The conductor — waveless release and flow balance. |
 | `workforce-management` | Supporting | Labor & workforce allocation. |
-| `order-management` | Core | Order intake, allocation, and the customer promise. |
+| `order-management` | Generic/Supporting | Order intake, allocation, and the customer promise. |
 | `labor-performance` | Supporting | Actual-vs-standard performance scoring. |
 | `facility-layout` | Generic | Physical warehouse structure, extracted once rather than duplicated. |
 | **`process-path-management`** | **Generic** | **The process-path catalogue — extracted once rather than duplicated across its consumers.** |
@@ -142,6 +142,15 @@ One cross-aggregate invariant lives in the `DefineCPTSchedule` use case,
 not the domain, because it needs the `ProcessPathRepo`: every
 `eligiblePathIds` entry must reference an **Active** process path in this
 service's own store (`ErrIneligiblePathId`, 422).
+
+The same rule is kept true from the other side by the `DeactivatePath` use
+case ([ADR 0026](/docs/adr/0026-reject-deactivation-of-paths-in-cpt-schedules)):
+a path that any site's schedule still lists in a cutoff's `eligiblePathIds`
+cannot be deactivated. The command is refused with
+`ErrPathReferencedByCPTSchedule` (409 `path-referenced-by-cpt-schedule`,
+naming the sites) and the operator revises those schedules first.
+Nothing is pruned automatically and no `CPTScheduleChanged` is raised by a
+deactivation.
 
 A schedule is revised **wholesale** (`PUT /sites/{siteId}/cpt-schedule`
 replaces timezone and cutoffs together). `Revise` returns `changed`; an
