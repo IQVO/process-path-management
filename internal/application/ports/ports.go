@@ -37,6 +37,21 @@ type ProcessPathRepo interface {
 	// ListAll returns every path regardless of status, for the SPA's
 	// "show deactivated too" view and audit purposes.
 	ListAll(ctx context.Context) ([]*processpath.ProcessPath, error)
+	// FindByIDForUpdate is FindByID that also takes the row's exclusive
+	// lock (Postgres: SELECT ... FOR UPDATE) until the surrounding unit of
+	// work ends, so a concurrent DefineCPTSchedule cannot commit a schedule
+	// naming the path between DeactivatePath's schedule check and its
+	// commit (ADR 0028). Returns nil, nil for an unknown id. Outside a unit
+	// of work no lock outlives the call.
+	FindByIDForUpdate(ctx context.Context, id shared.PathId) (*processpath.ProcessPath, error)
+	// LockByIDsForShare takes the shared lock (Postgres: SELECT ... FOR
+	// SHARE) on every row named in ids until the surrounding unit of work
+	// ends, always in ascending id order so concurrent callers can never
+	// deadlock on each other, and returns the paths found in that order.
+	// Unknown ids are simply absent from the result; Active or not is the
+	// caller's decision. Several share-lockers coexist; a deactivation
+	// (FindByIDForUpdate) waits for them and the other way round (ADR 0028).
+	LockByIDsForShare(ctx context.Context, ids []shared.PathId) ([]*processpath.ProcessPath, error)
 }
 
 // CPTScheduleRepo persists and retrieves CPTSchedule aggregates, keyed by

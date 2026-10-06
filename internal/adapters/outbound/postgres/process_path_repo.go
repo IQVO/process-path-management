@@ -102,6 +102,45 @@ func (r *ProcessPathRepo) FindByID(ctx context.Context, id shared.PathId) (*proc
 	return scanProcessPath(row)
 }
 
+// FindByIDForUpdate is FindByID with SELECT ... FOR UPDATE: inside a unit of
+// work the row stays exclusively locked until commit/rollback (ADR 0028), so
+// DeactivatePath's check for referencing CPT schedules and its commit cannot
+// interleave with a DefineCPTSchedule that lists the path. It waits for
+// every FOR SHARE holder (an in-flight schedule define) and, under READ
+// COMMITTED, re-reads the latest committed row once the lock is granted.
+func (r *ProcessPathRepo) FindByIDForUpdate(ctx context.Context, id shared.PathId) (*processpath.ProcessPath, error) {
+	row := querierFrom(ctx, r.pool).QueryRow(ctx, `
+		SELECT id, match_prefix, direct, required_capabilities, destination_location_role, cycle_time_p95, eligibility, status, created_at, updated_at, version
+		FROM process_paths
+		WHERE id = $1
+		FOR UPDATE
+	`, string(id))
+	return scanProcessPath(row)
+}
+
+// LockByIDsForShare takes SELECT ... FOR SHARE on every existing row among
+// ids and returns them. ORDER BY id puts the sort below the LockRows node,
+// so the locks are taken in ascending id order — the same stable order for
+// every caller, which is what keeps two concurrent schedule defines that
+// list overlapping paths from deadlocking (ADR 0028). FOR SHARE coexists
+// with other FOR SHARE locks but conflicts with FOR UPDATE / UPDATE, and
+// under READ COMMITTED a row that a concurrent deactivation committed while
+// this statement waited is returned in its new (deactivated) state, so the
+// caller sees the true status. Unknown ids yield no row.
+func (r *ProcessPathRepo) LockByIDsForShare(ctx context.Context, ids []shared.PathId) ([]*processpath.ProcessPath, error) {
+	keys := make([]string, len(ids))
+	for i, id := range ids {
+		keys[i] = string(id)
+	}
+	return r.list(ctx, `
+		SELECT id, match_prefix, direct, required_capabilities, destination_location_role, cycle_time_p95, eligibility, status, created_at, updated_at, version
+		FROM process_paths
+		WHERE id = ANY($1)
+		ORDER BY id
+		FOR SHARE
+	`, keys)
+}
+
 func (r *ProcessPathRepo) ListActive(ctx context.Context) ([]*processpath.ProcessPath, error) {
 	return r.list(ctx, `
 		SELECT id, match_prefix, direct, required_capabilities, destination_location_role, cycle_time_p95, eligibility, status, created_at, updated_at, version
@@ -119,8 +158,8 @@ func (r *ProcessPathRepo) ListAll(ctx context.Context) ([]*processpath.ProcessPa
 	`)
 }
 
-func (r *ProcessPathRepo) list(ctx context.Context, query string) ([]*processpath.ProcessPath, error) {
-	rows, err := querierFrom(ctx, r.pool).Query(ctx, query)
+func (r *ProcessPathRepo) list(ctx context.Context, query string, args ...any) ([]*processpath.ProcessPath, error) {
+	rows, err := querierFrom(ctx, r.pool).Query(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}

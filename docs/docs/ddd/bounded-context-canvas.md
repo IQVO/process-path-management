@@ -116,7 +116,8 @@ Top terms: **ProcessPath**, **PathId**, **MatchPrefix**, **Direct**,
    409 `concurrent-modification` (ADR 0017).
 10. A path that a CPT schedule still lists cannot be deactivated: 409
     `path-referenced-by-cpt-schedule` until the schedule is revised
-    (`ErrPathReferencedByCPTSchedule`, ADR 0026).
+    (`ErrPathReferencedByCPTSchedule`, ADR 0026). The concurrent
+    define-vs-deactivate race is closed with row locks (ADR 0028).
 
 ## Assumptions
 
