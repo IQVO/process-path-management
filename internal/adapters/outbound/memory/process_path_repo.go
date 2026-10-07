@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"sort"
 	"sync"
 
 	"github.com/claudioed/process-path-management/internal/application/ports"
@@ -62,6 +63,33 @@ func (r *ProcessPathRepo) ListAll(_ context.Context) ([]*processpath.ProcessPath
 	out := make([]*processpath.ProcessPath, 0, len(r.paths))
 	for _, p := range r.paths {
 		out = append(out, p)
+	}
+	return out, nil
+}
+
+// FindByIDForUpdate implements ports.ProcessPathRepo. The in-memory adapter
+// has no transactions to hold a row lock in (its UnitOfWork is a
+// pass-through), so this is FindByID; the Postgres adapter is the one that
+// enforces ADR 0028.
+func (r *ProcessPathRepo) FindByIDForUpdate(ctx context.Context, id shared.PathId) (*processpath.ProcessPath, error) {
+	return r.FindByID(ctx, id)
+}
+
+// LockByIDsForShare implements ports.ProcessPathRepo: the known paths among
+// ids in ascending id order, with no real lock (see FindByIDForUpdate).
+func (r *ProcessPathRepo) LockByIDsForShare(_ context.Context, ids []shared.PathId) ([]*processpath.ProcessPath, error) {
+	sorted := append([]shared.PathId(nil), ids...)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	var out []*processpath.ProcessPath
+	for i, id := range sorted {
+		if i > 0 && sorted[i-1] == id {
+			continue
+		}
+		if p, ok := r.paths[id]; ok {
+			out = append(out, p)
+		}
 	}
 	return out, nil
 }
