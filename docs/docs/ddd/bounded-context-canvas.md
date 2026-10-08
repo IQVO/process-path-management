@@ -124,7 +124,9 @@ Top terms: **ProcessPath**, **PathId**, **MatchPrefix**, **Direct**,
 - Consumers keep their own local read model and never call this service
   on their hot path.
 - The capability, product-attribute, site and location-role vocabularies
-  are owned elsewhere and stay in sync by convention.
+  are owned elsewhere and stay in sync by convention (SKU handling
+  classification such as hazmat or fragile: `product-master`; site and
+  location role: `facility-layout`).
 - A path is live the moment it is defined — no draft or approval step.
 - Deactivation says nothing about work already in flight downstream.
 - The catalogue is small and slow-changing (operator-configured), so
