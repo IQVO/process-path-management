@@ -20,7 +20,8 @@ catalogue — a bounded-context Go service in the `warehouse-systems`
 fleet, alongside `order-management`, `inventory-storage`,
 `wes-work-planning`, `workforce-management`, `fulfillment-execution`,
 `facility-layout`, `warehouse-ops-agent`, `labor-performance`,
-`network-fulfillment`, and `warehouse-planning`.
+`network-fulfillment`, `warehouse-planning`, `network-inventory-planning`,
+and `product-master`.
 
 ## Why this context exists
 
