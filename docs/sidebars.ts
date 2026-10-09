@@ -22,6 +22,16 @@ const sidebars: SidebarsConfig = {
         'overview/quickstart',
       ],
     },
+    {
+      type: 'category',
+      label: 'Operations',
+      items: [
+        'operations/configuration',
+        'operations/runbook',
+        'operations/observability',
+        'operations/troubleshooting',
+      ],
+    },
     'ddd/ubiquitous-language',
     'ddd/aggregates-and-invariants',
     {
