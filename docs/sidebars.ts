@@ -65,6 +65,11 @@ const sidebars: SidebarsConfig = {
     'mcp/governance-charter',
     {
       type: 'category',
+      label: 'Ecosystem',
+      items: ['ecosystem/integration'],
+    },
+    {
+      type: 'category',
       label: 'Architecture Decision Records',
       link: {type: 'doc', id: 'adr/about'},
       items: [
