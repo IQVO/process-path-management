@@ -6,14 +6,41 @@ import apiSidebar from './docs/api-reference/rest/sidebar';
 
 /**
  * Top-level categories mirror the shape shared across warehouse-systems
- * documentation sites: Overview, Domain-Driven Design, API Reference,
- * Ecosystem, Architecture Decision Records.
+ * documentation sites: Overview, Operations, Development, Domain-Driven
+ * Design, API Reference, Ecosystem, Architecture Decision Records.
  */
 const sidebars: SidebarsConfig = {
   docsSidebar: [
-    'overview',
+    {
+      type: 'category',
+      label: 'Overview',
+      collapsed: false,
+      link: {type: 'doc', id: 'overview/introduction'},
+      items: [
+        'overview/introduction',
+        'overview/architecture',
+        'overview/quickstart',
+      ],
+    },
+    {
+      type: 'category',
+      label: 'Operations',
+      items: [
+        'operations/configuration',
+        'operations/runbook',
+        'operations/observability',
+        'operations/troubleshooting',
+      ],
+    },
+    {
+      type: 'category',
+      label: 'Development',
+      items: ['development/testing'],
+    },
     'ddd/ubiquitous-language',
     'ddd/aggregates-and-invariants',
+    'ddd/use-cases',
+    'ddd/subdomain-classification',
     {
       type: 'category',
       label: 'DDD artifacts (ddd-crew)',
@@ -37,7 +64,16 @@ const sidebars: SidebarsConfig = {
       link: {type: 'doc', id: 'api-reference/rest/process-path-management-api'},
       items: [...apiSidebar],
     },
-    'mcp/governance-charter',
+    {
+      type: 'category',
+      label: 'MCP',
+      items: ['mcp/tools', 'mcp/governance-charter'],
+    },
+    {
+      type: 'category',
+      label: 'Ecosystem',
+      items: ['ecosystem/integration'],
+    },
     {
       type: 'category',
       label: 'Architecture Decision Records',
