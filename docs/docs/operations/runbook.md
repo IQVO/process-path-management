@@ -196,7 +196,7 @@ OLTP pool 10 connections with `statement_timeout=5s` (`pathmgmt` and
 `15s`, read-only. At the HPA maxima that is 4 × 10 + `mcp` replicas × 10
 against the OLTP database and 2 × 5 + 3 × 5 against the analytical one.
 
-## Reports API (`pathmgmt-reports`) {#reports-api-pathmgmt-reports}
+## Reports API (`pathmgmt-reports`)
 
 These routes are served by `cmd/pathmgmt-reports`
 (`internal/adapters/inbound/http/reports_handler.go`) and are **not** in
