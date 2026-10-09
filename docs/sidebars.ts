@@ -39,6 +39,7 @@ const sidebars: SidebarsConfig = {
     },
     'ddd/ubiquitous-language',
     'ddd/aggregates-and-invariants',
+    'ddd/use-cases',
     {
       type: 'category',
       label: 'DDD artifacts (ddd-crew)',
