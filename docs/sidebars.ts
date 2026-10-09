@@ -32,6 +32,11 @@ const sidebars: SidebarsConfig = {
         'operations/troubleshooting',
       ],
     },
+    {
+      type: 'category',
+      label: 'Development',
+      items: ['development/testing'],
+    },
     'ddd/ubiquitous-language',
     'ddd/aggregates-and-invariants',
     {
