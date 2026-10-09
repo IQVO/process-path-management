@@ -6,12 +6,22 @@ import apiSidebar from './docs/api-reference/rest/sidebar';
 
 /**
  * Top-level categories mirror the shape shared across warehouse-systems
- * documentation sites: Overview, Domain-Driven Design, API Reference,
- * Ecosystem, Architecture Decision Records.
+ * documentation sites: Overview, Operations, Development, Domain-Driven
+ * Design, API Reference, Ecosystem, Architecture Decision Records.
  */
 const sidebars: SidebarsConfig = {
   docsSidebar: [
-    'overview',
+    {
+      type: 'category',
+      label: 'Overview',
+      collapsed: false,
+      link: {type: 'doc', id: 'overview/introduction'},
+      items: [
+        'overview/introduction',
+        'overview/architecture',
+        'overview/quickstart',
+      ],
+    },
     'ddd/ubiquitous-language',
     'ddd/aggregates-and-invariants',
     {
