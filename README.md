@@ -20,6 +20,28 @@ its promise.
 
 📚 **Full documentation site:** https://iqvo.github.io/process-path-management/
 
+## Documentation
+
+The site above is built from `docs/` (Docusaurus). The pages, by task:
+
+| Task | Page |
+| --- | --- |
+| What this context owns, its class and tier | [Introduction](docs/docs/overview/introduction.md) |
+| Hexagonal layout, the four binaries and their ports, data stores | [Architecture](docs/docs/overview/architecture.md) |
+| Build, test, run locally, first calls | [Quickstart](docs/docs/overview/quickstart.md) |
+| Every environment variable per binary, Helm mapping | [Configuration](docs/docs/operations/configuration.md) |
+| Deployments, probes, migrations, topics, outbox, DLQ, sweeper, scaling, `/reports` API, procedures | [Runbook](docs/docs/operations/runbook.md) |
+| Metrics, spans, log lines, dashboard, alerts | [Observability](docs/docs/operations/observability.md) |
+| Symptom → cause → fix, every problem `type` | [Troubleshooting](docs/docs/operations/troubleshooting.md) |
+| Test pyramid, `make` targets, CI jobs | [Testing](docs/docs/development/testing.md) |
+| Upstreams, downstreams, event contract, failure behaviour | [Integration](docs/docs/ecosystem/integration.md), [Context Map](docs/docs/ecosystem/context-map.md) |
+| Use cases: trigger, inputs, invariants, events | [Use cases](docs/docs/ddd/use-cases.md) |
+| Why Generic, neighbour classes | [Subdomain classification](docs/docs/ddd/subdomain-classification.md) |
+| MCP tools and their inputs | [MCP tools](docs/docs/mcp/tools.md), [Governance charter](docs/docs/mcp/governance-charter.md) |
+| Vocabulary, aggregates, the ddd-crew pack | [Ubiquitous language](docs/docs/ddd/ubiquitous-language.md), [Aggregates and invariants](docs/docs/ddd/aggregates-and-invariants.md), [DDD artifacts](docs/docs/ddd/ddd-artifacts.md) |
+| Decisions | [ADR index](docs/docs/adr/about.md) |
+| REST contract | [`apis/openapi.yaml`](apis/openapi.yaml) (rendered under API Reference on the site) |
+
 ## Why this context exists
 
 Before this service existed, a path's canonical identity, its `matchPrefix`
@@ -338,7 +360,7 @@ make check-all   # check + coverage (90% gate) + arch-test + bdd
 | `build` | `go build ./...` |
 | `vet` | `go vet ./...` |
 | `fmt` / `fmt-check` | `gofmt -w .` / fail if `gofmt -l .` is non-empty |
-| `lint` | `golangci-lint run ./...` (CI pins `v2.13.1`) |
+| `lint` | `golangci-lint run ./...` (CI pins `v2.14.0`) |
 | `test` | `go test ./... -race` |
 | `coverage` | coverage profile + the 90% gate (domain + application + analytics; CI's `test` job measures domain + application) |
 | `bdd` | `go test ./... -run TestFeatures -v` (godog/Gherkin) |

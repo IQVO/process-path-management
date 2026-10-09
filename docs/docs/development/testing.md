@@ -95,7 +95,9 @@ scenarios from `mcp_tools.feature`). See
 `efficacy: 99` and `mutant-coverage: 99` (gremlins fails when the measured
 value is at or below the threshold, so any surviving mutant fails the job).
 When the thresholds were set (2026-09-05) the domain produced 11 mutants,
-all in `internal/domain/processpath`, all killed.
+all in `internal/domain/processpath`, all killed. The README records a
+re-measurement on 2026-09-25, after `cptschedule` and `shared` joined the
+domain layer: 63 mutants, all killed.
 
 ## Make targets
 
