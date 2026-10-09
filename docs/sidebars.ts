@@ -64,7 +64,11 @@ const sidebars: SidebarsConfig = {
       link: {type: 'doc', id: 'api-reference/rest/process-path-management-api'},
       items: [...apiSidebar],
     },
-    'mcp/governance-charter',
+    {
+      type: 'category',
+      label: 'MCP',
+      items: ['mcp/tools', 'mcp/governance-charter'],
+    },
     {
       type: 'category',
       label: 'Ecosystem',
