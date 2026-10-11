@@ -5,7 +5,7 @@
 
 GO                 ?= go
 GOLANGCI_LINT      ?= golangci-lint
-GOLANGCI_VERSION   := v2.13.1
+GOLANGCI_VERSION   := v2.14.0
 
 COVERAGE_OUT       := coverage.out
 COVERAGE_PKGS      := ./internal/domain/...,./internal/application/...,./internal/analytics/...

@@ -21,7 +21,11 @@ enforced in code by `internal/architecture/fitness_test.go`'s
 `internal/adapters/outbound/**` ever imports `net/http`. Cross-context
 facts it needs (capability names, site ids, facility-layout location
 roles, product attributes) are carried as **local, declarative values**,
-never looked up live.
+never looked up live. The product attributes in a path's `eligibility`
+are free strings such as `hazmat` or `fragile`; the SKU handling
+classification behind them is owned by `product-master`. This service
+neither consumes `warehouse.product-master.events` nor validates against
+that vocabulary (`internal/domain/shared/eligibility.go`).
 
 ## Map
 
@@ -70,8 +74,8 @@ Source: `internal/adapters/outbound/kafka/publisher.go`,
 `internal/architecture/fitness_test.go`, plus the sibling adapter files
 listed in the table below (read from each sibling's `origin/develop`).
 Omits: the shared Kafka broker, Kong/Nginx edges, and siblings with no
-relationship to this context (inventory-storage, labor-performance,
-warehouse-planning).
+relationship to this context (inventory-storage, product-master,
+labor-performance, warehouse-planning, network-inventory-planning).
 
 Legend: solid edge = live; dashed edge = wired but unused; crossed edge =
 deliberately absent. `U to D` = Upstream to Downstream. Patterns: OHS =
