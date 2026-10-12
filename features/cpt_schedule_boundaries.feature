@@ -57,6 +57,17 @@ Feature: CPT schedule revision, validation and path protection
     And "CPTScheduleChanged" was published 0 times for "sp1"
 
   @bdd
+  Scenario: An empty siteId path segment is no route and stores no schedule
+    Given a process path "PICK" is already defined with matchPrefix "pick" and capabilities "pick"
+    When the client sends PUT "/sites//cpt-schedule" with body:
+      """
+      {"timezone":"America/Sao_Paulo","cutoffs":[{"cptId":"x-1500","localTime":"15:00","daysOfWeek":["Mon"],"shipMethod":"ground","eligiblePathIds":["PICK"]}]}
+      """
+    Then the request is rejected with status 404
+    And the response problem reports type "route-not-found"
+    And "CPTScheduleChanged" was published 0 times for ""
+
+  @bdd
   Scenario: A second PUT replaces the whole schedule and publishes the full new snapshot
     Given a process path "PICK" is already defined with matchPrefix "pick" and capabilities "pick"
     And a process path "PACK" is already defined with matchPrefix "pack" and capabilities "pack"
