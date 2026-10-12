@@ -120,11 +120,19 @@ func NewRouter(s *Server, logger *slog.Logger, serviceName string) http.Handler 
 	// error this API returns, instead of Go's default text/plain
 	// "404 page not found" — the API's own documented 404 content type
 	// is application/problem+json.
-	r.NotFound(func(w http.ResponseWriter, r *http.Request) {
-		writeProblem(w, http.StatusNotFound, problemInfo{"route-not-found", "No route matches this request"}, "the request path does not match any operation in this API", r.URL.Path)
-	})
+	r.NotFound(writeRouteNotFound)
 
 	return r
+}
+
+// writeRouteNotFound answers a request no operation of this API matches with
+// the 404 route-not-found problem. NotFound uses it for unrouted paths, and
+// handleDefineCPTSchedule uses it for an empty siteId segment: chi matches
+// "/sites//cpt-schedule" with siteId == "" (unlike an empty trailing segment),
+// but the contract (SiteIdPathParam minLength 1, defineCPTSchedule 404) says it
+// is no route.
+func writeRouteNotFound(w http.ResponseWriter, r *http.Request) {
+	writeProblem(w, http.StatusNotFound, problemInfo{"route-not-found", "No route matches this request"}, "the request path does not match any operation in this API", r.URL.Path)
 }
 
 func (s *Server) handleHealthz(w http.ResponseWriter, _ *http.Request) {
@@ -229,6 +237,10 @@ func (s *Server) handleDeactivatePath(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleDefineCPTSchedule(w http.ResponseWriter, r *http.Request) {
 	siteId := shared.SiteId(chi.URLParam(r, "siteId"))
+	if siteId == "" {
+		writeRouteNotFound(w, r)
+		return
+	}
 
 	var req defineCPTScheduleRequest
 	if !decodeJSON(w, r, &req) {
