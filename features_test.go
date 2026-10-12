@@ -28,12 +28,6 @@ import (
 	"github.com/claudioed/process-path-management/internal/domain/shared"
 )
 
-// bddClock is a fixed clock, so response bodies are deterministic across
-// scenario runs.
-type bddClock struct{ t time.Time }
-
-func (c bddClock) Now() time.Time { return c.t }
-
 // recordingPublisher records every published domain event, so scenarios
 // can assert not only HTTP responses but also which domain events a
 // change published (the outbound-topic contract in
@@ -82,10 +76,12 @@ func (p *recordingPublisher) countFor(name, id string) int {
 // newServer builds the production router over fresh in-memory adapters and
 // serves it from an httptest server, mirroring the wiring in
 // internal/adapters/inbound/http/server_test.go's newTestServer.
-func newServer() (*httptest.Server, *recordingPublisher) {
+func newServer() (*httptest.Server, *recordingPublisher, *settableClock) {
 	repo := memory.NewProcessPathRepo()
 	scheduleRepo := memory.NewCPTScheduleRepo()
-	clock := bddClock{time.Date(2026, 9, 6, 0, 0, 0, 0, time.UTC)}
+	// A settable clock starting at a fixed instant, so response bodies are
+	// deterministic across scenario runs and scenarios can move time on.
+	clock := newSettableClock(time.Date(2026, 9, 6, 0, 0, 0, 0, time.UTC))
 	pub := &recordingPublisher{}
 
 	s := &inboundhttp.Server{
@@ -98,7 +94,7 @@ func newServer() (*httptest.Server, *recordingPublisher) {
 		GetCPTSchedule:    &usecases.GetCPTSchedule{Repo: scheduleRepo},
 	}
 
-	return httptest.NewServer(inboundhttp.NewRouter(s, nil, "")), pub
+	return httptest.NewServer(inboundhttp.NewRouter(s, nil, "")), pub, clock
 }
 
 // world is the per-scenario state: one server with its own in-memory
@@ -107,18 +103,21 @@ func newServer() (*httptest.Server, *recordingPublisher) {
 type world struct {
 	server *httptest.Server
 	events *recordingPublisher
+	clock  *settableClock
 
 	lastStatus int
 	lastBody   []byte
+	lastHeader http.Header
 }
 
 func (w *world) reset() {
 	if w.server != nil {
 		w.server.Close()
 	}
-	w.server, w.events = newServer()
+	w.server, w.events, w.clock = newServer()
 	w.lastStatus = 0
 	w.lastBody = nil
+	w.lastHeader = nil
 }
 
 func (w *world) close() {
@@ -159,6 +158,7 @@ func (w *world) do(method, path string, body any) error {
 
 	w.lastStatus = resp.StatusCode
 	w.lastBody = raw
+	w.lastHeader = resp.Header
 	return nil
 }
 
@@ -531,6 +531,10 @@ func InitializeScenario(sc *godog.ScenarioContext) {
 	sc.Step(`^a "([^"]*)" event was published for site "([^"]*)"$`, w.eventWasPublishedFor)
 	sc.Step(`^no "([^"]*)" event was published for path "([^"]*)"$`, w.noEventWasPublishedFor)
 	sc.Step(`^exactly one "([^"]*)" event was published for path "([^"]*)"$`, w.exactlyOneEventWasPublishedFor)
+
+	// Wave-2 vocabulary (request/response helpers, event payloads, the
+	// CloudEvents wire form, the analytics projector and its report).
+	registerWave2Steps(sc, w)
 }
 
 // TestFeatures runs the Gherkin acceptance suite under features/.
