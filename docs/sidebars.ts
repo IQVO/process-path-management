@@ -108,6 +108,7 @@ const sidebars: SidebarsConfig = {
         'adr/0027-w3c-trace-context-on-kafka-headers',
         'adr/0028-close-path-cpt-schedule-race-with-row-locks',
         'adr/0029-analytics-binaries-telemetry-and-liveness',
+        'adr/0030-outbox-relay-attempt-cap',
       ],
     },
   ],

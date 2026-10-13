@@ -31,6 +31,7 @@ Source: `cmd/pathmgmt/main.go` unless noted.
 | `EVENT_PUBLISHER` | `log` | no | `kafka` (case-insensitive) enables Kafka publishing; any other value keeps the log publisher. See the delivery-mode table on [Architecture](../overview/architecture.md#delivery-modes). |
 | `KAFKA_BROKERS` | `localhost:9092` | only with `EVENT_PUBLISHER=kafka` | Comma-separated broker list for the integration and analytics writers. Ignored when `EVENT_PUBLISHER` is not `kafka`. |
 | `OUTBOX_RELAY_INTERVAL` | `1s` | no | Idle poll interval of the outbox relay (Go duration). Only used when both `DATABASE_URL` and `EVENT_PUBLISHER=kafka` are set. Malformed, zero or negative values fall back to `1s`. |
+| `OUTBOX_MAX_ATTEMPTS` | `20` | no | Failed sends after which the outbox relay stops claiming a row ([ADR 0030](../adr/0030-outbox-relay-attempt-cap.md)). `0` = unlimited (the pre-cap behaviour); an unparseable or negative value falls back to `20` with a warning. The parked row stays in `outbox_events`; re-arm it with `UPDATE outbox_events SET attempts = 0 WHERE id = ...` ([Runbook](./runbook.md#re-arm-an-outbox-row-that-reached-the-attempt-cap)). Only used with the outbox (Postgres + Kafka). |
 | `HOUSEKEEPING_INTERVAL` | `1h` | no | How often the housekeeping sweeper runs (Go duration). Only used when `DATABASE_URL` is set. `0` (or any zero/negative duration) disables the sweeper. |
 | `IDEMPOTENCY_KEY_TTL` | `24h` | no | Age after which an `idempotency_keys` row is deleted by the sweeper. It is also how long a client retry with the same `Idempotency-Key` is still replayed. `0` keeps the rows forever. |
 | `OUTBOX_RETENTION` | `168h` (7 days) | no | Age after which a **published** `outbox_events` row is deleted. Unpublished rows are never deleted. `0` keeps published rows forever. |
@@ -132,6 +133,7 @@ its checksum annotates the api pod so a change rolls it.
 | `config.logLevel` (`info`) | `LOG_LEVEL` | all four |
 | `config.corsAllowedOrigins` | `CORS_ALLOWED_ORIGINS` | pathmgmt |
 | `config.eventPublisher` (`log`) | `EVENT_PUBLISHER` | pathmgmt |
+| `config.outboxMaxAttempts` (`"20"`) | `OUTBOX_MAX_ATTEMPTS` | pathmgmt |
 | `config.housekeeping.interval` / `.idempotencyKeyTtl` / `.outboxRetention` | `HOUSEKEEPING_INTERVAL` / `IDEMPOTENCY_KEY_TTL` / `OUTBOX_RETENTION` | pathmgmt |
 | `environment` (`local`) | `ENVIRONMENT` | all four (always set, independent of `otel.enabled`) |
 | `image.tag` or chart `appVersion` | `SERVICE_VERSION` | all four (always set) |

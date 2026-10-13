@@ -62,6 +62,9 @@ spec:
               value: {{ .Values.config.corsAllowedOrigins | quote }}
             - name: EVENT_PUBLISHER
               value: {{ .Values.config.eventPublisher | quote }}
+            # ADR 0030: outbox relay attempt cap ("0" = unlimited).
+            - name: OUTBOX_MAX_ATTEMPTS
+              value: {{ .Values.config.outboxMaxAttempts | quote }}
             {{- if .Values.otel.enabled }}
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
               value: {{ .Values.otel.endpoint | quote }}

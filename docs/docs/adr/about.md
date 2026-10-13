@@ -60,7 +60,7 @@ Typos, broken links and formatting are of course fair game.
 | --- | --- | --- |
 | [0001](./0001-process-path-management-bounded-context.md) | Process Path Management as a new Generic Subdomain bounded context | Accepted |
 | [0002](./0002-yaml-to-kafka-cutover.md) | Cutting the fleet over from the static YAML catalogue to this service's events | Accepted |
-| [0003](./0003-transactional-outbox.md) | Transactional outbox for the process-path Published Language | Accepted (stored message format superseded by 0016) |
+| [0003](./0003-transactional-outbox.md) | Transactional outbox for the process-path Published Language | Accepted (stored message format superseded by 0016; per-path ordering amended by 0030) |
 | [0004](./0004-rest-auth-adoption.md) | Adopting the fleet REST identity standard | Superseded by 0005 |
 | [0005](./0005-remove-rest-auth.md) | Removing the REST auth layer | Accepted |
 | [0006](./0006-mcp-server-second-inbound-adapter.md) | MCP server as a second inbound adapter | Accepted |
@@ -87,6 +87,7 @@ Typos, broken links and formatting are of course fair game.
 | [0027](./0027-w3c-trace-context-on-kafka-headers.md) | Propagate W3C trace context in Kafka headers | Accepted |
 | [0028](./0028-close-path-cpt-schedule-race-with-row-locks.md) | Close the path / CPT-schedule race with row locks | Accepted |
 | [0029](./0029-analytics-binaries-telemetry-and-liveness.md) | Analytics binaries get telemetry and exit when the consumer loop dies | Accepted |
+| [0030](./0030-outbox-relay-attempt-cap.md) | Outbox relay attempt cap | Accepted |
 
 Each of these reconstructs a decision that is actually visible in this
 repository's history or code — none is a generic placeholder.

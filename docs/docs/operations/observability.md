@@ -102,9 +102,10 @@ any record logged with a context that carries a valid span.
 | `domain event published` | INFO | `event_name`, `payload` | `pathmgmt` with `EVENT_PUBLISHER=log` |
 | `telemetry configured` | INFO | `service_name`, `service_version`, `environment`, `otlp_endpoint` | `pathmgmt`, projector, reports (mcp logs `service_name`, `otlp_endpoint`) |
 | `http server listening` / `mcp server listening (Streamable HTTP)` / `reports server listening` / `projector admin server listening` | INFO | `addr` | each binary |
-| `kafka event publishing enabled (transactional outbox)` or `(direct, no outbox: DATABASE_URL not set)` | INFO | `brokers`, `topic`, `analytics_topic` | `pathmgmt` |
+| `kafka event publishing enabled (transactional outbox)` or `(direct, no outbox: DATABASE_URL not set)` | INFO | `brokers`, `topic`, `analytics_topic` (outbox mode also `outbox_max_attempts`) | `pathmgmt` |
 | `outbox relay running` | INFO | `topic` | `pathmgmt` |
 | `outbox relay pass failed` | ERROR | `error` | `pathmgmt` |
+| `outbox relay: row reached the attempt cap and is no longer claimed` | ERROR | `outbox_id`, `topic`, `event_type`, `key`, `attempts`, `max_attempts`, `error`, `rearm` | `pathmgmt`, once per row that reaches `OUTBOX_MAX_ATTEMPTS` ([ADR 0030](../adr/0030-outbox-relay-attempt-cap.md)) |
 | `outbox relay published events` | DEBUG | `count` | `pathmgmt` |
 | `outbox relay did not stop before the shutdown deadline` | WARN | — | `pathmgmt` |
 | `outbox lag gauge registration failed` | WARN | `error` | `pathmgmt` |
@@ -148,7 +149,8 @@ These are not provisioned anywhere today.
 
 | Alert | Expression (PromQL / LogQL) | Why |
 | --- | --- | --- |
-| Outbox stuck | `max(process_path_management_outbox_lag_seconds) > 60` for 5 m | The relay is failing or not running; consumers are not seeing changes. Normal value is under ~1 s. |
+| Outbox stuck | `max(process_path_management_outbox_lag_seconds) > 60` for 5 m | The relay is failing or not running, or a row is parked at the attempt cap; consumers are not seeing changes. Normal value is under ~1 s. |
+| Outbox row parked | LogQL: `count_over_time({app="process-path-management"} \|= "reached the attempt cap" [15m]) > 0` | A row failed `OUTBOX_MAX_ATTEMPTS` times and is no longer published; re-arm it after fixing the cause ([Runbook](./runbook.md#re-arm-an-outbox-row-that-reached-the-attempt-cap)). |
 | REST 5xx | 5xx ratio of `http_server_request_duration_seconds_count{service_name="process-path-management"}` > 5 % for 10 m | Database unreachable or statement timeouts (`statement_timeout=5s`). |
 | Path definitions rejected | `rate(process_path_management_paths_defined_total{outcome="rejected"}[15m]) > rate(...{outcome="accepted"}[15m])` | A client is sending malformed definitions. |
 | Analytics consumer dead | LogQL: `count_over_time({app="process-path-management"} \|= "analytics consumer loop exited" [5m]) > 0`, or restarts of the `analytics-projector` pods | Since gap fix D13 the projector exits 1 when its consumer loop stops, so a broken broker or analytics database shows up as restarts (and eventually CrashLoopBackOff). |
