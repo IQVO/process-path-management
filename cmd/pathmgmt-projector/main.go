@@ -7,9 +7,11 @@
 // database and serves no reports; the reader (cmd/pathmgmt-reports) is a
 // separate deployable (ADR 0007, mirroring facility-layout's ADR-0010).
 //
-// Consistent with the rest of the analytics pipeline, this process is
-// trace-free: process-path-management has no observability/OTel package
-// for it.
+// Gap fix D21: like cmd/pathmgmt and cmd/mcp, this process calls
+// telemetry.Setup (OTLP traces + metrics, Go runtime metrics, the W3C
+// propagator) and logs through the trace-aware slog handler, so the
+// OTEL_* / SERVICE_VERSION / ENVIRONMENT values the chart injects are
+// used. The analytics consumer itself still opens no spans.
 //
 // ADR 0012 hardens this composition root's graceful shutdown
 // (mirroring order-management's ADR-0025 §graceful shutdown): a new
@@ -41,7 +43,16 @@ import (
 	"github.com/claudioed/process-path-management/internal/adapters/outbound/bootretry"
 	outboundkafka "github.com/claudioed/process-path-management/internal/adapters/outbound/kafka"
 	"github.com/claudioed/process-path-management/internal/adapters/outbound/postgres"
+	"github.com/claudioed/process-path-management/internal/adapters/outbound/telemetry"
 )
+
+// defaultServiceName is the OTel service.name when OTEL_SERVICE_NAME is
+// unset; the chart sets the same value.
+const defaultServiceName = "pathmgmt-projector"
+
+// telemetryFlushTimeout bounds the final export on shutdown, matching
+// cmd/pathmgmt and cmd/mcp.
+const telemetryFlushTimeout = 5 * time.Second
 
 // errMissingAnalyticsURL is returned when ANALYTICS_DATABASE_URL is
 // unset: the projector is the writer of the analytical database and
@@ -60,6 +71,18 @@ func run() error {
 	slog.SetDefault(logger)
 
 	rootCtx := context.Background()
+
+	_, shutdownTelemetry, err := setupTelemetry(rootCtx, logger)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		flushCtx, cancel := context.WithTimeout(context.Background(), telemetryFlushTimeout)
+		defer cancel()
+		if err := shutdownTelemetry(flushCtx); err != nil {
+			logger.Warn("telemetry flush failed on shutdown", "error", err)
+		}
+	}()
 
 	adminAddr := getenv("ADMIN_ADDR", ":8091")
 	analyticsURL := os.Getenv("ANALYTICS_DATABASE_URL")
@@ -259,9 +282,27 @@ func (g *readinessGate) handle(w http.ResponseWriter, _ *http.Request) {
 	_, _ = w.Write([]byte(`{"status":"ready"}`))
 }
 
-// newLogger builds a JSON slog logger at the given level. The analytics
-// processes log structured JSON but do not wire OTel, so this is a plain
-// handler.
+// setupTelemetry configures OTel exactly like cmd/pathmgmt (gap fix D21)
+// and logs the "telemetry configured" line. Export is non-blocking: an
+// unreachable Collector only drops telemetry. It returns the resolved
+// service name and the flush function the caller defers.
+func setupTelemetry(ctx context.Context, logger *slog.Logger) (string, func(context.Context) error, error) {
+	serviceName := getenv("OTEL_SERVICE_NAME", defaultServiceName)
+	otlpEndpoint := getenv("OTEL_EXPORTER_OTLP_ENDPOINT", telemetry.DefaultOTLPEndpoint)
+	serviceVersion := getenv("SERVICE_VERSION", "dev")
+	shutdown, err := telemetry.Setup(ctx, serviceName, serviceVersion, otlpEndpoint)
+	if err != nil {
+		return "", nil, err
+	}
+	logger.Info("telemetry configured",
+		"service_name", serviceName,
+		"service_version", serviceVersion,
+		"environment", telemetry.Environment(),
+		"otlp_endpoint", otlpEndpoint,
+	)
+	return serviceName, shutdown, nil
+}
+
 // newAdminMux builds the projector's admin endpoints: /healthz is a pure
 // liveness signal; /readyz mirrors the readiness gate so a Kubernetes
 // readinessProbe observes the shutdown flip (ADR-0012 §graceful shutdown).
@@ -275,6 +316,10 @@ func newAdminMux(readiness *readinessGate) *http.ServeMux {
 	return mux
 }
 
+// newLogger builds the process-wide JSON slog logger, wrapped so any
+// *Context log call made while a span is active carries trace_id/span_id
+// (same convention as cmd/pathmgmt). LOG_LEVEL maps
+// debug|info|warn|warning|error (case-insensitive); anything else is info.
 func newLogger(level string) *slog.Logger {
 	var lvl slog.Level
 	switch strings.ToLower(level) {
@@ -287,7 +332,9 @@ func newLogger(level string) *slog.Logger {
 	default:
 		lvl = slog.LevelInfo
 	}
-	return slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: lvl}))
+	return slog.New(telemetry.NewTraceHandler(
+		slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: lvl}),
+	))
 }
 
 func getenv(key, fallback string) string {

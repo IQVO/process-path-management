@@ -130,8 +130,9 @@ func writeReportInternal(w http.ResponseWriter, r *http.Request, err error) {
 }
 
 // NewReportsRouter builds the chi router for the pathmgmt-reports reader
-// service. A nil logger falls back to slog.Default(). The router is
-// trace-free, consistent with the rest of the analytics pipeline.
+// service. A nil logger falls back to slog.Default(). The router has no
+// OTel middleware: the reports binary sets up the providers (ADR 0029) but
+// opens no request spans.
 func NewReportsRouter(h *ReportsHandlers, logger *slog.Logger) *chi.Mux {
 	if logger == nil {
 		logger = slog.Default()

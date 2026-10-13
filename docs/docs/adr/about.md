@@ -64,7 +64,7 @@ Typos, broken links and formatting are of course fair game.
 | [0004](./0004-rest-auth-adoption.md) | Adopting the fleet REST identity standard | Superseded by 0005 |
 | [0005](./0005-remove-rest-auth.md) | Removing the REST auth layer | Accepted |
 | [0006](./0006-mcp-server-second-inbound-adapter.md) | MCP server as a second inbound adapter | Accepted |
-| [0007](./0007-analytical-data-product.md) | Analytical data product (report) via a separate analytics topic | Accepted (§1 analytics envelope superseded by 0016) |
+| [0007](./0007-analytical-data-product.md) | Analytical data product (report) via a separate analytics topic | Accepted (§1 analytics envelope superseded by 0016; trace-free note amended by 0029) |
 | [0008](./0008-fclm-aligned-process-path-families.md) | Seven new process-path families aligned to real FC labor-tracking vocabulary | Accepted |
 | [0009](./0009-destination-location-role-on-process-path.md) | Optional destination LocationRole on a ProcessPath | Accepted |
 | [0010](./0010-fulfillment-capability-contract.md) | Process paths publish a fulfillment capability contract (cycle time, eligibility, CPT schedule) | Accepted |
@@ -86,6 +86,7 @@ Typos, broken links and formatting are of course fair game.
 | [0026](./0026-reject-deactivation-of-paths-in-cpt-schedules.md) | Refuse to deactivate a process path that a CPT schedule still lists | Accepted |
 | [0027](./0027-w3c-trace-context-on-kafka-headers.md) | Propagate W3C trace context in Kafka headers | Accepted |
 | [0028](./0028-close-path-cpt-schedule-race-with-row-locks.md) | Close the path / CPT-schedule race with row locks | Accepted |
+| [0029](./0029-analytics-binaries-telemetry-and-liveness.md) | Analytics binaries get telemetry and exit when the consumer loop dies | Accepted |
 
 Each of these reconstructs a decision that is actually visible in this
 repository's history or code — none is a generic placeholder.

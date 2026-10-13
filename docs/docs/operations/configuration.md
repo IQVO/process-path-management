@@ -34,7 +34,7 @@ Source: `cmd/pathmgmt/main.go` unless noted.
 | `HOUSEKEEPING_INTERVAL` | `1h` | no | How often the housekeeping sweeper runs (Go duration). Only used when `DATABASE_URL` is set. `0` (or any zero/negative duration) disables the sweeper. |
 | `IDEMPOTENCY_KEY_TTL` | `24h` | no | Age after which an `idempotency_keys` row is deleted by the sweeper. It is also how long a client retry with the same `Idempotency-Key` is still replayed. `0` keeps the rows forever. |
 | `OUTBOX_RETENTION` | `168h` (7 days) | no | Age after which a **published** `outbox_events` row is deleted. Unpublished rows are never deleted. `0` keeps published rows forever. |
-| `LOG_LEVEL` | `info` | no | `debug`, `warn`, `error`; anything else means `info`. JSON logs to stdout. |
+| `LOG_LEVEL` | `info` | no | `debug`, `warn` (or `warning`), `error`; anything else means `info`. JSON logs to stdout. |
 | `OTEL_SERVICE_NAME` | `process-path-management` | no | OTel `service.name`, also the otelchi span/metric server name (`DefaultServiceName` in `internal/adapters/inbound/http/server.go`). |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `localhost:4317` | no | OTLP/gRPC endpoint (insecure) for traces and metrics. Export is non-blocking: an unreachable Collector only drops telemetry. |
 | `SERVICE_VERSION` | `dev` | no | OTel `service.version`. A build-time `-ldflags "-X main.version=..."` value takes precedence. |
@@ -83,10 +83,15 @@ Source: `cmd/pathmgmt-projector/main.go`.
 | `KAFKA_BROKERS` | `localhost:9092` | no | Comma-separated broker list for the `warehouse.process-path-management.analytics` reader and the `.dlq` writer. |
 | `ADMIN_ADDR` | `:8091` | no | Listen address of the admin server (`/healthz`, `/readyz`). |
 | `LOG_LEVEL` | `info` | no | `debug`, `warn`/`warning`, `error`; anything else means `info`. |
+| `OTEL_SERVICE_NAME` | `pathmgmt-projector` | no | OTel `service.name`. |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | `localhost:4317` | no | As for `pathmgmt`. |
+| `SERVICE_VERSION` | `dev` | no | OTel `service.version`. |
+| `ENVIRONMENT` | `local` | no | As for `pathmgmt`. |
 
-The projector does not set up OpenTelemetry. The chart still injects
-`OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_SERVICE_NAME`, `SERVICE_VERSION` and
-`ENVIRONMENT` into its pod when `otel.enabled=true`; the binary ignores them.
+Since gap fix D21 ([ADR 0029](../adr/0029-analytics-binaries-telemetry-and-liveness.md))
+the projector calls `telemetry.Setup` like `pathmgmt`. It exits 1 when its
+analytics consumer loop stops on its own (gap fix D13), so Kubernetes
+restarts it instead of leaving a Ready pod that projects nothing.
 
 ## `pathmgmt-reports` (analytics reader)
 
@@ -97,9 +102,13 @@ Source: `cmd/pathmgmt-reports/main.go`.
 | `ANALYTICS_DATABASE_URL` | none | **yes** | DSN of the analytical database. Opened read-only (`default_transaction_read_only=on`, 5 connections, `statement_timeout=15s`). Exits with `ANALYTICS_DATABASE_URL is required` when unset. In the chart this is fed from the secret key `ANALYTICS_READER_DATABASE_URL`. |
 | `HTTP_ADDR` | `:8092` | no | Listen address of `/reports/catalogue-growth`, `/reports/catalogue-growth/freshness` and `/healthz`. |
 | `LOG_LEVEL` | `info` | no | As for the projector. |
+| `OTEL_SERVICE_NAME` | `pathmgmt-reports` | no | OTel `service.name`. |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | `localhost:4317` | no | As for `pathmgmt`. |
+| `SERVICE_VERSION` | `dev` | no | OTel `service.version`. |
+| `ENVIRONMENT` | `local` | no | As for `pathmgmt`. |
 
-Like the projector, the reports binary has no OTel wiring, so the `OTEL_*`,
-`SERVICE_VERSION` and `ENVIRONMENT` values the chart injects are unused.
+Like the projector, the reports binary calls `telemetry.Setup` (gap fix
+D21). Its routes are specified in `apis/openapi-reports.yaml`.
 
 ## Boot-time retry
 
@@ -120,13 +129,13 @@ its checksum annotates the api pod so a change rolls it.
 | --- | --- | --- |
 | `config.httpAddr` (`:8080`) | `HTTP_ADDR` | pathmgmt |
 | `config.migrationsPath` (`migrations`) | `MIGRATIONS_PATH` | pathmgmt, mcp |
-| `config.logLevel` (`info`) | `LOG_LEVEL` | pathmgmt, mcp |
+| `config.logLevel` (`info`) | `LOG_LEVEL` | all four |
 | `config.corsAllowedOrigins` | `CORS_ALLOWED_ORIGINS` | pathmgmt |
 | `config.eventPublisher` (`log`) | `EVENT_PUBLISHER` | pathmgmt |
 | `config.housekeeping.interval` / `.idempotencyKeyTtl` / `.outboxRetention` | `HOUSEKEEPING_INTERVAL` / `IDEMPOTENCY_KEY_TTL` / `OUTBOX_RETENTION` | pathmgmt |
-| `environment` (`local`) | `ENVIRONMENT` | all four (only pathmgmt and mcp use it) |
-| `image.tag` or chart `appVersion` | `SERVICE_VERSION` | all four (only pathmgmt and mcp use it) |
-| `otel.endpoint`, `otel.serviceName` (when `otel.enabled`) | `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_SERVICE_NAME` | pathmgmt; mcp gets the fixed name `process-path-management-mcp` |
+| `environment` (`local`) | `ENVIRONMENT` | all four (always set, independent of `otel.enabled`) |
+| `image.tag` or chart `appVersion` | `SERVICE_VERSION` | all four (always set) |
+| `otel.endpoint`, `otel.serviceName` (when `otel.enabled`) | `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_SERVICE_NAME` | all four; mcp, projector and reports get the fixed names `process-path-management-mcp`, `pathmgmt-projector`, `pathmgmt-reports` |
 | secret `database.existingSecretKey` (`DATABASE_URL`) | `DATABASE_URL` | pathmgmt, mcp (only when `database.url` or `database.existingSecret` is set) |
 | secret `database.migrationsExistingSecretKey` (`MIGRATIONS_DATABASE_URL`, `optional: true`) | `MIGRATIONS_DATABASE_URL` | pathmgmt, mcp |
 | `kafka.brokers` (`kafka:9092`) | `KAFKA_BROKERS` | pathmgmt (only when `kafka.enabled`), projector (always) |

@@ -13,17 +13,20 @@ description: Every OpenTelemetry metric and span process-path-management emits, 
 | --- | --- | --- | --- |
 | `pathmgmt` | yes (otelchi HTTP server spans) | yes | JSON to stdout, `trace_id`/`span_id` on request-scoped lines |
 | `mcp` | yes (one span per tool call) | Go runtime only | JSON to stdout, `trace_id`/`span_id` inside tool calls |
-| `pathmgmt-projector` | no | no | JSON to stdout |
-| `pathmgmt-reports` | no | no | JSON to stdout |
+| `pathmgmt-projector` | no spans (the consumer is not instrumented) | Go runtime only | JSON to stdout, through the trace-aware handler |
+| `pathmgmt-reports` | no spans (no HTTP middleware) | Go runtime only | JSON to stdout, through the trace-aware handler |
 
-The projector and reports binaries never call `telemetry.Setup`, by design
-([ADR 0007](../adr/0007-analytical-data-product.md): the analytics pipeline is
-trace-free). Their only signals are logs, the probes and the freshness
-endpoint.
+Since gap fix D21 ([ADR 0029](../adr/0029-analytics-binaries-telemetry-and-liveness.md))
+the projector and reports binaries call `telemetry.Setup` like `pathmgmt`
+and `mcp`: the same OTLP exporters, the W3C propagator, the
+`deployment.environment.name` resource and Go runtime metrics, under the
+service names `pathmgmt-projector` and `pathmgmt-reports`. Their consumer
+and router still open no spans, so their main signals are logs, the probes
+and the freshness endpoint. Each logs `telemetry configured` at boot.
 
 ## Export
 
-There is no `/metrics` endpoint. `pathmgmt` and `mcp` push traces and metrics
+There is no `/metrics` endpoint. All four binaries push traces and metrics
 over **OTLP/gRPC, insecure**, to `OTEL_EXPORTER_OTLP_ENDPOINT` (default
 `localhost:4317`; the chart sets
 `otel-collector.observability.svc.cluster.local:4317`)
@@ -46,7 +49,7 @@ errors in the log and nothing else.
 | `process_path_management.paths.defined` | Int64Counter | `{path}` | `outcome` = `accepted` \| `rejected` | `pathmgmt`, from the `DefinePath` use case | `internal/adapters/outbound/telemetry/metrics.go` |
 | `process_path_management.outbox.lag_seconds` | Float64ObservableGauge | `s` | none | `pathmgmt`, only when `DATABASE_URL` is set | `internal/adapters/outbound/postgres/outbox_metrics.go` |
 | `http.server.request.duration` | Float64Histogram | `s` | otelchi semantic-convention attributes (method, route, status code) | `pathmgmt` REST router only | `otelchimetric.NewServerRequestDuration` in `internal/adapters/inbound/http/server.go` |
-| Go runtime metrics (`go.goroutine.count`, `go.memory.used`, ...) | various | various | — | `pathmgmt`, `mcp` | `runtime.Start` in `telemetry.go` |
+| Go runtime metrics (`go.goroutine.count`, `go.memory.used`, ...) | various | various | — | all four binaries | `runtime.Start` in `telemetry.go` |
 
 `process_path_management.paths.defined` counts attempts to create a path.
 `rejected` covers aggregate invariant failures and a duplicate `pathId`
@@ -69,7 +72,7 @@ In Prometheus (through the Collector) these appear as
 `http_server_request_duration_seconds_*`.
 
 The MCP binary has no HTTP metrics middleware, and the reports router has
-no OTel at all, so `http.server.request.duration` covers only the REST API.
+no OTel middleware, so `http.server.request.duration` covers only the REST API.
 
 ## Traces
 
@@ -88,16 +91,16 @@ itself starts no span.
 
 ## Logs
 
-All four binaries log JSON (`log/slog`) to stdout at `LOG_LEVEL`. In
-`pathmgmt` and `mcp` the handler is wrapped by `telemetry.TraceHandler`,
-which adds `trace_id` and `span_id` to any record logged with a context that
-carries a valid span.
+All four binaries log JSON (`log/slog`) to stdout at `LOG_LEVEL`
+(`debug`, `info`, `warn` or `warning`, `error`). In every binary the handler
+is wrapped by `telemetry.TraceHandler`, which adds `trace_id` and `span_id` to
+any record logged with a context that carries a valid span.
 
 | Message | Level | Fields | Emitted by |
 | --- | --- | --- | --- |
 | `http request` | INFO | `method`, `route` (pattern; raw path with CR/LF stripped on 404), `status`, `bytes`, `duration_ms`, `request_id` | `pathmgmt`, `pathmgmt-reports` (`internal/adapters/inbound/http/logging.go`) |
 | `domain event published` | INFO | `event_name`, `payload` | `pathmgmt` with `EVENT_PUBLISHER=log` |
-| `telemetry configured` | INFO | `service_name`, `service_version`, `environment`, `otlp_endpoint` | `pathmgmt` (mcp logs `service_name`, `otlp_endpoint`) |
+| `telemetry configured` | INFO | `service_name`, `service_version`, `environment`, `otlp_endpoint` | `pathmgmt`, projector, reports (mcp logs `service_name`, `otlp_endpoint`) |
 | `http server listening` / `mcp server listening (Streamable HTTP)` / `reports server listening` / `projector admin server listening` | INFO | `addr` | each binary |
 | `kafka event publishing enabled (transactional outbox)` or `(direct, no outbox: DATABASE_URL not set)` | INFO | `brokers`, `topic`, `analytics_topic` | `pathmgmt` |
 | `outbox relay running` | INFO | `topic` | `pathmgmt` |
@@ -105,6 +108,7 @@ carries a valid span.
 | `outbox relay published events` | DEBUG | `count` | `pathmgmt` |
 | `outbox relay did not stop before the shutdown deadline` | WARN | — | `pathmgmt` |
 | `outbox lag gauge registration failed` | WARN | `error` | `pathmgmt` |
+| `housekeeping sweeper configured` | INFO | `interval`, `enabled`, `idempotency_key_ttl`, `outbox_retention` (a `0s` value means that part is disabled) | `pathmgmt` |
 | `housekeeping sweeper running` | INFO | — | `pathmgmt` |
 | `housekeeping sweep` | INFO | `idempotency_keys_deleted`, `outbox_events_deleted` (only when something was deleted) | `pathmgmt` |
 | `housekeeping sweep failed` | ERROR | `error`, `idempotency_keys_deleted`, `outbox_events_deleted` | `pathmgmt` |
@@ -113,7 +117,7 @@ carries a valid span.
 | `analytics consumer starting` | INFO | `topic`, `group`, `brokers` | projector |
 | `analytics: rejecting non-CloudEvents kafka message` | WARN | `topic`, `partition`, `offset`, `error` | projector |
 | `analytics: sending message to dead-letter topic` | ERROR | `dlq_topic`, `ce_id`, `ce_type`, `error` | projector |
-| `analytics consumer stopped` | ERROR | `error` | projector (the consumer loop has exited; see [Troubleshooting](./troubleshooting.md)) |
+| `analytics consumer loop exited; stopping the projector so it is restarted` | ERROR | `error` (wraps `analytics consumer loop exited`) | projector: the loop returned on its own; readiness flips to not-ready and the process exits 1 (gap fix D13, see [Troubleshooting](./troubleshooting.md)) |
 | `analytics consumer did not stop before the shutdown deadline` | WARN | — | projector |
 | `service exited with error` / `mcp server exited with error` / `pathmgmt-projector exited with error` / `pathmgmt-reports exited with error` | ERROR | `error` | each binary, last line before exit 1 |
 
@@ -147,7 +151,7 @@ These are not provisioned anywhere today.
 | Outbox stuck | `max(process_path_management_outbox_lag_seconds) > 60` for 5 m | The relay is failing or not running; consumers are not seeing changes. Normal value is under ~1 s. |
 | REST 5xx | 5xx ratio of `http_server_request_duration_seconds_count{service_name="process-path-management"}` > 5 % for 10 m | Database unreachable or statement timeouts (`statement_timeout=5s`). |
 | Path definitions rejected | `rate(process_path_management_paths_defined_total{outcome="rejected"}[15m]) > rate(...{outcome="accepted"}[15m])` | A client is sending malformed definitions. |
-| Analytics consumer dead | LogQL: `count_over_time({app="process-path-management"} \|= "analytics consumer stopped" [5m]) > 0` | The projector process stays up and ready after its consumer loop exits. |
+| Analytics consumer dead | LogQL: `count_over_time({app="process-path-management"} \|= "analytics consumer loop exited" [5m]) > 0`, or restarts of the `analytics-projector` pods | Since gap fix D13 the projector exits 1 when its consumer loop stops, so a broken broker or analytics database shows up as restarts (and eventually CrashLoopBackOff). |
 | DLQ writes | LogQL on `analytics: sending message to dead-letter topic`, or a broker-side message-rate alert on `warehouse.process-path-management.analytics.dlq` | Poison messages in the analytics stream. |
 | Boot retries | LogQL on `"msg":"retrying"` | Postgres slow to accept connections at pod start (Istio sidecar warm-up or a real outage). |
 
