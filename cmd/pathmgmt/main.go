@@ -117,19 +117,11 @@ func run() error {
 	// Housekeeping sweeper (ADR 0018): bounds the two append-only tables
 	// (idempotency_keys, published outbox_events) so they do not grow
 	// without limit. Runs alongside the HTTP server in the same process
-	// and stops with the same signal context; a 0/negative TTL disables
-	// the corresponding half. Safe across replicas (each DELETE targets
-	// explicitly-eligible rows only). Env vars are read HERE, in the
-	// composition root, never in the adapter. Nil without Postgres
+	// and stops with the same signal context. Nil without Postgres
 	// (in-memory dev mode has neither table).
 	var sweeper *postgres.Sweeper
 	if persistence.pool != nil {
-		sweeper = postgres.NewSweeper(persistence.pool,
-			postgres.WithSweepInterval(durationEnv("HOUSEKEEPING_INTERVAL", postgres.DefaultSweepInterval)),
-			postgres.WithIdempotencyKeyTTL(durationEnv("IDEMPOTENCY_KEY_TTL", postgres.DefaultIdempotencyKeyTTL)),
-			postgres.WithOutboxRetention(durationEnv("OUTBOX_RETENTION", postgres.DefaultOutboxRetention)),
-			postgres.WithSweeperLogger(logger),
-		)
+		sweeper = buildSweeper(persistence.pool, logger)
 	}
 
 	pathMetrics, err := telemetry.NewPathMetrics()
@@ -465,6 +457,9 @@ func buildEventPublisher(p *persistence, logger *slog.Logger) (ports.EventPublis
 // durationEnv parses key as a time.Duration, falling back on absence or a
 // malformed value (logged by the caller's startup line rather than
 // failing the boot: the relay interval is a tuning knob, not a contract).
+// A zero or negative value also falls back: for OUTBOX_RELAY_INTERVAL it
+// would be a busy loop, not a meaningful setting. The housekeeping knobs,
+// where 0 means "disabled", use housekeepingDurationEnv instead.
 func durationEnv(key string, fallback time.Duration) time.Duration {
 	v := os.Getenv(key)
 	if v == "" {
@@ -475,6 +470,45 @@ func durationEnv(key string, fallback time.Duration) time.Duration {
 		return fallback
 	}
 	return d
+}
+
+// housekeepingDurationEnv parses one of the housekeeping sweeper's knobs
+// (ADR 0018). Unlike durationEnv, a zero or negative duration is returned
+// as is, because the sweeper reads it as "disabled": HOUSEKEEPING_INTERVAL=0
+// turns the whole job off, IDEMPOTENCY_KEY_TTL=0 / OUTBOX_RETENTION=0 turn
+// off that half (gap fix D15: the ADR, the chart and the sweeper's own doc
+// comment always said so, but durationEnv silently replaced 0 with the
+// default). Unset or unparseable values fall back.
+func housekeepingDurationEnv(key string, fallback time.Duration) time.Duration {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		return fallback
+	}
+	return d
+}
+
+// buildSweeper wires the housekeeping sweeper (ADR 0018) from the
+// environment. Env vars are read HERE, in the composition root, never in
+// the adapter. A 0/negative HOUSEKEEPING_INTERVAL disables the job; a
+// 0/negative TTL disables the corresponding half. Safe across replicas
+// (each DELETE targets explicitly-eligible rows only).
+func buildSweeper(pool *pgxpool.Pool, logger *slog.Logger) *postgres.Sweeper {
+	interval := housekeepingDurationEnv("HOUSEKEEPING_INTERVAL", postgres.DefaultSweepInterval)
+	idempotencyTTL := housekeepingDurationEnv("IDEMPOTENCY_KEY_TTL", postgres.DefaultIdempotencyKeyTTL)
+	outboxRetention := housekeepingDurationEnv("OUTBOX_RETENTION", postgres.DefaultOutboxRetention)
+	logger.Info("housekeeping sweeper configured",
+		"interval", interval.String(), "enabled", interval > 0,
+		"idempotency_key_ttl", idempotencyTTL.String(), "outbox_retention", outboxRetention.String())
+	return postgres.NewSweeper(pool,
+		postgres.WithSweepInterval(interval),
+		postgres.WithIdempotencyKeyTTL(idempotencyTTL),
+		postgres.WithOutboxRetention(outboxRetention),
+		postgres.WithSweeperLogger(logger),
+	)
 }
 
 func getenv(key, fallback string) string {

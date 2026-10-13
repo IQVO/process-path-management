@@ -31,9 +31,9 @@ Source: `cmd/pathmgmt/main.go` unless noted.
 | `EVENT_PUBLISHER` | `log` | no | `kafka` (case-insensitive) enables Kafka publishing; any other value keeps the log publisher. See the delivery-mode table on [Architecture](../overview/architecture.md#delivery-modes). |
 | `KAFKA_BROKERS` | `localhost:9092` | only with `EVENT_PUBLISHER=kafka` | Comma-separated broker list for the integration and analytics writers. Ignored when `EVENT_PUBLISHER` is not `kafka`. |
 | `OUTBOX_RELAY_INTERVAL` | `1s` | no | Idle poll interval of the outbox relay (Go duration). Only used when both `DATABASE_URL` and `EVENT_PUBLISHER=kafka` are set. Malformed, zero or negative values fall back to `1s`. |
-| `HOUSEKEEPING_INTERVAL` | `1h` | no | How often the housekeeping sweeper runs (Go duration). Only used when `DATABASE_URL` is set. |
-| `IDEMPOTENCY_KEY_TTL` | `24h` | no | Age after which an `idempotency_keys` row is deleted by the sweeper. It is also how long a client retry with the same `Idempotency-Key` is still replayed. |
-| `OUTBOX_RETENTION` | `168h` (7 days) | no | Age after which a **published** `outbox_events` row is deleted. Unpublished rows are never deleted. |
+| `HOUSEKEEPING_INTERVAL` | `1h` | no | How often the housekeeping sweeper runs (Go duration). Only used when `DATABASE_URL` is set. `0` (or any zero/negative duration) disables the sweeper. |
+| `IDEMPOTENCY_KEY_TTL` | `24h` | no | Age after which an `idempotency_keys` row is deleted by the sweeper. It is also how long a client retry with the same `Idempotency-Key` is still replayed. `0` keeps the rows forever. |
+| `OUTBOX_RETENTION` | `168h` (7 days) | no | Age after which a **published** `outbox_events` row is deleted. Unpublished rows are never deleted. `0` keeps published rows forever. |
 | `LOG_LEVEL` | `info` | no | `debug`, `warn`, `error`; anything else means `info`. JSON logs to stdout. |
 | `OTEL_SERVICE_NAME` | `process-path-management` | no | OTel `service.name`, also the otelchi span/metric server name (`DefaultServiceName` in `internal/adapters/inbound/http/server.go`). |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `localhost:4317` | no | OTLP/gRPC endpoint (insecure) for traces and metrics. Export is non-blocking: an unreachable Collector only drops telemetry. |
@@ -41,15 +41,15 @@ Source: `cmd/pathmgmt/main.go` unless noted.
 | `ENVIRONMENT` | `local` | no | OTel `deployment.environment.name` resource attribute (`internal/adapters/outbound/telemetry/telemetry.go`). |
 | `CORS_ALLOWED_ORIGINS` | `http://localhost:5173,http://localhost:5189` | no | Comma-separated browser origins allowed by the CORS middleware (methods GET/POST/PUT/DELETE, headers `Content-Type`, `Authorization`, `Idempotency-Key`, max-age 300 s). Read in `internal/adapters/inbound/http/server.go`. |
 
-:::warning[Zero durations do not disable the sweeper]
+:::note[Zero durations disable the sweeper]
 `HOUSEKEEPING_INTERVAL`, `IDEMPOTENCY_KEY_TTL` and `OUTBOX_RETENTION` are
-parsed by `durationEnv`, which returns the **default** for a malformed,
-zero or negative value. The `Sweeper` itself supports "`<= 0` disables"
-(`internal/adapters/outbound/postgres/sweeper.go`), but that path cannot be
-reached through these variables: setting `"0s"` gives you the default
-(`1h` / `24h` / `168h`), not a disabled sweep. The chart comments in
-`values.yaml` and `templates/deployment.yaml` say the opposite; the code
-wins.
+parsed by `housekeepingDurationEnv` (`cmd/pathmgmt/main.go`), which keeps a
+zero or negative duration as is: `HOUSEKEEPING_INTERVAL=0` turns the whole
+job off, `IDEMPOTENCY_KEY_TTL=0` / `OUTBOX_RETENTION=0` turn off that half
+([ADR 0018](../adr/0018-outbox-lag-gauge-and-housekeeping-sweeper.md)). A
+malformed value falls back to the default (`1h` / `24h` / `168h`). The
+startup line `housekeeping sweeper configured` logs the values in effect.
+Before gap fix D15 a zero value silently meant the default.
 :::
 
 ## `mcp` (MCP server)

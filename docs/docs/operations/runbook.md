@@ -173,9 +173,10 @@ Runs inside every `pathmgmt` replica that has `DATABASE_URL`
 It is safe across replicas (each `DELETE` targets ids chosen by a
 subquery). A failed pass logs `housekeeping sweep failed` and retries on the
 next tick; a pass that deleted something logs `housekeeping sweep` with
-`idempotency_keys_deleted` and `outbox_events_deleted`. Setting the
-variables to `0s` does not disable it (see
-[Configuration](./configuration.md)).
+`idempotency_keys_deleted` and `outbox_events_deleted`. `HOUSEKEEPING_INTERVAL=0`
+disables the job; `IDEMPOTENCY_KEY_TTL=0` or `OUTBOX_RETENTION=0` disables
+that half (gap fix D15, see [Configuration](./configuration.md)). The boot
+line `housekeeping sweeper configured` shows the values in effect.
 
 ## Scaling
 

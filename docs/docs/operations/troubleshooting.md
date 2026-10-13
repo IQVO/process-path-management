@@ -97,5 +97,5 @@ reported as 409 `concurrent-modification`.
 
 | Symptom | Cause | Fix |
 | --- | --- | --- |
-| `outbox_events` or `idempotency_keys` grows without bound | `DATABASE_URL` unset on the replica (no sweeper), or `housekeeping sweep failed` on every tick | Check logs; the sweeper deletes in 1000-row batches and resumes on the next tick. |
-| Setting `IDEMPOTENCY_KEY_TTL=0s` did not keep keys forever | `durationEnv` maps zero and negative values to the default | There is no supported way to disable the sweeper through configuration today. |
+| `outbox_events` or `idempotency_keys` grows without bound | `DATABASE_URL` unset on the replica (no sweeper), `HOUSEKEEPING_INTERVAL=0` (sweeper disabled), a zero `IDEMPOTENCY_KEY_TTL`/`OUTBOX_RETENTION` (that half disabled), or `housekeeping sweep failed` on every tick | Check the `housekeeping sweeper configured` startup line (`enabled`, TTLs) and the logs; the sweeper deletes in 1000-row batches and resumes on the next tick. |
+| `IDEMPOTENCY_KEY_TTL=0s` keeps keys forever | Intended since gap fix D15: a zero duration disables that half of the sweeper (ADR 0018) | Set a positive Go duration (for example `24h`) to delete them again. |
