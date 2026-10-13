@@ -236,7 +236,7 @@ surface (`kafka.enabled`, `config.eventPublisher`, `otel.enabled`,
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `localhost:4317` | OTLP/gRPC Collector endpoint. |
 | `SERVICE_VERSION` | `dev` | OTel `service.version` (a `-ldflags -X main.version=` build value wins). |
 | `ENVIRONMENT` | `local` | OTel `deployment.environment.name` resource attribute. |
-| `LOG_LEVEL` | `info` | `debug` \| `info` \| `warn` \| `error`. |
+| `LOG_LEVEL` | `info` | `debug` \| `info` \| `warn` (or `warning`) \| `error`. |
 
 The other binaries read:
 

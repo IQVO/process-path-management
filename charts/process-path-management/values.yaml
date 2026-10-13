@@ -168,7 +168,7 @@ environment: "local"
 config:
   httpAddr: ":8080"
   migrationsPath: "migrations"
-  logLevel: "info"        # debug | info | warn | error
+  logLevel: "info"        # debug | info | warn (or warning) | error
   corsAllowedOrigins: "http://localhost:5173,http://localhost:5189"
   # "log" (default) or "kafka" — gates whether ProcessPath* events are
   # published onto warehouse.process-path-management.events at all.
@@ -224,10 +224,11 @@ otel:
 extraEnv: []
 
 # Covers the eager Postgres dial (migrations + pool.Ping) at boot, which is
-# now wrapped in a bounded retry (internal/adapters/outbound/bootretry) with
-# a budget of ~31s. periodSeconds * failureThreshold gives a ~60s window,
-# comfortably past that budget, before the kubelet gives up and restarts the
-# pod. Once startupProbe succeeds, liveness/readiness probing takes over.
+# now wrapped in a bounded retry (internal/adapters/outbound/bootretry): 5
+# attempts, 1+2+4+8 = 15s of backoff plus the attempts themselves.
+# periodSeconds * failureThreshold gives a ~60s window, comfortably past that
+# budget, before the kubelet gives up and restarts the pod. Once
+# startupProbe succeeds, liveness/readiness probing takes over.
 startupProbe:
   httpGet:
     path: /healthz
