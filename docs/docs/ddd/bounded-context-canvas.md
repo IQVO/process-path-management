@@ -14,6 +14,83 @@ to a real route (`internal/adapters/inbound/http/server.go`,
 `report_tool.go`) or Kafka topic/type
 (`internal/adapters/kafka/cloudevents/types.go`).
 
+## Canvas at a glance
+
+One picture of the sections below, laid out like the ddd-crew canvas:
+inbound collaborators on the left, this context in the middle (purpose,
+domain roles and the business decisions it enforces), outbound
+collaborators on the right. Arrows follow the message type: **solid blue**
+commands (`cmd`), **dotted green** queries (`qry`), **thick orange** events
+(`evt`); each arrow names its channel and the messages it carries. Box shapes
+mark the collaborator kind: rounded = people, UI or any client; blue =
+sibling bounded context; double border = external system or platform;
+grey = this context's own projector, reports or dead-letter path; dashed =
+published today with no consumer. Channel names on the arrows are
+abbreviated (REST, MCP, Kafka, HTTP, port); the Inbound and Outbound
+Communication tables carry the exact route, tool, topic and CloudEvents
+type for every message.
+
+```mermaid
+%%{init: {"flowchart": {"nodeSpacing": 18, "rankSpacing": 36, "padding": 8}}}%%
+flowchart LR
+    classDef bc fill:#fff3bf,stroke:#e67700,stroke-width:1.5px,color:#000
+    classDef card fill:#fff9db,stroke:#f08c00,color:#000,text-align:left
+    classDef ctx fill:#e7f5ff,stroke:#1c7ed6,color:#000
+    classDef actor fill:#fff4e6,stroke:#e8590c,color:#000
+    classDef ext fill:#ffe3e3,stroke:#c92a2a,color:#000
+    classDef self fill:#f1f3f5,stroke:#868e96,color:#000
+    classDef none fill:#f8f9fa,stroke:#adb5bd,stroke-dasharray:5 5,color:#495057
+    subgraph IN["Inbound - who commands, queries or feeds it"]
+        direction TB
+        in0(["Operator via process_path_mfe (warehouse-console) or audit tooling"]):::actor
+        in1(["warehouse-console (context reports)"]):::actor
+        in2["warehouse-ops-agent (wired, unused)"]:::ctx
+        in3(["Any MCP host (no known caller)"]):::actor
+    end
+    subgraph BC["process-path-management - Generic subdomain - WES tier"]
+        direction TB
+        purpose["<b>Purpose</b><br/>The single, auditable source of<br/>truth for the process-path catalogue<br/>(identity, matchPrefix,<br/>capabilities, destination role,<br/>cycle time and eligibility) and each<br/>site's CPT schedule; every change is<br/>published so consumers keep local<br/>copies and never call it."]:::card
+        roles["<b>Domain roles</b><br/>- Specification / Published Language owner<br/>- Open Host Service (one stable topic)<br/>- Gateway / configuration surface<br/>- Analysis, additive (catalogue growth report)"]:::card
+        rules["<b>Business decisions it enforces</b><br/>- matchPrefix is non-empty,<br/>lower-case, validated never coerced<br/>- requiredCapabilities non-empty;<br/>cycleTimeP95 strictly positive<br/>- A path id is permanent: re-defining<br/>an existing id is a 409<br/>- Deactivation is terminal and<br/>idempotent; no-op revisions publish<br/>nothing<br/>- A CPT schedule is per site, revised<br/>wholesale, only Active eligible<br/>paths<br/>- A path a CPT schedule still lists<br/>cannot be deactivated"]:::card
+        purpose ~~~ roles ~~~ rules
+    end
+    subgraph OUT["Outbound - whom it calls or notifies"]
+        direction TB
+        out0["fulfillment-execution, wes-work-planning, workforce-management, order-management, network-fulfillment"]:::ctx
+        out1["order-management, network-fulfillment"]:::ctx
+        out2["own pathmgmt-projector and pathmgmt-reports"]:::self
+        out3["operators (manual replay)"]:::self
+    end
+    in0 -->|"cmd - REST<br/>Define path, Revise path,<br/>Deactivate path, Define or<br/>revise CPT schedule"| BC
+    in0 -.->|"qry - REST<br/>List paths, Get path, Get CPT<br/>schedule"| BC
+    in1 -.->|"qry - REST (reports)<br/>Catalogue growth report,<br/>freshness"| BC
+    in2 -.->|"qry - MCP<br/>get_process_path,<br/>list_process_paths"| BC
+    in3 -.->|"qry - MCP<br/>get_cpt_schedule,<br/>get_catalogue_growth_report"| BC
+    BC ==>|"evt - Kafka<br/>warehouse.process-path-management.events<br/>ProcessPathCreated,<br/>ProcessPathUpdated,<br/>ProcessPathDeactivated"| out0
+    BC ==>|"evt - Kafka<br/>warehouse.process-path-management.events<br/>CPTScheduleChanged"| out1
+    BC ==>|"evt - Kafka<br/>warehouse.process-path-management.analytics<br/>all four types (analytics copy)"| out2
+    BC -.->|"qry - REST<br/>Catalogue growth report (from<br/>the MCP report tool)"| out2
+    BC ==>|"evt - Kafka ...analytics.dlq<br/>poison analytics message"| out3
+    linkStyle 0 stroke:#1971c2,stroke-width:1.5px
+    linkStyle 1 stroke:#2f9e44,stroke-width:1.5px
+    linkStyle 2 stroke:#2f9e44,stroke-width:1.5px
+    linkStyle 3 stroke:#2f9e44,stroke-width:1.5px
+    linkStyle 4 stroke:#2f9e44,stroke-width:1.5px
+    linkStyle 5 stroke:#e8590c,stroke-width:2.5px
+    linkStyle 6 stroke:#e8590c,stroke-width:2.5px
+    linkStyle 7 stroke:#e8590c,stroke-width:2.5px
+    linkStyle 8 stroke:#2f9e44,stroke-width:1.5px
+    linkStyle 9 stroke:#e8590c,stroke-width:2.5px
+    class BC bc
+```
+
+Source: the Inbound Communication and Outbound Communication tables of this
+page, which map to `internal/adapters/inbound/{http,kafka,mcp}` and `internal/adapters/outbound/`. The diagram omits assumptions, verification metrics, open
+questions and the ubiquitous language (sections below), the relationship
+pattern per message (OHS, ACL, Conformist, Customer/Supplier - see the
+tables) and anything the tables mark as deprecated or platform-only
+(health probes).
+
 ## Name
 
 **Process Path Management** (`process-path-management`, CloudEvents
