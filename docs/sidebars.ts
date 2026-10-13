@@ -118,6 +118,7 @@ const sidebars: SidebarsConfig = {
         'adr/0029-analytics-binaries-telemetry-and-liveness',
         'adr/0030-outbox-relay-attempt-cap',
         'adr/0031-reports-api-openapi-contract',
+        'adr/0032-analytics-claim-and-apply-in-one-transaction',
       ],
     },
   ],
