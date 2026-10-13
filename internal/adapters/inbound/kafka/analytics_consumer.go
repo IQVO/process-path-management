@@ -185,6 +185,12 @@ func (c *AnalyticsConsumer) Run(ctx context.Context) error {
 			return err
 		}
 		if err := c.handleFetchedMessage(ctx, msg); err != nil {
+			if ctx.Err() != nil && errors.Is(err, context.Canceled) {
+				// Shutdown landed mid-handle: the offset was not committed,
+				// so the message is redelivered on the next start. A clean
+				// stop, not a crash.
+				return nil
+			}
 			return err
 		}
 	}
@@ -263,6 +269,10 @@ func (c *AnalyticsConsumer) HandleMessage(ctx context.Context, raw []byte) error
 //     error context are published to <topic>.dlq and the offset is
 //     committed anyway — one poison message must never permanently
 //     block every other event behind it on this partition.
+//  6. A retry loop that ended only because ctx was cancelled (pod
+//     shutdown mid-handle) is NOT poison: ctx.Err() is returned without
+//     dead-lettering or committing, so the message is redelivered on the
+//     next start and Run treats the cancellation as a clean stop.
 func (c *AnalyticsConsumer) handleFetchedMessage(ctx context.Context, msg kafkago.Message) error {
 	env, decodeErr := decodeAnalyticsEvent(msg.Value)
 	if decodeErr != nil {
@@ -276,6 +286,9 @@ func (c *AnalyticsConsumer) handleFetchedMessage(ctx context.Context, msg kafkag
 
 	isNew, err := c.markProcessedWithRetry(ctx, env.Id)
 	if err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err() // shutting down: never dead-letter a message only cancellation interrupted
+		}
 		return c.deadLetterAndCommit(ctx, msg, env, fmt.Errorf("mark processed: %w", err))
 	}
 	if !isNew {
@@ -283,6 +296,9 @@ func (c *AnalyticsConsumer) handleFetchedMessage(ctx context.Context, msg kafkag
 	}
 
 	if err := c.applyProjectionWithRetry(ctx, env); err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err() // shutting down: never dead-letter a message only cancellation interrupted
+		}
 		return c.deadLetterAndCommit(ctx, msg, env, fmt.Errorf("apply projection: %w", err))
 	}
 	return c.commit(ctx, msg)
