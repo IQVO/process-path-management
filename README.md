@@ -40,7 +40,7 @@ The site above is built from `docs/` (Docusaurus). The pages, by task:
 | MCP tools and their inputs | [MCP tools](docs/docs/mcp/tools.md), [Governance charter](docs/docs/mcp/governance-charter.md) |
 | Vocabulary, aggregates, the ddd-crew pack | [Ubiquitous language](docs/docs/ddd/ubiquitous-language.md), [Aggregates and invariants](docs/docs/ddd/aggregates-and-invariants.md), [DDD artifacts](docs/docs/ddd/ddd-artifacts.md) |
 | Decisions | [ADR index](docs/docs/adr/about.md) |
-| REST contract | [`apis/openapi.yaml`](apis/openapi.yaml) (rendered under API Reference on the site) |
+| REST contract | [`apis/openapi.yaml`](apis/openapi.yaml) (rendered under API Reference on the site); reports API: [`apis/openapi-reports.yaml`](apis/openapi-reports.yaml) (Reports API Reference) |
 
 ## Why this context exists
 
@@ -228,9 +228,10 @@ surface (`kafka.enabled`, `config.eventPublisher`, `otel.enabled`,
 | `EVENT_PUBLISHER` | `log` | `log` (default) or `kafka`. Kafka publishing requires this to be set to `kafka`. |
 | `KAFKA_BROKERS` | `localhost:9092` | Comma-separated broker addresses (only read when `EVENT_PUBLISHER=kafka`). |
 | `OUTBOX_RELAY_INTERVAL` | `1s` | How long the outbox relay sleeps between empty passes (only used when both `DATABASE_URL` and `EVENT_PUBLISHER=kafka` are set). |
-| `HOUSEKEEPING_INTERVAL` | `1h` | Housekeeping sweeper interval (ADR 0018; only with `DATABASE_URL`). |
-| `IDEMPOTENCY_KEY_TTL` | `24h` | Age after which the sweeper deletes `idempotency_keys` rows. |
-| `OUTBOX_RETENTION` | `168h` | Age after which the sweeper deletes **published** `outbox_events` rows. |
+| `OUTBOX_MAX_ATTEMPTS` | `20` | Failed sends after which the relay stops claiming an outbox row (ADR 0030); `0` = unlimited. Re-arm with `UPDATE outbox_events SET attempts = 0 WHERE id = ...`. |
+| `HOUSEKEEPING_INTERVAL` | `1h` | Housekeeping sweeper interval (ADR 0018; only with `DATABASE_URL`); `0` disables the sweeper. |
+| `IDEMPOTENCY_KEY_TTL` | `24h` | Age after which the sweeper deletes `idempotency_keys` rows; `0` keeps them. |
+| `OUTBOX_RETENTION` | `168h` | Age after which the sweeper deletes **published** `outbox_events` rows; `0` keeps them. |
 | `CORS_ALLOWED_ORIGINS` | `http://localhost:5173,http://localhost:5189` | Comma-separated allowed origins. |
 | `OTEL_SERVICE_NAME` | `process-path-management` | OTel `service.name` resource attribute. |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `localhost:4317` | OTLP/gRPC Collector endpoint. |
@@ -250,6 +251,7 @@ The other binaries read:
 | `cmd/pathmgmt-projector` | `KAFKA_BROKERS` | `localhost:9092` | Broker for the analytics topic (consumer group `process-path-management-analytics`). |
 | `cmd/pathmgmt-projector` | `ADMIN_ADDR` / `ANALYTICS_MIGRATIONS_PATH` | `:8091` / `migrations/analytics` | Admin server (`/healthz`, `/readyz`); analytics migrations. |
 | `cmd/pathmgmt-reports` | `HTTP_ADDR` / `ANALYTICS_DATABASE_URL` | `:8092` / *(required)* | Read-only reports API. |
+| projector, reports | `OTEL_SERVICE_NAME`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `SERVICE_VERSION`, `ENVIRONMENT`, `LOG_LEVEL` | `pathmgmt-projector` / `pathmgmt-reports`, `localhost:4317`, `dev`, `local`, `info` | Both call `telemetry.Setup` (ADR 0029); the projector exits 1 when its consumer loop stops. |
 
 ## API
 
@@ -270,8 +272,9 @@ the spec.
 | `GET` | `/healthz` | Liveness probe |
 | `GET` | `/readyz` | Readiness probe — `503 {"status":"not_ready"}` once graceful shutdown starts (ADR 0012) |
 
-The separate `pathmgmt-reports` binary serves the analytics report (not in
-`apis/openapi.yaml`): `GET /reports/catalogue-growth?from=&to=[&granularity=day]`,
+The separate `pathmgmt-reports` binary serves the analytics report, specified
+in [`apis/openapi-reports.yaml`](apis/openapi-reports.yaml) (ADR 0031):
+`GET /reports/catalogue-growth?from=&to=[&granularity=day]`,
 `GET /reports/catalogue-growth/freshness`, and `GET /healthz`.
 
 The MCP server (`cmd/mcp`) exposes read-only tools: `get_process_path`,
@@ -401,11 +404,12 @@ domain + application coverage gate), **`bdd`**, **`contract`**
 (Schemathesis, ADR 0025), **`evals-tests`** (MCP E1–E3 evals, ADR 0023),
 **`integration`** (testcontainers — no service container),
 **`mutation-fast`** (blocking, `./internal/domain`),
-**`api-lint`** (Spectral against both `apis/openapi.yaml` and
-`apis/asyncapi.yaml`), **`vuln`** (govulncheck), **`arch-test`** (arch-go
-and fitness tests), **`docs-api-drift`** (regenerates
-`docs/docs/api-reference/rest` from `apis/openapi.yaml` and fails on any
-diff), **`web`** (lint, typecheck, test and build of the `web/` remote),
+**`api-lint`** (Spectral against `apis/openapi.yaml`,
+`apis/openapi-reports.yaml` and `apis/asyncapi.yaml`), **`vuln`**
+(govulncheck), **`arch-test`** (arch-go and fitness tests),
+**`docs-api-drift`** (regenerates `docs/docs/api-reference/rest` and
+`rest-reports` from the two OpenAPI files and fails on any diff),
+**`chart-tests`** (`render_test.sh` + `test_service_selectors.py`), **`web`** (lint, typecheck, test and build of the `web/` remote),
 **`drift`** (advisory, weekly/manual only: deadcode, `go mod tidy -diff`,
 knip, coverage quality), **`helm-lint`**/**`trivy-scan`** (gated to
 pull-request-targeting-`main` only, per this fleet's convention —
