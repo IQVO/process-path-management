@@ -5,6 +5,10 @@ metadata:
   name: {{ include "process-path-management.fullname" . }}
   labels:
     {{- include "process-path-management.labels" . | nindent 4 }}
+  {{- with include "process-path-management.kongPluginNames" . }}
+  annotations:
+    konghq.com/plugins: {{ . | quote }}
+  {{- end }}
 spec:
   parentRefs:
     {{- range .Values.gatewayApi.parentRefs }}
