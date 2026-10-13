@@ -62,6 +62,26 @@ gatewayApi:
       pathType: PathPrefix
   stripPath: true
 
+# Kong plugins rendered by THIS chart (kong-plugins.yaml) and attached to
+# every HTTPRoute above via the konghq.com/plugins annotation. Fleet
+# decision 2026-10-13: Kong configuration belongs to the application
+# charts, not warehouse-infra Terraform. Defaults off; warehouse-infra's
+# values switch them on. NO auth plugin here, ever — the fleet's endpoints
+# are unauthenticated and the gateway adds no authentication or
+# authorization.
+kongPlugins:
+  cors:
+    enabled: false
+    # Exact browser origin, never "*" (endpoints are unauthenticated).
+    origin: "http://localhost"
+  prometheus:
+    enabled: false
+  opentelemetry:
+    enabled: false
+    # OTLP/HTTP traces endpoint of the fleet collector; needs Kong started
+    # with KONG_TRACING_INSTRUMENTATIONS or the plugin exports zero spans.
+    tracesEndpoint: "http://otel-collector.observability.svc.cluster.local:4318/v1/traces"
+
 resources:
   limits:
     cpu: 500m
@@ -296,6 +316,16 @@ mcp:
     type: ClusterIP
     port: 8090
     targetPort: 8090
+  # Kong exposure of the MCP server (mcp-route.yaml): host path
+  # /api/process-path-management rewritten to /mcp. Off by default;
+  # warehouse-infra turns it on with the real parentRefs and path.
+  route:
+    enabled: false
+    path: "/api/process-path-management"
+    parentRefs:
+      - name: ""
+        namespace: ""
+        sectionName: "http"
   # Overrides the reports base URL the catalogue-growth report tool calls.
   # When empty and analytics.enabled=true, defaults to the in-cluster
   # reports Service.
@@ -356,6 +386,12 @@ analytics:
         cpu: 100m
         memory: 128Mi
   reports:
+    # Reports-bundle gate: on while analytics is on (the reports binary is
+    # part of the analytics bundle in this chart). Kept as an explicit
+    # value so the reports-route.yaml gate (analytics.enabled AND
+    # analytics.reports.enabled AND analytics.reports.route.enabled)
+    # matches the order-management PR #186 shape.
+    enabled: true
     replicaCount: 1
     httpAddr: ":8092"
     # Stateless read-only REST reader over the analytical database (its
@@ -367,6 +403,17 @@ analytics:
       type: ClusterIP
       port: 80
       targetPort: 8092
+    # Kong exposure of the reports API (reports-route.yaml): host path
+    # /api/process-path-management/reports rewritten to /reports. Off by
+    # default; warehouse-infra turns it on with the real parentRefs and
+    # path.
+    route:
+      enabled: false
+      path: "/api/process-path-management/reports"
+      parentRefs:
+        - name: ""
+          namespace: ""
+          sectionName: "http"
     resources:
       limits:
         cpu: 500m
