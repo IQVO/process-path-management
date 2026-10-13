@@ -200,10 +200,14 @@ against the OLTP database and 2 × 5 + 3 × 5 against the analytical one.
 ## Reports API (`pathmgmt-reports`)
 
 These routes are served by `cmd/pathmgmt-reports`
-(`internal/adapters/inbound/http/reports_handler.go`) and are **not** in
-`apis/openapi.yaml`. They are unauthenticated and read the analytical
-database through a read-only pool. There is no OTel middleware on this
-router (only request id, request logger and panic recovery).
+(`internal/adapters/inbound/http/reports_handler.go`) and specified in
+`apis/openapi-reports.yaml` (not `apis/openapi.yaml`;
+[ADR 0031](../adr/0031-reports-api-openapi-contract.md), rendered as the
+Reports API Reference). `TestReportsContract_RoutesMatchSpec` and
+`TestReportsContract_ResponsesMatchSpec` fail when the router and that spec
+disagree. They are unauthenticated and read the analytical database through
+a read-only pool. The binary sets up OTel (ADR 0029) but this router has no
+OTel middleware (only request id, request logger and panic recovery).
 
 ### `GET /reports/catalogue-growth`
 

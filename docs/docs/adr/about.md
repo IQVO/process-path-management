@@ -88,6 +88,7 @@ Typos, broken links and formatting are of course fair game.
 | [0028](./0028-close-path-cpt-schedule-race-with-row-locks.md) | Close the path / CPT-schedule race with row locks | Accepted |
 | [0029](./0029-analytics-binaries-telemetry-and-liveness.md) | Analytics binaries get telemetry and exit when the consumer loop dies | Accepted |
 | [0030](./0030-outbox-relay-attempt-cap.md) | Outbox relay attempt cap | Accepted |
+| [0031](./0031-reports-api-openapi-contract.md) | The reports API has its own OpenAPI contract | Accepted |
 
 Each of these reconstructs a decision that is actually visible in this
 repository's history or code — none is a generic placeholder.

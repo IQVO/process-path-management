@@ -52,9 +52,11 @@ All four binaries are built into one image (`Dockerfile`, entrypoint
 | `cmd/pathmgmt-projector` | Analytics writer: consumes `warehouse.process-path-management.analytics` into the analytical database. Owns the analytical schema | `:8091` (`ADMIN_ADDR`) | `GET /healthz`, `GET /readyz` only | `<release>-projector` (only with `analytics.enabled=true`), no Service |
 | `cmd/pathmgmt-reports` | Analytics reader: serves the catalogue-growth report over a read-only pool | `:8092` (`HTTP_ADDR`) | `GET /reports/catalogue-growth`, `GET /reports/catalogue-growth/freshness`, `GET /healthz` | `<release>-reports` (only with `analytics.enabled=true`), Service port 80 → 8092 |
 
-The reports and MCP routes are not in `apis/openapi.yaml`; they are described
-in the [Runbook](../operations/runbook.md#reports-api-pathmgmt-reports) and
-[MCP tools](../mcp/tools.md).
+The reports routes are specified in their own contract,
+`apis/openapi-reports.yaml` ([ADR 0031](../adr/0031-reports-api-openapi-contract.md),
+rendered as the **Reports API Reference**), and described in the
+[Runbook](../operations/runbook.md#reports-api-pathmgmt-reports). The MCP
+routes are not in any OpenAPI file; see [MCP tools](../mcp/tools.md).
 
 ## Component diagram
 

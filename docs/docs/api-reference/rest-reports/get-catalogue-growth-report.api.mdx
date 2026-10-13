@@ -1,0 +1,71 @@
+---
+id: get-catalogue-growth-report
+title: "Process paths defined, revised and deactivated per UTC day"
+description: "Returns one row per UTC day bucket whose start lies in the half-open window [from, to), ordered by day. Days with no catalogue change have no row. An empty window is a 200 with an empty `rows` array, never `null` and never a 404."
+sidebar_label: "Process paths defined, revised and deactivated per UTC day"
+hide_title: true
+hide_table_of_contents: true
+api: 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
+sidebar_class_name: "get api-method"
+info_path: docs/api-reference/rest-reports/process-path-management-reports-api
+custom_edit_url: null
+hide_send_button: true
+---
+
+import MethodEndpoint from "@theme/ApiExplorer/MethodEndpoint";
+import ParamsDetails from "@theme/ParamsDetails";
+import RequestSchema from "@theme/RequestSchema";
+import StatusCodes from "@theme/StatusCodes";
+import OperationTabs from "@theme/OperationTabs";
+import TabItem from "@theme/TabItem";
+import Heading from "@theme/Heading";
+import Translate from "@docusaurus/Translate";
+
+<Heading
+  as={"h1"}
+  className={"openapi__heading"}
+  children={"Process paths defined, revised and deactivated per UTC day"}
+>
+</Heading>
+
+<MethodEndpoint
+  method={"get"}
+  path={"/reports/catalogue-growth"}
+  context={"endpoint"}
+>
+  
+</MethodEndpoint>
+
+
+
+Returns one row per UTC day bucket whose start lies in the half-open window [from, to), ordered by day. Days with no catalogue change have no row. An empty window is a 200 with an empty `rows` array, never `null` and never a 404.
+
+
+<Heading
+  id={"request"}
+  as={"h2"}
+  className={"openapi-tabs__heading"}
+>
+  <Translate id="theme.openapi.request.title">Request</Translate>
+</Heading>
+
+<ParamsDetails
+  {...require("./get-catalogue-growth-report.ParamsDetails.json")}
+>
+  
+</ParamsDetails>
+
+<RequestSchema
+  {...require("./get-catalogue-growth-report.RequestSchema.json")}
+>
+  
+</RequestSchema>
+
+<StatusCodes
+  {...require("./get-catalogue-growth-report.StatusCodes.json")}
+>
+  
+</StatusCodes>
+
+
+      

@@ -302,6 +302,11 @@ jobs:
           echo "$PWD/apis/tooling/node_modules/.bin" >> "$GITHUB_PATH"
       - name: Lint OpenAPI spec
         run: spectral lint apis/openapi.yaml --ruleset .spectral.yaml --fail-severity=warn
+      - name: Lint OpenAPI spec (reports API)
+        # cmd/pathmgmt-reports is a separate binary on a separate port
+        # against a separate database, so its routes have their own spec
+        # (ADR 0031, gap fix D18).
+        run: spectral lint apis/openapi-reports.yaml --ruleset .spectral.yaml --fail-severity=warn
       - name: Lint AsyncAPI spec
         run: spectral lint apis/asyncapi.yaml --ruleset .spectral.asyncapi.yaml --fail-severity=warn
 
@@ -333,12 +338,14 @@ jobs:
   # ============================================================
   # CLASSIFICATION: DOCS/API DRIFT
   # Guards against the generated "API Reference" docs
-  # (docs/docs/api-reference/rest/, produced by docusaurus-plugin-openapi-docs
-  # from apis/openapi.yaml) drifting out of sync with the spec they're
-  # supposed to mirror. Regenerates them exactly as `gen-api-docs` would and
-  # fails the PR if that produces any diff -- i.e. someone changed
-  # apis/openapi.yaml (or hand-edited the generated files) without running
-  # `npm run gen-api-docs pathmgmt` and committing the result.
+  # (docs/docs/api-reference/rest/ and rest-reports/, produced by
+  # docusaurus-plugin-openapi-docs from apis/openapi.yaml and
+  # apis/openapi-reports.yaml) drifting out of sync with the specs they
+  # mirror. Regenerates both exactly as `gen-api-docs:all` would and fails
+  # the PR if that produces any diff -- i.e. someone changed a spec (or
+  # hand-edited the generated files) without running
+  # `npm run clean-api-docs:all && npm run gen-api-docs:all` and committing
+  # the result.
   # ============================================================
   docs-api-drift:
     runs-on: ubuntu-latest
@@ -354,14 +361,20 @@ jobs:
           cache: npm
           cache-dependency-path: docs/package-lock.json
       - run: npm ci
-      - name: Regenerate REST API docs from apis/openapi.yaml
-        run: npm run clean-api-docs pathmgmt && npm run gen-api-docs pathmgmt
+      - name: Regenerate REST API docs from apis/openapi.yaml and apis/openapi-reports.yaml
+        run: npm run clean-api-docs:all && npm run gen-api-docs:all
       - name: Fail if generated docs differ from what's committed
+        # working-directory is docs/, so the pathspecs are relative to it.
+        # `git status --porcelain` also catches a newly generated page that
+        # was never committed (an untracked file).
         run: |
           set -euo pipefail
-          if ! git diff --exit-code -- docs/api-reference/rest; then
-            echo "::error::docs/api-reference/rest is out of sync with apis/openapi.yaml." \
-                 "Run 'npm run gen-api-docs pathmgmt' inside docs/ and commit the result."
+          drift="$(git status --porcelain -- docs/api-reference/rest docs/api-reference/rest-reports)"
+          if [ -n "$drift" ]; then
+            echo "$drift"
+            git --no-pager diff -- docs/api-reference/rest docs/api-reference/rest-reports | head -n 200
+            echo "::error::docs/api-reference/rest or rest-reports is out of sync with apis/openapi.yaml / apis/openapi-reports.yaml." \
+                 "Run 'npm run clean-api-docs:all && npm run gen-api-docs:all' inside docs/ and commit the result."
             exit 1
           fi
 
