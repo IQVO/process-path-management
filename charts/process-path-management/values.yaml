@@ -165,6 +165,11 @@ environment: "local"
 # This service has no inbound Kafka consumer (see README) — it is the
 # SOURCE of the process-path published language, not a consumer — so
 # there is no consumer-group config to expose here, unlike labor-performance.
+#
+# The keys below are rendered into templates/configmap.yaml (and/or the api
+# Deployment's explicit env) and reach cmd/pathmgmt through the api
+# Deployment's `envFrom: configMapRef` (gap fix D14); explicit env/extraEnv
+# entries win for the same key.
 config:
   httpAddr: ":8080"
   migrationsPath: "migrations"
@@ -177,7 +182,8 @@ config:
   # rows older than idempotencyKeyTtl and PUBLISHED outbox_events rows
   # older than outboxRetention (unpublished rows are never swept). Only
   # takes effect when a database is configured; any value <= 0 ("0s")
-  # disables that half. Go duration strings.
+  # disables that half, and interval "0s" disables the whole job (gap fix
+  # D15 made the binary honour this). Go duration strings.
   housekeeping:
     interval: "1h"
     idempotencyKeyTtl: "24h"

@@ -122,9 +122,14 @@ configurable.
 
 ## How the Helm chart maps values to variables
 
-Chart: `charts/process-path-management`. The Deployments set the variables
-inline (`env:`), not through the ConfigMap; the ConfigMap is rendered and
-its checksum annotates the api pod so a change rolls it.
+Chart: `charts/process-path-management`. The api Deployment mounts the chart
+ConfigMap with `envFrom: configMapRef` (gap fix D14: every ConfigMap key is
+read by `cmd/pathmgmt`) and also sets most variables inline (`env:`), which
+win over the ConfigMap for the same key; the ConfigMap's checksum annotates
+the api pod so a change rolls it. The mcp, projector and reports
+Deployments set their variables inline only and do not mount the ConfigMap.
+`charts/process-path-management/tests/render_test.sh` (CI job
+`chart-tests`) asserts this wiring.
 
 | Helm value | Variable | Binary |
 | --- | --- | --- |

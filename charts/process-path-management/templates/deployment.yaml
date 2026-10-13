@@ -47,6 +47,17 @@ spec:
             - name: http
               containerPort: {{ .Values.service.targetPort }}
               protocol: TCP
+          # D14 (2026-10-12): every key of the chart ConfigMap
+          # (HTTP_ADDR, LOG_LEVEL, ENVIRONMENT, CORS_ALLOWED_ORIGINS,
+          # EVENT_PUBLISHER, OUTBOX_MAX_ATTEMPTS, OTEL_*, KAFKA_BROKERS) is
+          # read by cmd/pathmgmt and reaches it through envFrom. The
+          # explicit `env` entries below win over envFrom for the same key
+          # and carry the same values, so nothing changes for the variables
+          # already set here; the checksum/config annotation rolls the pods
+          # when the ConfigMap changes.
+          envFrom:
+            - configMapRef:
+                name: {{ include "process-path-management.fullname" . }}
           env:
             - name: HTTP_ADDR
               value: {{ .Values.config.httpAddr | quote }}
