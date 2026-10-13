@@ -25,6 +25,8 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -121,58 +123,111 @@ func run() error {
 	}()
 
 	consumerCtx, cancelConsumer := context.WithCancel(context.Background())
-	// consumerDone closes once the analytics consumer's Run goroutine
-	// has returned — including having committed (or dead-lettered and
-	// committed) whatever message it was mid-handling when
-	// cancelConsumer was called — so graceful shutdown can wait for a
-	// REAL stop, not just fire-and-forget the cancel.
+	// consumerExit carries the analytics consumer's Run result the moment
+	// the loop returns; consumerDone closes right after, once the Run
+	// goroutine has returned — including having committed (or
+	// dead-lettered and committed) whatever message it was mid-handling
+	// when cancelConsumer was called — so graceful shutdown can wait for
+	// a REAL stop, not just fire-and-forget the cancel.
+	consumerExit := make(chan error, 1)
 	consumerDone := make(chan struct{})
 	go func() {
 		defer close(consumerDone)
 		logger.Info("analytics consumer starting", "topic", outboundkafka.AnalyticsTopic, "group", inboundkafka.AnalyticsConsumerGroup, "brokers", kafkaBrokers)
-		if err := consumer.Run(consumerCtx); err != nil {
-			logger.Error("analytics consumer stopped", "error", err)
-		}
+		consumerExit <- consumer.Run(consumerCtx)
 	}()
 
-	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
-	<-stop
+	stopCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
 
+	// Gap fix D13: the projector stops serving ready when the consumer
+	// loop exits. Before, a dead loop was only logged while /healthz and
+	// /readyz kept answering 200, so the pod looked healthy and projected
+	// nothing. Now a consumer exit runs the same shutdown sequence as a
+	// SIGTERM (readiness flips first) and run() returns an error, so main
+	// exits non-zero and Kubernetes restarts the pod.
+	runErr := awaitStop(stopCtx, consumerExit)
+	if runErr != nil {
+		logger.Error("analytics consumer loop exited; stopping the projector so it is restarted", "error", runErr)
+	}
+
+	rt := projectorRuntime{
+		logger:         logger,
+		srv:            srv,
+		readiness:      readiness,
+		cancelConsumer: cancelConsumer,
+		consumerDone:   consumerDone,
+		consumer:       consumer,
+		pool:           pool,
+	}
+	return errors.Join(runErr, rt.shutdown())
+}
+
+// errConsumerStopped is returned by run() when the analytics consumer loop
+// exits on its own, without a shutdown signal (gap fix D13).
+var errConsumerStopped = errors.New("analytics consumer loop exited")
+
+// awaitStop blocks until either stopCtx is done (SIGINT/SIGTERM, the
+// normal way out: nil) or the consumer loop exits on its own, which is
+// always an error: a projector whose loop has stopped projects nothing,
+// so it must not keep reporting ready.
+func awaitStop(stopCtx context.Context, consumerExit <-chan error) error {
+	select {
+	case <-stopCtx.Done():
+		return nil
+	case err := <-consumerExit:
+		if err == nil {
+			return errConsumerStopped
+		}
+		return fmt.Errorf("%w: %w", errConsumerStopped, err)
+	}
+}
+
+// projectorRuntime holds what the shutdown sequence stops, in order.
+type projectorRuntime struct {
+	logger         *slog.Logger
+	srv            *http.Server
+	readiness      *readinessGate
+	cancelConsumer context.CancelFunc
+	consumerDone   <-chan struct{}
+	consumer       io.Closer
+	pool           interface{ Close() }
+}
+
+// shutdown runs the graceful shutdown (ADR-0012 §graceful shutdown,
+// mirroring order-management's ADR-0025), in order:
+//
+//  1. Flip readiness to not-ready FIRST, before anything else stops.
+//  2. Stop accepting new admin-server connections and drain in-flight
+//     requests, bounded by a 10s shutdown context.
+//  3. Stop the analytics consumer's loop cleanly: cancel its context (no
+//     new message is fetched/handled after this) and wait, bounded by the
+//     SAME context, for its goroutine to actually finish in-flight work (a
+//     message already being handled commits its offset, or dead-letters
+//     and commits, before Run returns) rather than merely asking it to
+//     stop and moving on. When the loop already exited (D13) this returns
+//     at once.
+//  4. Close the consumer's Kafka reader/DLQ writer and the pgx pool LAST,
+//     after both the admin server and the consumer have already stopped
+//     touching them.
+func (rt projectorRuntime) shutdown() error {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// Graceful shutdown (ADR-0012 §graceful shutdown, mirroring
-	// order-management's ADR-0025), in order:
-	//
-	//  1. Flip readiness to not-ready FIRST, before anything else
-	//     stops.
-	//  2. Stop accepting new admin-server connections and drain
-	//     in-flight requests, bounded by shutdownCtx.
-	//  3. Stop the analytics consumer's loop cleanly: cancel its
-	//     context (no new message is fetched/handled after this) and
-	//     wait, bounded by the SAME shutdownCtx, for its goroutine to
-	//     actually finish in-flight work (a message already being
-	//     handled commits its offset, or dead-letters and commits,
-	//     before Run returns) rather than merely asking it to stop and
-	//     moving on.
-	//  4. Close the pgx pool and the consumer's Kafka reader/DLQ
-	//     writer LAST, after both the admin server and the consumer
-	//     have already stopped touching them.
-	readiness.setNotReady()
+	rt.readiness.setNotReady()
 
-	shutdownErr := srv.Shutdown(shutdownCtx)
+	shutdownErr := rt.srv.Shutdown(shutdownCtx)
 
-	cancelConsumer()
+	rt.cancelConsumer()
 	select {
-	case <-consumerDone:
+	case <-rt.consumerDone:
 	case <-shutdownCtx.Done():
-		logger.Warn("analytics consumer did not stop before the shutdown deadline")
+		rt.logger.Warn("analytics consumer did not stop before the shutdown deadline")
 	}
-	if err := consumer.Close(); err != nil {
-		logger.Error("error closing analytics consumer", "error", err)
+	if err := rt.consumer.Close(); err != nil {
+		rt.logger.Error("error closing analytics consumer", "error", err)
 	}
-	pool.Close()
+	rt.pool.Close()
 
 	return shutdownErr
 }
