@@ -80,16 +80,18 @@ a tool error.
 | --- | --- | --- | --- |
 | `from` | string | yes | Window start, inclusive, RFC 3339. |
 | `to` | string | yes | Window end, exclusive, RFC 3339. |
-| `granularity` | string | **yes** | Only `day` is supported. |
+| `granularity` | string | no | Only `day` is supported, and it is the default. |
 
 Returns `{"rows": [...]}`, each row with `dayBucket`, `pathsDefined`,
 `pathsRevised`, `pathsDeactivated`: exactly the body of the reports API
 ([Runbook](../operations/runbook.md#reports-api-pathmgmt-reports)).
 
-The handler treats `granularity` as optional (it forwards it only when
-non-empty, and the reports API defaults to `day`), but the field has no
-`omitempty` tag, so the SDK-generated input schema lists it as required and
-a schema-validating client must send it. Missing `from`/`to` → error
+`granularity` is optional on the wire (gap fix D16): the field carries
+`omitempty`, so the SDK-generated input schema requires only `from` and
+`to`; the handler forwards `granularity` only when non-empty and the
+reports API defaults to `day`. The architecture fitness test
+`TestMCPOptionalToolInputsCarryOmitempty` fails the build when an input
+field described as optional lacks `omitempty`. Missing `from`/`to` → error
 `from and to are required (RFC3339)`; a non-2xx from the reports service →
 `reports client: unexpected status <code>`.
 

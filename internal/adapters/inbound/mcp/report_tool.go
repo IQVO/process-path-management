@@ -127,7 +127,7 @@ var _ ReportsClient = (*ReportsRESTClient)(nil)
 type CatalogueGrowthToolInput struct {
 	From        string `json:"from" jsonschema:"start of the window, inclusive, RFC3339 (required)"`
 	To          string `json:"to" jsonschema:"end of the window, exclusive, RFC3339 (required)"`
-	Granularity string `json:"granularity" jsonschema:"time bucket granularity; only 'day' is supported"`
+	Granularity string `json:"granularity,omitempty" jsonschema:"optional time bucket granularity; only 'day' is supported and it is the default"`
 }
 
 // getCatalogueGrowthReport is the tool handler: it validates the required
