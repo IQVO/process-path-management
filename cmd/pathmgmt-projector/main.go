@@ -38,6 +38,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	inboundkafka "github.com/claudioed/process-path-management/internal/adapters/inbound/kafka"
 	"github.com/claudioed/process-path-management/internal/adapters/outbound/analyticsstore"
 	"github.com/claudioed/process-path-management/internal/adapters/outbound/bootretry"
@@ -92,36 +94,13 @@ func run() error {
 	kafkaBrokers := strings.Split(getenv("KAFKA_BROKERS", "localhost:9092"), ",")
 	migrationsPath := getenv("ANALYTICS_MIGRATIONS_PATH", "migrations/analytics")
 
-	// The projector owns the analytical schema: run its migrations on
-	// start. Retried, because in this fleet EVERY injected pod's first
-	// outbound TCP dial (Postgres here) fails with "read: connection
-	// reset by peer" ~10s after the app starts (Istio 1.30 native
-	// sidecars still warming up their outbound listener). A single
-	// attempt turns that transient condition into CrashLoopBackOff. This
-	// does not weaken the fail-closed rule: once the budget is exhausted
-	// it still refuses to boot, reporting the real cause.
-	if err := bootretry.Do(rootCtx, logger, "run analytics migrations", func() error {
-		return postgres.RunMigrations(analyticsURL, migrationsPath)
-	}); err != nil {
-		return err
-	}
-
-	pool, err := analyticsstore.NewPool(rootCtx, analyticsURL)
-	if err != nil {
-		return err
-	}
 	// pool.Close() is called explicitly at the END of this function's
 	// graceful-shutdown sequence (NOT deferred here) so it is guaranteed
 	// to run LAST, after the admin server and the analytics consumer
 	// have both already stopped touching it (ADR-0012 §graceful
 	// shutdown).
-	// NewPool does not itself establish a connection, so without this the
-	// first real failure would surface inside the projection loop rather
-	// than at boot.
-	if err := bootretry.Do(rootCtx, logger, "ping analytics database", func() error {
-		return pool.Ping(rootCtx)
-	}); err != nil {
-		pool.Close()
+	pool, err := openAnalyticsPool(rootCtx, logger, analyticsURL, migrationsPath)
+	if err != nil {
 		return err
 	}
 
@@ -184,6 +163,35 @@ func run() error {
 		pool:           pool,
 	}
 	return errors.Join(runErr, rt.shutdown())
+}
+
+// openAnalyticsPool runs the analytical migrations (the projector owns the
+// schema) and opens and pings the pool. Both dials are retried, because in
+// this fleet EVERY injected pod's first outbound TCP dial (Postgres here)
+// fails with "read: connection reset by peer" ~10s after the app starts
+// (Istio 1.30 native sidecars still warming up their outbound listener). A
+// single attempt turns that transient condition into CrashLoopBackOff. This
+// does not weaken the fail-closed rule: once the budget is exhausted it
+// still refuses to boot, reporting the real cause. NewPool does not itself
+// establish a connection, so without the ping the first real failure would
+// surface inside the projection loop rather than at boot.
+func openAnalyticsPool(ctx context.Context, logger *slog.Logger, analyticsURL, migrationsPath string) (*pgxpool.Pool, error) {
+	if err := bootretry.Do(ctx, logger, "run analytics migrations", func() error {
+		return postgres.RunMigrations(analyticsURL, migrationsPath)
+	}); err != nil {
+		return nil, err
+	}
+	pool, err := analyticsstore.NewPool(ctx, analyticsURL)
+	if err != nil {
+		return nil, err
+	}
+	if err := bootretry.Do(ctx, logger, "ping analytics database", func() error {
+		return pool.Ping(ctx)
+	}); err != nil {
+		pool.Close()
+		return nil, err
+	}
+	return pool, nil
 }
 
 // errConsumerStopped is returned by run() when the analytics consumer loop

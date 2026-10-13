@@ -4,8 +4,6 @@ import (
 	"context"
 	"testing"
 	"time"
-
-	"github.com/claudioed/process-path-management/internal/adapters/outbound/postgres"
 )
 
 // TestHousekeepingDurationEnv pins gap fix D15: for the housekeeping knobs
@@ -65,5 +63,4 @@ func TestBuildSweeper_ZeroIntervalDisablesTheJob(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("HOUSEKEEPING_INTERVAL=0 must disable the sweeper, but Run kept running")
 	}
-	var _ *postgres.Sweeper = sweeper
 }
