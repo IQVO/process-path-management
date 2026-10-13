@@ -173,9 +173,10 @@ Runs inside every `pathmgmt` replica that has `DATABASE_URL`
 It is safe across replicas (each `DELETE` targets ids chosen by a
 subquery). A failed pass logs `housekeeping sweep failed` and retries on the
 next tick; a pass that deleted something logs `housekeeping sweep` with
-`idempotency_keys_deleted` and `outbox_events_deleted`. Setting the
-variables to `0s` does not disable it (see
-[Configuration](./configuration.md)).
+`idempotency_keys_deleted` and `outbox_events_deleted`. `HOUSEKEEPING_INTERVAL=0`
+disables the job; `IDEMPOTENCY_KEY_TTL=0` or `OUTBOX_RETENTION=0` disables
+that half (gap fix D15, see [Configuration](./configuration.md)). The boot
+line `housekeeping sweeper configured` shows the values in effect.
 
 ## Scaling
 
@@ -199,10 +200,14 @@ against the OLTP database and 2 × 5 + 3 × 5 against the analytical one.
 ## Reports API (`pathmgmt-reports`)
 
 These routes are served by `cmd/pathmgmt-reports`
-(`internal/adapters/inbound/http/reports_handler.go`) and are **not** in
-`apis/openapi.yaml`. They are unauthenticated and read the analytical
-database through a read-only pool. There is no OTel middleware on this
-router (only request id, request logger and panic recovery).
+(`internal/adapters/inbound/http/reports_handler.go`) and specified in
+`apis/openapi-reports.yaml` (not `apis/openapi.yaml`;
+[ADR 0031](../adr/0031-reports-api-openapi-contract.md), rendered as the
+Reports API Reference). `TestReportsContract_RoutesMatchSpec` and
+`TestReportsContract_ResponsesMatchSpec` fail when the router and that spec
+disagree. They are unauthenticated and read the analytical database through
+a read-only pool. The binary sets up OTel (ADR 0029) but this router has no
+OTel middleware (only request id, request logger and panic recovery).
 
 ### `GET /reports/catalogue-growth`
 
@@ -281,7 +286,7 @@ something actually changed.
 If `outbox.lag_seconds` keeps rising, find the blocking row:
 
 ```sql
-SELECT id, event_type, topic, attempts, last_error, created_at
+SELECT id, event_type, topic, aggregate_id, attempts, last_error, created_at
 FROM outbox_events
 WHERE published_at IS NULL
 ORDER BY id
@@ -291,6 +296,36 @@ LIMIT 5;
 Fix the cause in `last_error` (broker unreachable, topic authorisation,
 message too large). Do not delete the row unless you accept that consumers
 will never see that event.
+
+### Re-arm an outbox row that reached the attempt cap
+
+The relay stops claiming a row once it has failed `OUTBOX_MAX_ATTEMPTS`
+times (default 20, `0` = unlimited;
+[ADR 0030](../adr/0030-outbox-relay-attempt-cap.md)), so one poison row no
+longer blocks every later event. It logs `outbox relay: row reached the
+attempt cap and is no longer claimed` at ERROR with `outbox_id`, `topic`,
+`event_type`, `key`, `attempts` and `error`. The row stays in `outbox_events`; list
+the parked rows with:
+
+```sql
+SELECT id, event_type, topic, aggregate_id, attempts, last_error, created_at
+FROM outbox_events
+WHERE published_at IS NULL AND attempts >= 20   -- your OUTBOX_MAX_ATTEMPTS
+ORDER BY id;
+```
+
+After fixing the cause, re-arm it so the relay claims it on its next pass:
+
+```sql
+UPDATE outbox_events SET attempts = 0 WHERE id = 1234;
+```
+
+Ordering: while a row is parked, later rows with the same key (the same
+`pathId`) are published ahead of it. When it is re-armed it is delivered
+late, after newer events of that path. Consumers that cache the latest state
+of a path must therefore not let an older event overwrite a newer one; if in
+doubt, re-publish the path's latest state instead (revise it through the API)
+and leave the parked row unpublished.
 
 ### Rebuild the analytics read model
 

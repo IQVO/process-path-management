@@ -1,0 +1,61 @@
+---
+id: get-reports-healthz
+title: "Liveness probe"
+description: "Reports that the reports process is up. It does not touch the analytical database: the database is pinged once at boot, with the bootretry budget, and the process exits when that fails."
+sidebar_label: "Liveness probe"
+hide_title: true
+hide_table_of_contents: true
+api: eJzVVm1v2zYQ/isHflgTTLGcDEM7fQsSLw2QJlmqFiiaYD5TZ4kNRbLkyY5q+L8PpOQ0WZYfMH+x+f7c89w9541grIMovoqGUHMj7jJhHXlkZc15JQpRE9+Qs57D+7Tjh8hERUF65eIeUYhxGbhBBm4I/DjhvJUUAqgAnZvAOUNlKYCxDGw72aTNaFD3rCRqqJBxgYGKtLAbxeNOmZoqsEYSIMPCWs5grXi4Ig49se9h0VU1cQZoqrSyQ0APigOsGzIDyiUqHSa3RmTCU3DWBAqi2Iij6TR+PY+vfHLREIrIhLSGyXDcjc5pJRNj+bcQj2xEkA21GH9x70gUwi6+keT03vdOeaoi54GRuxA5dz6yzmqAMc7/PB3YK1O/YP5Yr7EPMLf3811wP6GiCWvyIYKlB2ydTjDuxXabCVachoOkYhs/mWiJGztqLjLhkBtRiLx51D2QX5GP6bIRndeiEA2zK/JcW4m6sYGLd9M/jl7gvLBJXlqRtq4lw7An2yqPD7R1ywdjwmTwviyv/z4+Pb2BipbYaYZ04b7Y3mVCmaVNnIzgr8dAr5Eb+IAGa0p37/Lx+PpcZCICHlAcTqaT6QtsUd2b2fHpwdXlxZen2Rg6v0RJYJc7Sg8i4IP28aU3AW6fozhBRm3rjuDM2zU38AucNGhquhUpn+NNVScZ9o5Pb2A6nb7dzyCxWsGiT/IFcuiRCeb/RdEcFsqg78GuyAOCJ6wOrNE9XNvAtacAzloNWKMygV+rsFSMKsDlVZm2XF2U188fnEf6oLKyi5FSBcoAOhVy68igU5MeW10AQqWWS/KR9wFZBhFoqsDHCh6j/e1wf3Jrbk356BERQyIlFoeyZgiLGxUSK0rSmwB2baCyLSoDtCIT86QirVbkqQIMcKJtV83SChxOpmCHOpiv0VNju0CTV/Sb7JgJc2DrlEyoUzkPejyXYIRp/TwblFKm1gRrr5j8jtHZ59ll+en44uILnFxdfjz/WM4uyyLpBGezEvJRyFzuUuWgTqmSLz2FxsRUYguBCBq7Bm1NDVjb9GBrA4MnSYZ1v2ONKpApxaBB58hQlTi+sesA6AnuqR+C+VSeQIXRI+U98QRmK/I9SNsZJj8IkQYx4Qeeo+bJLndHLi1423FUL5lYAOy4IcOj/T2m9e/7E5h5b32ALhDc/HkCb99N30bMC00tVMTRgWFv/tQ8x9Vfo4nOMxjuOpruD0atlSQTKDqAwTYawIfzUmwHK0bJTxZec4aSsBXZE+sKRZ7XiptuMZG2zc//+nyVv5IsyTedDdyiefLUhVpREi2Cp3+7y+Znn/ift8mxETE9cO40KhOZT0Ruxkax+wvxI/az2Avi1GYTsX3yeruN09878r0ovt5lYoVe4SIa+de7bRbPVuRTZ7mnPvY2KcnFNrRC3cWnX7TZ2BMeW9bZrBTb7T/bJxQ1
+sidebar_class_name: "get api-method"
+info_path: docs/api-reference/rest-reports/process-path-management-reports-api
+custom_edit_url: null
+hide_send_button: true
+---
+
+import MethodEndpoint from "@theme/ApiExplorer/MethodEndpoint";
+import ParamsDetails from "@theme/ParamsDetails";
+import RequestSchema from "@theme/RequestSchema";
+import StatusCodes from "@theme/StatusCodes";
+import OperationTabs from "@theme/OperationTabs";
+import TabItem from "@theme/TabItem";
+import Heading from "@theme/Heading";
+import Translate from "@docusaurus/Translate";
+
+<Heading
+  as={"h1"}
+  className={"openapi__heading"}
+  children={"Liveness probe"}
+>
+</Heading>
+
+<MethodEndpoint
+  method={"get"}
+  path={"/healthz"}
+  context={"endpoint"}
+>
+  
+</MethodEndpoint>
+
+
+
+Reports that the reports process is up. It does not touch the analytical database: the database is pinged once at boot, with the bootretry budget, and the process exits when that fails.
+
+
+<ParamsDetails>
+  
+</ParamsDetails>
+
+<RequestSchema
+  {...require("./get-reports-healthz.RequestSchema.json")}
+>
+  
+</RequestSchema>
+
+<StatusCodes
+  {...require("./get-reports-healthz.StatusCodes.json")}
+>
+  
+</StatusCodes>
+
+
+      

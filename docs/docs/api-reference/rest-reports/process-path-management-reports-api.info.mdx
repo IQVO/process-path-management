@@ -1,0 +1,60 @@
+---
+id: process-path-management-reports-api
+title: "Process Path Management Reports API"
+description: "The READ-ONLY analytical surface of process-path-management's 'Process Path Catalogue Growth & Change' data product (ADR 0007), served by the separate `cmd/pathmgmt-reports` binary over a read-only Postgres pool against the analytical database. It is NOT the OLTP `cmd/pathmgmt` API documented in apis/openapi.yaml: a different binary, port and database (ADR 0031)."
+sidebar_label: Introduction
+sidebar_position: 0
+hide_title: true
+custom_edit_url: null
+---
+
+import ApiLogo from "@theme/ApiLogo";
+import Heading from "@theme/Heading";
+import SchemaTabs from "@theme/SchemaTabs";
+import TabItem from "@theme/TabItem";
+import Export from "@theme/ApiExplorer/Export";
+
+<span
+  className={"theme-doc-version-badge badge badge--secondary"}
+  children={"Version: 1.0.0"}
+>
+</span>
+
+<Heading
+  as={"h1"}
+  className={"openapi__heading"}
+  children={"Process Path Management Reports API"}
+>
+</Heading>
+
+
+
+The READ-ONLY analytical surface of process-path-management's "Process Path Catalogue Growth & Change" data product (ADR 0007), served by the separate `cmd/pathmgmt-reports` binary over a read-only Postgres pool against the analytical database. It is NOT the OLTP `cmd/pathmgmt` API documented in apis/openapi.yaml: a different binary, port and database (ADR 0031).
+
+The report is a projection over this service's own domain events, delivered as CloudEvents 1.0 on the `warehouse.process-path-management.analytics` topic and applied by `cmd/pathmgmt-projector`, the single writer. It is EVENTUALLY CONSISTENT: read GET /reports/catalogue-growth/freshness to see how long ago the most recently projected change happened.
+
+Rows are keyed by UTC day bucket. Every counter is a count of events in that bucket. No route requires authentication (ADR 0005). Errors use RFC 7807 problem details (`application/problem+json`, ADR 0020).
+
+
+<div
+  style={{"display":"flex","flexDirection":"column","marginBottom":"var(--ifm-paragraph-margin-bottom)"}}
+>
+  <h3
+    style={{"marginBottom":"0.25rem"}}
+  >
+    Contact
+  </h3><span>
+    Process Path Management Team: 
+  </span><span>
+    URL: [https://github.com/IQVO/process-path-management](https://github.com/IQVO/process-path-management)
+  </span>
+</div><div
+  style={{"marginBottom":"var(--ifm-paragraph-margin-bottom)"}}
+>
+  <h3
+    style={{"marginBottom":"0.25rem"}}
+  >
+    License
+  </h3>
+</div>
+      

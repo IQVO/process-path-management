@@ -15,7 +15,9 @@ The outbox mechanics stand; the encoded message format it stores (the
 flat `event_id`/`event_type`/`occurred_at` envelope) is **Superseded by
 ADR-0016** — rows now hold the structured-mode CloudEvents 1.0 bytes, with
 `event_id` = the CloudEvents `id` and `event_type` = the full CloudEvents
-`type`.
+`type`. The "a later event for the same path can never overtake a failed
+earlier one" guarantee is **amended by ADR-0030** (relay attempt cap: a row
+that failed `OUTBOX_MAX_ATTEMPTS` times is no longer claimed).
 
 ## Context
 

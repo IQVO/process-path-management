@@ -71,7 +71,7 @@ const (
 // (a routing-shape fact), not a day-to-day operator-tunable parameter
 // like matchPrefix/requiredCapabilities. It is OPTIONAL
 // (shared.DestinationLocationRoleUnset, the zero value, is a fully valid
-// permanent state) — see ADR 0006.
+// permanent state) — see ADR 0009.
 //
 // version is the optimistic-concurrency token (ADR 0017): inert
 // infrastructure metadata the domain never reads, exactly like id — the

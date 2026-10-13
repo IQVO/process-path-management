@@ -28,11 +28,13 @@ import (
 	"time"
 )
 
-// DefaultRetries and DefaultDelay bound the startup retry budget: with
-// exponential backoff (1+2+4+8+16s) the total is ~31s, comfortably past
-// the ~10s first-dial reset and still far inside a startupProbe's own
-// tolerance, so a genuinely unreachable database still fails the pod
-// rather than hanging it.
+// DefaultRetries and DefaultDelay bound the startup retry budget: 5
+// attempts with exponential backoff starting at 1s. The process sleeps only
+// BETWEEN attempts (1+2+4+8 = 15s of backoff; there is no sleep after the
+// last attempt), so the worst case is 15s plus the duration of the five
+// attempts themselves: comfortably past the ~10s first-dial reset and still
+// far inside a startupProbe's own tolerance, so a genuinely unreachable
+// database still fails the pod rather than hanging it.
 const (
 	DefaultRetries = 5
 	DefaultDelay   = time.Second
@@ -46,7 +48,7 @@ func Do(ctx context.Context, logger *slog.Logger, what string, op func() error) 
 }
 
 // DoWithDelay is Do with the base delay injected, so tests can exercise
-// the give-up path without sleeping out the real ~31s budget.
+// the give-up path without sleeping out the real 15s of backoff.
 //
 // On success it returns nil immediately (a healthy boot never pays the
 // backoff). On exhaustion it returns the LAST error, wrapped so

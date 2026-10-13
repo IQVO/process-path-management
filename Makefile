@@ -13,7 +13,7 @@ COVERAGE_THRESHOLD := 90
 
 .DEFAULT_GOAL := help
 
-.PHONY: help build vet fmt fmt-check lint test coverage bdd arch-test integration mutation mutation-fast api-lint vuln contract check check-all
+.PHONY: help build vet fmt fmt-check lint test coverage bdd arch-test integration mutation mutation-fast api-lint vuln contract chart-test check check-all
 
 help:
 	@echo "process-path-management — local quality gate (targets mirror .github/workflows/ci.yml)"
@@ -31,9 +31,10 @@ help:
 	@echo "  integration       go test -tags=integration ./... -race -count=1 (needs Docker; testcontainers)"
 	@echo "  mutation-fast     gremlins unleash ./internal/domain — CI's blocking job (only ~11 mutants here, so full-domain IS the fast subset)"
 	@echo "  mutation          alias for mutation-fast (see .gremlins.yaml)"
-	@echo "  api-lint          Spectral lint on openapi.yaml and asyncapi.yaml"
+	@echo "  api-lint          Spectral lint on openapi.yaml, openapi-reports.yaml and asyncapi.yaml"
 	@echo "  vuln              Known CVEs in the dependency graph and the Go stdlib"
 	@echo ""
+	@echo "  chart-test        Helm chart render + Service selector tests (helm + PyYAML)"
 	@echo "  contract          scripts/contract-test.sh — Schemathesis property-based"
 	@echo "                    contract tests vs apis/openapi.yaml (needs 'st' on PATH)"
 	@echo ""
@@ -115,6 +116,7 @@ api-lint:
 		exit 1; \
 	fi
 	spectral lint apis/openapi.yaml --ruleset .spectral.yaml --fail-severity=warn
+	spectral lint apis/openapi-reports.yaml --ruleset .spectral.yaml --fail-severity=warn
 	spectral lint apis/asyncapi.yaml --ruleset .spectral.asyncapi.yaml --fail-severity=warn
 
 vuln:
@@ -131,6 +133,12 @@ vuln:
 # `schemathesis==4.28.0` tooling on PATH, like CI installs).
 contract:
 	./scripts/contract-test.sh
+
+# Helm chart render and Service selector tests — mirrors the `chart-tests`
+# CI job. Needs helm and Python 3 with PyYAML on PATH.
+chart-test:
+	bash charts/process-path-management/tests/render_test.sh
+	python3 charts/process-path-management/tests/test_service_selectors.py
 
 # The fast self-correction loop: run this after every change, before committing.
 check: fmt-check vet build lint test

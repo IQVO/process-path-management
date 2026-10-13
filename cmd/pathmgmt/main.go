@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -117,19 +118,11 @@ func run() error {
 	// Housekeeping sweeper (ADR 0018): bounds the two append-only tables
 	// (idempotency_keys, published outbox_events) so they do not grow
 	// without limit. Runs alongside the HTTP server in the same process
-	// and stops with the same signal context; a 0/negative TTL disables
-	// the corresponding half. Safe across replicas (each DELETE targets
-	// explicitly-eligible rows only). Env vars are read HERE, in the
-	// composition root, never in the adapter. Nil without Postgres
+	// and stops with the same signal context. Nil without Postgres
 	// (in-memory dev mode has neither table).
 	var sweeper *postgres.Sweeper
 	if persistence.pool != nil {
-		sweeper = postgres.NewSweeper(persistence.pool,
-			postgres.WithSweepInterval(durationEnv("HOUSEKEEPING_INTERVAL", postgres.DefaultSweepInterval)),
-			postgres.WithIdempotencyKeyTTL(durationEnv("IDEMPOTENCY_KEY_TTL", postgres.DefaultIdempotencyKeyTTL)),
-			postgres.WithOutboxRetention(durationEnv("OUTBOX_RETENTION", postgres.DefaultOutboxRetention)),
-			postgres.WithSweeperLogger(logger),
-		)
+		sweeper = buildSweeper(persistence.pool, logger)
 	}
 
 	pathMetrics, err := telemetry.NewPathMetrics()
@@ -293,7 +286,7 @@ func newLogger(level string) *slog.Logger {
 	switch strings.ToLower(level) {
 	case "debug":
 		lvl = slog.LevelDebug
-	case "warn":
+	case "warn", "warning":
 		lvl = slog.LevelWarn
 	case "error":
 		lvl = slog.LevelError
@@ -446,10 +439,16 @@ func buildEventPublisher(p *persistence, logger *slog.Logger) (ports.EventPublis
 		return fanOut, nil, closeBoth
 	}
 
+	// OUTBOX_MAX_ATTEMPTS (ADR 0030, gap fix D12): after this many failed
+	// sends a row is no longer claimed, so one poison row cannot block the
+	// relay forever. 0 = unlimited.
+	maxAttempts := nonNegativeIntEnv(outboxMaxAttemptsEnv, defaultOutboxMaxAttempts, logger)
 	relay := postgres.NewOutboxRelay(p.pool, kafkaPublisher, logger,
-		postgres.WithInterval(durationEnv("OUTBOX_RELAY_INTERVAL", time.Second)))
+		postgres.WithInterval(durationEnv("OUTBOX_RELAY_INTERVAL", time.Second)),
+		postgres.WithMaxAttempts(maxAttempts))
 	logger.Info("kafka event publishing enabled (transactional outbox)",
-		"brokers", brokers, "topic", outboundkafka.Topic, "analytics_topic", outboundkafka.AnalyticsTopic)
+		"brokers", brokers, "topic", outboundkafka.Topic, "analytics_topic", outboundkafka.AnalyticsTopic,
+		"outbox_max_attempts", maxAttempts)
 	// Every domain event is enqueued onto BOTH the integration topic
 	// (unchanged, ADR 0003) and the new analytics topic (ADR 0007) in the
 	// same transaction as the aggregate write, so the two streams can
@@ -465,6 +464,9 @@ func buildEventPublisher(p *persistence, logger *slog.Logger) (ports.EventPublis
 // durationEnv parses key as a time.Duration, falling back on absence or a
 // malformed value (logged by the caller's startup line rather than
 // failing the boot: the relay interval is a tuning knob, not a contract).
+// A zero or negative value also falls back: for OUTBOX_RELAY_INTERVAL it
+// would be a busy loop, not a meaningful setting. The housekeeping knobs,
+// where 0 means "disabled", use housekeepingDurationEnv instead.
 func durationEnv(key string, fallback time.Duration) time.Duration {
 	v := os.Getenv(key)
 	if v == "" {
@@ -475,6 +477,69 @@ func durationEnv(key string, fallback time.Duration) time.Duration {
 		return fallback
 	}
 	return d
+}
+
+// housekeepingDurationEnv parses one of the housekeeping sweeper's knobs
+// (ADR 0018). Unlike durationEnv, a zero or negative duration is returned
+// as is, because the sweeper reads it as "disabled": HOUSEKEEPING_INTERVAL=0
+// turns the whole job off, IDEMPOTENCY_KEY_TTL=0 / OUTBOX_RETENTION=0 turn
+// off that half (gap fix D15: the ADR, the chart and the sweeper's own doc
+// comment always said so, but durationEnv silently replaced 0 with the
+// default). Unset or unparseable values fall back.
+func housekeepingDurationEnv(key string, fallback time.Duration) time.Duration {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		return fallback
+	}
+	return d
+}
+
+// buildSweeper wires the housekeeping sweeper (ADR 0018) from the
+// environment. Env vars are read HERE, in the composition root, never in
+// the adapter. A 0/negative HOUSEKEEPING_INTERVAL disables the job; a
+// 0/negative TTL disables the corresponding half. Safe across replicas
+// (each DELETE targets explicitly-eligible rows only).
+func buildSweeper(pool *pgxpool.Pool, logger *slog.Logger) *postgres.Sweeper {
+	interval := housekeepingDurationEnv("HOUSEKEEPING_INTERVAL", postgres.DefaultSweepInterval)
+	idempotencyTTL := housekeepingDurationEnv("IDEMPOTENCY_KEY_TTL", postgres.DefaultIdempotencyKeyTTL)
+	outboxRetention := housekeepingDurationEnv("OUTBOX_RETENTION", postgres.DefaultOutboxRetention)
+	logger.Info("housekeeping sweeper configured",
+		"interval", interval.String(), "enabled", interval > 0,
+		"idempotency_key_ttl", idempotencyTTL.String(), "outbox_retention", outboxRetention.String())
+	return postgres.NewSweeper(pool,
+		postgres.WithSweepInterval(interval),
+		postgres.WithIdempotencyKeyTTL(idempotencyTTL),
+		postgres.WithOutboxRetention(outboxRetention),
+		postgres.WithSweeperLogger(logger),
+	)
+}
+
+// OUTBOX_MAX_ATTEMPTS caps how many failed sends an outbox row may
+// accumulate before the relay stops claiming it (ADR 0030). 0 = unlimited.
+const (
+	outboxMaxAttemptsEnv     = "OUTBOX_MAX_ATTEMPTS"
+	defaultOutboxMaxAttempts = 20
+)
+
+// nonNegativeIntEnv reads a non-negative integer from key, falling back to
+// fallback for an unset value and, with a warning, for an unparseable or
+// negative one. 0 is a valid value (OUTBOX_MAX_ATTEMPTS uses it for
+// "unlimited").
+func nonNegativeIntEnv(key string, fallback int, logger *slog.Logger) int {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return fallback
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || n < 0 {
+		logger.Warn("ignoring invalid integer env var", "key", key, "value", raw, "fallback", fallback)
+		return fallback
+	}
+	return n
 }
 
 func getenv(key, fallback string) string {
