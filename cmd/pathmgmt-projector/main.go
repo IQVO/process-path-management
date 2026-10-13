@@ -106,7 +106,7 @@ func run() error {
 
 	projection := analyticsstore.NewPostgresProjection(pool)
 	consumed := analyticsstore.NewConsumedEventsRepo(pool)
-	consumer := inboundkafka.NewAnalyticsConsumer(kafkaBrokers, outboundkafka.AnalyticsTopic, projection, consumed, logger)
+	consumer := inboundkafka.NewAnalyticsConsumer(kafkaBrokers, outboundkafka.AnalyticsTopic, projection, consumed, analyticsstore.NewUnitOfWork(pool), logger)
 
 	// readiness gates GET /readyz (ADR-0012 §graceful shutdown,
 	// mirroring order-management's ADR-0025). The zero value is

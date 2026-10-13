@@ -84,7 +84,7 @@ func uniqueTopic(t *testing.T) string {
 func startConsumer(t *testing.T, brokerList []string, topic string, projection report.ProjectionStore, processed inboundkafka.ProcessedEvents) context.Context {
 	t.Helper()
 	group := fmt.Sprintf("itest-group-%d", time.Now().UnixNano())
-	consumer := inboundkafka.NewAnalyticsConsumerInGroup(brokerList, topic, group, projection, processed, nil)
+	consumer := inboundkafka.NewAnalyticsConsumerInGroup(brokerList, topic, group, projection, processed, nil, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {

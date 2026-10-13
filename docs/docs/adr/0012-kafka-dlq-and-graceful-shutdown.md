@@ -11,7 +11,7 @@ description: "ADR 0012 — Phase 2 resilience for process-path-management: a dea
 
 ## Status
 
-Accepted — implemented in the same change that introduced this record.
+Accepted — implemented in the same change that introduced this record. The "mark once, retry only the apply" split is amended by [ADR 0032](./0032-analytics-claim-and-apply-in-one-transaction.md): the claim and the projection write now commit in one transaction and are retried as one unit.
 This is process-path-management's slice of Phase 2 (resilience) of the
 fleet production-readiness plan, copying order-management's ADR-0025
 (PR #107) for its DLQ and graceful-shutdown pieces only. ADR-0025's

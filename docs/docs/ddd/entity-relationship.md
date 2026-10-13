@@ -153,7 +153,7 @@ tables hold CloudEvents `id`s, and the rollup is bucketed by UTC day.
 | `idempotency_keys` | Infrastructure: `Idempotency-Key` replay cache (ADR 0011), swept by TTL (ADR 0018) | none — HTTP adapter |
 | `schema_migrations` | Infrastructure: golang-migrate bookkeeping | none |
 | `analytics_processed_events` | Analytics projection dedupe and freshness | `pathmgmt-projector` read model |
-| `analytics_consumed_events` | Analytics consumer dedupe gate | `pathmgmt-projector` read model |
+| `analytics_consumed_events` | Analytics consumer dedupe gate, written in the same transaction as the projection (ADR 0032) | `pathmgmt-projector` read model |
 | `catalogue_growth_rollup` | Analytics projection, "Process Path Catalogue Growth & Change" | `pathmgmt-projector` read model, served by `pathmgmt-reports` |
 
 There is no inbound `processed_events` table in the OLTP database: this
