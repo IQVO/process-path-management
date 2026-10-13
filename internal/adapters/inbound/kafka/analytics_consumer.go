@@ -175,6 +175,12 @@ func newDLQWriter(brokers []string, dlqTopic string) *kafkago.Writer {
 		Addr:                   kafkago.TCP(brokers...),
 		Topic:                  dlqTopic,
 		AllowAutoTopicCreation: true,
+		// RequiredAcks: kafka-go defaults to RequireNone (acks=0), so a
+		// broker blip or leader move would silently drop the poison message
+		// while WriteMessages returns nil and the offset is committed as if
+		// it had been dead-lettered. RequireAll waits for every in-sync
+		// replica; the writer stays synchronous so a failure reaches Run.
+		RequiredAcks: kafkago.RequireAll,
 		// BatchTimeout: a DLQ write is a synchronous single message; with
 		// kafka-go's 1s default the writer holds every write for a full second
 		// waiting to fill a batch, capping dead-lettering at ~1 msg/s/partition

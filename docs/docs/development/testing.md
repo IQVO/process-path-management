@@ -85,6 +85,7 @@ integration test gates on `DATABASE_URL`/`KAFKA_BROKERS` or hardcodes
 | `TestEventCatalogueMatchesContract`, `TestEventCatalogueDetector` (`catalogue_fitness_test.go`) | The CloudEvents types in the code match the event catalogue declared in `apis/asyncapi.yaml` |
 | `TestCloudEventsOnly`, `TestReplayConsumersSetCommitInterval` (`events_fitness_test.go`) | CloudEvents 1.0 is the only envelope (no envelope-mode switch); a Kafka reader whose group id is generated per instance must set a commit interval |
 | `TestOutboxRelaysPassAttemptCap` (+ `TestOutboxRelayCapSensorFailsOnBadFixtures`, `outbox_relay_cap_fitness_test.go`) | Every non-test `cmd/` call to `NewOutboxRelay` passes `WithMaxAttempts` ([ADR 0030](../adr/0030-outbox-relay-attempt-cap.md)) |
+| `TestKafkaWritersSetRequiredAcks` (+ `TestKafkaWriterAcksSensorBites`, `kafka_writer_acks_fitness_test.go`) | Every kafka-go `Writer` literal in a non-test file under `internal/` or `cmd/` sets `RequiredAcks` (publishers use `syncWriterRequiredAcks`, the analytics DLQ writer `kafkago.RequireAll`): kafka-go defaults to `RequireNone` (acks=0), which silently drops a write on a broker blip while `WriteMessages` returns nil (fleet rollout 2026-10-13) |
 | `TestMCPOptionalToolInputsCarryOmitempty` (+ `TestMCPOptionalToolInputsSensorFailsOnBadFixtures`, `mcp_optional_inputs_test.go`) | An MCP tool input field whose `jsonschema` description says "optional" carries `omitempty`, so the SDK does not mark it required (gap fix D16) |
 
 ### MCP evals
