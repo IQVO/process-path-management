@@ -1,0 +1,61 @@
+---
+id: get-catalogue-growth-freshness
+title: "Time since the most recently projected catalogue change"
+description: "Returns now minus the newest event time the projector has applied, or 0 when the read model is empty. The catalogue changes rarely, so this grows steadily between operator edits even when the projector is fully caught up: it is 'time since the last projected change', not consumer lag."
+sidebar_label: "Time since the most recently projected catalogue change"
+hide_title: true
+hide_table_of_contents: true
+api: eJztV9tu20YQ/ZXBPtQ2SlFK3CCN3gxHSQ24tusoKYrYqEbcEbnNcpfZHUoRDP17MUtd4zrJB/TJMi+zZ87MnDN8UIxlVMOPKlDjA0d1nynfUEA23l1oNVQl8TkyWl+29Db4BVdvAsXKUYwqU5piEUwjT6uhuiVug4vg/AJq49oIXBE4WlBkoDk5BjY1patN8P9QwT5AhRGwaawhnYEPMIBFRS49FAg11F6TBROB6oaXOYwrgmIDCYoKXUkRAgayywyiB65MhDL4RYTIhNrYJUyJF0QOuuR8ANKGYwK1O26HyUSYtdYuocC2rBjaZgiG5fKdSilE44ouEYuRN2+SXuO5Uxk4z1B4F9uaAlgs8zunMhUoNt5Fimr4oJ4PBvLnkMWUXxuC0DXbcJ0CqEwV3jE5lrcSZ0WqVP+fKK8+qFhUVKP84mVDaqj8VHClcz+3JpCWYlss31HhnU71boKQwqaDtHdvF8W19ZSCytTMhxpZDZX27dTSow5Yv7qlWzoBnU5EJd78LP2ufWQIVJBju9xjLzVJ/r0WSETSF6wbS2r47PnpL/mL1SpTbFguqF2HrlZy/cVTNO/ojaZ0aKHwrdWpctP10ceTbjR6kX2gHoXgw+TkG6Vogp9aqn/+fkm+Gp435/Dy18FLWAcATYzGxizREFGarsKGALuxur4c38DZzcVRzL8qbzpnw0amIiO33bBKQJUp4yKjK+hx9TuIW6iRg3Hlft3bYB4hv9Dk2MwMhU15E0sypFT6sMz3q6Uq5iYO+/30TMyb4AuKsdcgV70aHZZUSw8sMFDl20i9uIxMdcw1zfvGzdEa3VvX5HNLYal2lX8M/BDpG/OFNMS2rjEsfwTsOHWgnAXpLOnBGq3QQVrEqjYxGlcCwqYC0GDAmpiCAFuTv0NmHFN5OEvG8enzR1jl6N/G4xvoQkDhNWUChlAmxXTjMfX6EPIvg8FqW+rvEvJnhQwLUZpF8K7sopqYkqHIh2R0DGzTg6NZ8PURrB9PuR/fvjk/PT19dSK5b9vsuzA6mtORII1weG5/bU79rer3yuREan/ob7qxSSO/ylRNXPm1galMSdRvherP9lwtUphTEF98UG2w66Yd9vvWF2grH3n46+DV45Jdym3QNCfrG+liOC5q3Zez67LmddfGLNX177PXr29B0wxby5ACnqjVvdA284myXWIyIXCDXMHv2wmB2y6aaIDKlADuUDzLB/ngPym+HZ297l1fXf4F6NAu2Qjc2IYZFkmZn5jFI3G9AxTbjQC6lQB+gvO174FGRomk24Lh+Oz1LQwGg5cnGSRWNUyXnaCRNBITTP6LoglMjUszOqeQhgt1zzu7hBsfuQwUofHeApYoXZYi7uUkGKYYKYeLZNpX1+OdZh4cOBH6QPuilUy7ucLGxL5vyGFj8iXWdggI2sxmlDy5Q5ZBUgUxt81pm2xPn53kd+7O7YmHiYAbmzPedWmlSRNWTEFHEfzCgfY1GtfZYMxAkzVzksHCCOfWt3qU7sCzfAC+U4DJVimf1NINM3EC7BtTJNTrlUvqcViC7RY0WVuPcaUlWATDFDaMjj6Mrsbvzy4v/4Lz66t3F+/Go6vxsLPMt6Mx/MCgAXuIRFD5BVgRHyz9N5eDbrWCCpuGHOnE8a1seRgIPtGyS+b9+Bw0LmHaFp+IcxjNRbUK3zrRrFSI9I80fMdzp3rI21euPATfMm10LQK2XInJdR6/besXJzmMko9BGwmesnA4njy1IUwy6GI9H5x0e401BbmYRNNhLQLw+8VY5FT2DSx478ZTyjAmrFW2J13it6Xhqp3mha/7F398uO4/0SxJUxsfuUa3d9T4cOl9skRf7eVfy9DDbmv6/2vhB74W1rbJ9IX7jUXjpBFSXR/Wlrb7dMvUI3/M1M7W7jMlziVvPDyIXL0PdrWSy90WNfx4n6k5BoOy2A8/3q8yVRFqCskHP9FSDdVZUVAjfjpH2wqyRx8h4mBb7307GqvV6l/3ng1b
+sidebar_class_name: "get api-method"
+info_path: docs/api-reference/rest-reports/process-path-management-reports-api
+custom_edit_url: null
+hide_send_button: true
+---
+
+import MethodEndpoint from "@theme/ApiExplorer/MethodEndpoint";
+import ParamsDetails from "@theme/ParamsDetails";
+import RequestSchema from "@theme/RequestSchema";
+import StatusCodes from "@theme/StatusCodes";
+import OperationTabs from "@theme/OperationTabs";
+import TabItem from "@theme/TabItem";
+import Heading from "@theme/Heading";
+import Translate from "@docusaurus/Translate";
+
+<Heading
+  as={"h1"}
+  className={"openapi__heading"}
+  children={"Time since the most recently projected catalogue change"}
+>
+</Heading>
+
+<MethodEndpoint
+  method={"get"}
+  path={"/reports/catalogue-growth/freshness"}
+  context={"endpoint"}
+>
+  
+</MethodEndpoint>
+
+
+
+Returns now minus the newest event time the projector has applied, or 0 when the read model is empty. The catalogue changes rarely, so this grows steadily between operator edits even when the projector is fully caught up: it is "time since the last projected change", not consumer lag.
+
+
+<ParamsDetails>
+  
+</ParamsDetails>
+
+<RequestSchema
+  {...require("./get-catalogue-growth-freshness.RequestSchema.json")}
+>
+  
+</RequestSchema>
+
+<StatusCodes
+  {...require("./get-catalogue-growth-freshness.StatusCodes.json")}
+>
+  
+</StatusCodes>
+
+
+      

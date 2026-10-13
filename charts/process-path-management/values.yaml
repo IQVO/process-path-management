@@ -165,10 +165,15 @@ environment: "local"
 # This service has no inbound Kafka consumer (see README) — it is the
 # SOURCE of the process-path published language, not a consumer — so
 # there is no consumer-group config to expose here, unlike labor-performance.
+#
+# The keys below are rendered into templates/configmap.yaml (and/or the api
+# Deployment's explicit env) and reach cmd/pathmgmt through the api
+# Deployment's `envFrom: configMapRef` (gap fix D14); explicit env/extraEnv
+# entries win for the same key.
 config:
   httpAddr: ":8080"
   migrationsPath: "migrations"
-  logLevel: "info"        # debug | info | warn | error
+  logLevel: "info"        # debug | info | warn (or warning) | error
   corsAllowedOrigins: "http://localhost:5173,http://localhost:5189"
   # "log" (default) or "kafka" — gates whether ProcessPath* events are
   # published onto warehouse.process-path-management.events at all.
@@ -177,11 +182,18 @@ config:
   # rows older than idempotencyKeyTtl and PUBLISHED outbox_events rows
   # older than outboxRetention (unpublished rows are never swept). Only
   # takes effect when a database is configured; any value <= 0 ("0s")
-  # disables that half. Go duration strings.
+  # disables that half, and interval "0s" disables the whole job (gap fix
+  # D15 made the binary honour this). Go duration strings.
   housekeeping:
     interval: "1h"
     idempotencyKeyTtl: "24h"
     outboxRetention: "168h"
+  # OUTBOX_MAX_ATTEMPTS (ADR 0030): after this many failed sends an outbox
+  # row is no longer claimed by the relay, so one poison row cannot stop it
+  # forever. The row stays in outbox_events (attempts, last_error) and is
+  # logged at ERROR; re-arm it with
+  # `UPDATE outbox_events SET attempts = 0 WHERE id = ...`. "0" = unlimited.
+  outboxMaxAttempts: "20"
 
 database:
   url: ""
@@ -224,10 +236,11 @@ otel:
 extraEnv: []
 
 # Covers the eager Postgres dial (migrations + pool.Ping) at boot, which is
-# now wrapped in a bounded retry (internal/adapters/outbound/bootretry) with
-# a budget of ~31s. periodSeconds * failureThreshold gives a ~60s window,
-# comfortably past that budget, before the kubelet gives up and restarts the
-# pod. Once startupProbe succeeds, liveness/readiness probing takes over.
+# now wrapped in a bounded retry (internal/adapters/outbound/bootretry): 5
+# attempts, 1+2+4+8 = 15s of backoff plus the attempts themselves.
+# periodSeconds * failureThreshold gives a ~60s window, comfortably past that
+# budget, before the kubelet gives up and restarts the pod. Once
+# startupProbe succeeds, liveness/readiness probing takes over.
 startupProbe:
   httpGet:
     path: /healthz

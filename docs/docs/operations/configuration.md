@@ -31,25 +31,26 @@ Source: `cmd/pathmgmt/main.go` unless noted.
 | `EVENT_PUBLISHER` | `log` | no | `kafka` (case-insensitive) enables Kafka publishing; any other value keeps the log publisher. See the delivery-mode table on [Architecture](../overview/architecture.md#delivery-modes). |
 | `KAFKA_BROKERS` | `localhost:9092` | only with `EVENT_PUBLISHER=kafka` | Comma-separated broker list for the integration and analytics writers. Ignored when `EVENT_PUBLISHER` is not `kafka`. |
 | `OUTBOX_RELAY_INTERVAL` | `1s` | no | Idle poll interval of the outbox relay (Go duration). Only used when both `DATABASE_URL` and `EVENT_PUBLISHER=kafka` are set. Malformed, zero or negative values fall back to `1s`. |
-| `HOUSEKEEPING_INTERVAL` | `1h` | no | How often the housekeeping sweeper runs (Go duration). Only used when `DATABASE_URL` is set. |
-| `IDEMPOTENCY_KEY_TTL` | `24h` | no | Age after which an `idempotency_keys` row is deleted by the sweeper. It is also how long a client retry with the same `Idempotency-Key` is still replayed. |
-| `OUTBOX_RETENTION` | `168h` (7 days) | no | Age after which a **published** `outbox_events` row is deleted. Unpublished rows are never deleted. |
-| `LOG_LEVEL` | `info` | no | `debug`, `warn`, `error`; anything else means `info`. JSON logs to stdout. |
+| `OUTBOX_MAX_ATTEMPTS` | `20` | no | Failed sends after which the outbox relay stops claiming a row ([ADR 0030](../adr/0030-outbox-relay-attempt-cap.md)). `0` = unlimited (the pre-cap behaviour); an unparseable or negative value falls back to `20` with a warning. The parked row stays in `outbox_events`; re-arm it with `UPDATE outbox_events SET attempts = 0 WHERE id = ...` ([Runbook](./runbook.md#re-arm-an-outbox-row-that-reached-the-attempt-cap)). Only used with the outbox (Postgres + Kafka). |
+| `HOUSEKEEPING_INTERVAL` | `1h` | no | How often the housekeeping sweeper runs (Go duration). Only used when `DATABASE_URL` is set. `0` (or any zero/negative duration) disables the sweeper. |
+| `IDEMPOTENCY_KEY_TTL` | `24h` | no | Age after which an `idempotency_keys` row is deleted by the sweeper. It is also how long a client retry with the same `Idempotency-Key` is still replayed. `0` keeps the rows forever. |
+| `OUTBOX_RETENTION` | `168h` (7 days) | no | Age after which a **published** `outbox_events` row is deleted. Unpublished rows are never deleted. `0` keeps published rows forever. |
+| `LOG_LEVEL` | `info` | no | `debug`, `warn` (or `warning`), `error`; anything else means `info`. JSON logs to stdout. |
 | `OTEL_SERVICE_NAME` | `process-path-management` | no | OTel `service.name`, also the otelchi span/metric server name (`DefaultServiceName` in `internal/adapters/inbound/http/server.go`). |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `localhost:4317` | no | OTLP/gRPC endpoint (insecure) for traces and metrics. Export is non-blocking: an unreachable Collector only drops telemetry. |
 | `SERVICE_VERSION` | `dev` | no | OTel `service.version`. A build-time `-ldflags "-X main.version=..."` value takes precedence. |
 | `ENVIRONMENT` | `local` | no | OTel `deployment.environment.name` resource attribute (`internal/adapters/outbound/telemetry/telemetry.go`). |
 | `CORS_ALLOWED_ORIGINS` | `http://localhost:5173,http://localhost:5189` | no | Comma-separated browser origins allowed by the CORS middleware (methods GET/POST/PUT/DELETE, headers `Content-Type`, `Authorization`, `Idempotency-Key`, max-age 300 s). Read in `internal/adapters/inbound/http/server.go`. |
 
-:::warning[Zero durations do not disable the sweeper]
+:::note[Zero durations disable the sweeper]
 `HOUSEKEEPING_INTERVAL`, `IDEMPOTENCY_KEY_TTL` and `OUTBOX_RETENTION` are
-parsed by `durationEnv`, which returns the **default** for a malformed,
-zero or negative value. The `Sweeper` itself supports "`<= 0` disables"
-(`internal/adapters/outbound/postgres/sweeper.go`), but that path cannot be
-reached through these variables: setting `"0s"` gives you the default
-(`1h` / `24h` / `168h`), not a disabled sweep. The chart comments in
-`values.yaml` and `templates/deployment.yaml` say the opposite; the code
-wins.
+parsed by `housekeepingDurationEnv` (`cmd/pathmgmt/main.go`), which keeps a
+zero or negative duration as is: `HOUSEKEEPING_INTERVAL=0` turns the whole
+job off, `IDEMPOTENCY_KEY_TTL=0` / `OUTBOX_RETENTION=0` turn off that half
+([ADR 0018](../adr/0018-outbox-lag-gauge-and-housekeeping-sweeper.md)). A
+malformed value falls back to the default (`1h` / `24h` / `168h`). The
+startup line `housekeeping sweeper configured` logs the values in effect.
+Before gap fix D15 a zero value silently meant the default.
 :::
 
 ## `mcp` (MCP server)
@@ -83,10 +84,15 @@ Source: `cmd/pathmgmt-projector/main.go`.
 | `KAFKA_BROKERS` | `localhost:9092` | no | Comma-separated broker list for the `warehouse.process-path-management.analytics` reader and the `.dlq` writer. |
 | `ADMIN_ADDR` | `:8091` | no | Listen address of the admin server (`/healthz`, `/readyz`). |
 | `LOG_LEVEL` | `info` | no | `debug`, `warn`/`warning`, `error`; anything else means `info`. |
+| `OTEL_SERVICE_NAME` | `pathmgmt-projector` | no | OTel `service.name`. |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | `localhost:4317` | no | As for `pathmgmt`. |
+| `SERVICE_VERSION` | `dev` | no | OTel `service.version`. |
+| `ENVIRONMENT` | `local` | no | As for `pathmgmt`. |
 
-The projector does not set up OpenTelemetry. The chart still injects
-`OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_SERVICE_NAME`, `SERVICE_VERSION` and
-`ENVIRONMENT` into its pod when `otel.enabled=true`; the binary ignores them.
+Since gap fix D21 ([ADR 0029](../adr/0029-analytics-binaries-telemetry-and-liveness.md))
+the projector calls `telemetry.Setup` like `pathmgmt`. It exits 1 when its
+analytics consumer loop stops on its own (gap fix D13), so Kubernetes
+restarts it instead of leaving a Ready pod that projects nothing.
 
 ## `pathmgmt-reports` (analytics reader)
 
@@ -97,9 +103,13 @@ Source: `cmd/pathmgmt-reports/main.go`.
 | `ANALYTICS_DATABASE_URL` | none | **yes** | DSN of the analytical database. Opened read-only (`default_transaction_read_only=on`, 5 connections, `statement_timeout=15s`). Exits with `ANALYTICS_DATABASE_URL is required` when unset. In the chart this is fed from the secret key `ANALYTICS_READER_DATABASE_URL`. |
 | `HTTP_ADDR` | `:8092` | no | Listen address of `/reports/catalogue-growth`, `/reports/catalogue-growth/freshness` and `/healthz`. |
 | `LOG_LEVEL` | `info` | no | As for the projector. |
+| `OTEL_SERVICE_NAME` | `pathmgmt-reports` | no | OTel `service.name`. |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | `localhost:4317` | no | As for `pathmgmt`. |
+| `SERVICE_VERSION` | `dev` | no | OTel `service.version`. |
+| `ENVIRONMENT` | `local` | no | As for `pathmgmt`. |
 
-Like the projector, the reports binary has no OTel wiring, so the `OTEL_*`,
-`SERVICE_VERSION` and `ENVIRONMENT` values the chart injects are unused.
+Like the projector, the reports binary calls `telemetry.Setup` (gap fix
+D21). Its routes are specified in `apis/openapi-reports.yaml`.
 
 ## Boot-time retry
 
@@ -112,21 +122,27 @@ configurable.
 
 ## How the Helm chart maps values to variables
 
-Chart: `charts/process-path-management`. The Deployments set the variables
-inline (`env:`), not through the ConfigMap; the ConfigMap is rendered and
-its checksum annotates the api pod so a change rolls it.
+Chart: `charts/process-path-management`. The api Deployment mounts the chart
+ConfigMap with `envFrom: configMapRef` (gap fix D14: every ConfigMap key is
+read by `cmd/pathmgmt`) and also sets most variables inline (`env:`), which
+win over the ConfigMap for the same key; the ConfigMap's checksum annotates
+the api pod so a change rolls it. The mcp, projector and reports
+Deployments set their variables inline only and do not mount the ConfigMap.
+`charts/process-path-management/tests/render_test.sh` (CI job
+`chart-tests`) asserts this wiring.
 
 | Helm value | Variable | Binary |
 | --- | --- | --- |
 | `config.httpAddr` (`:8080`) | `HTTP_ADDR` | pathmgmt |
 | `config.migrationsPath` (`migrations`) | `MIGRATIONS_PATH` | pathmgmt, mcp |
-| `config.logLevel` (`info`) | `LOG_LEVEL` | pathmgmt, mcp |
+| `config.logLevel` (`info`) | `LOG_LEVEL` | all four |
 | `config.corsAllowedOrigins` | `CORS_ALLOWED_ORIGINS` | pathmgmt |
 | `config.eventPublisher` (`log`) | `EVENT_PUBLISHER` | pathmgmt |
+| `config.outboxMaxAttempts` (`"20"`) | `OUTBOX_MAX_ATTEMPTS` | pathmgmt |
 | `config.housekeeping.interval` / `.idempotencyKeyTtl` / `.outboxRetention` | `HOUSEKEEPING_INTERVAL` / `IDEMPOTENCY_KEY_TTL` / `OUTBOX_RETENTION` | pathmgmt |
-| `environment` (`local`) | `ENVIRONMENT` | all four (only pathmgmt and mcp use it) |
-| `image.tag` or chart `appVersion` | `SERVICE_VERSION` | all four (only pathmgmt and mcp use it) |
-| `otel.endpoint`, `otel.serviceName` (when `otel.enabled`) | `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_SERVICE_NAME` | pathmgmt; mcp gets the fixed name `process-path-management-mcp` |
+| `environment` (`local`) | `ENVIRONMENT` | all four (always set, independent of `otel.enabled`) |
+| `image.tag` or chart `appVersion` | `SERVICE_VERSION` | all four (always set) |
+| `otel.endpoint`, `otel.serviceName` (when `otel.enabled`) | `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_SERVICE_NAME` | all four; mcp, projector and reports get the fixed names `process-path-management-mcp`, `pathmgmt-projector`, `pathmgmt-reports` |
 | secret `database.existingSecretKey` (`DATABASE_URL`) | `DATABASE_URL` | pathmgmt, mcp (only when `database.url` or `database.existingSecret` is set) |
 | secret `database.migrationsExistingSecretKey` (`MIGRATIONS_DATABASE_URL`, `optional: true`) | `MIGRATIONS_DATABASE_URL` | pathmgmt, mcp |
 | `kafka.brokers` (`kafka:9092`) | `KAFKA_BROKERS` | pathmgmt (only when `kafka.enabled`), projector (always) |

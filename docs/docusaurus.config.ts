@@ -72,8 +72,21 @@ const config: Config = {
               categoryLinkSource: 'tag',
             },
             hideSendButton: true,
-          } satisfies OpenApiPlugin.Options,
-        },
+          },
+          pathmgmtReports: {
+            // The read-only analytical surface served by
+            // cmd/pathmgmt-reports (ADR 0007, ADR 0031): a SEPARATE spec from
+            // the OLTP API above, generated into its own output dir so the
+            // two never collide.
+            specPath: '../apis/openapi-reports.yaml',
+            outputDir: 'docs/api-reference/rest-reports',
+            sidebarOptions: {
+              groupPathsBy: 'tag',
+              categoryLinkSource: 'tag',
+            },
+            hideSendButton: true,
+          },
+        } satisfies Record<string, OpenApiPlugin.Options>,
       },
     ],
   ],
@@ -139,6 +152,7 @@ const config: Config = {
           items: [
             {label: 'GitHub repository', href: 'https://github.com/IQVO/process-path-management'},
             {label: 'OpenAPI spec', href: 'https://github.com/IQVO/process-path-management/blob/develop/apis/openapi.yaml'},
+            {label: 'Reports OpenAPI spec', href: 'https://github.com/IQVO/process-path-management/blob/develop/apis/openapi-reports.yaml'},
             {label: 'AsyncAPI spec', href: 'https://github.com/IQVO/process-path-management/blob/develop/apis/asyncapi.yaml'},
           ],
         },
