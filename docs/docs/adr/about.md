@@ -69,7 +69,7 @@ Typos, broken links and formatting are of course fair game.
 | [0009](./0009-destination-location-role-on-process-path.md) | Optional destination LocationRole on a ProcessPath | Accepted |
 | [0010](./0010-fulfillment-capability-contract.md) | Process paths publish a fulfillment capability contract (cycle time, eligibility, CPT schedule) | Accepted |
 | [0011](./0011-idempotency-key-middleware.md) | Transactional Idempotency-Key middleware for POST /process-paths | Accepted |
-| [0012](./0012-kafka-dlq-and-graceful-shutdown.md) | Analytics-consumer dead-letter queue and graceful shutdown hardening | Accepted |
+| [0012](./0012-kafka-dlq-and-graceful-shutdown.md) | Analytics-consumer dead-letter queue and graceful shutdown hardening | Accepted; mark/apply split amended by 0032 |
 | [0013](./0013-kafka-writer-hash-balancer.md) | Hash balancer for the outbound Kafka writers, closing a latent partition-affinity gap | Accepted |
 | [0014](./0014-horizontal-autoscaling-and-pgxpool-tuning.md) | Per-workload HorizontalPodAutoscaler and pgxpool MaxConns/statement_timeout tuning | Accepted |
 | [0015](./0015-migrations-direct-postgres-connection.md) | Run golang-migrate against a direct Postgres connection, not PgBouncer | Accepted |
@@ -89,6 +89,7 @@ Typos, broken links and formatting are of course fair game.
 | [0029](./0029-analytics-binaries-telemetry-and-liveness.md) | Analytics binaries get telemetry and exit when the consumer loop dies | Accepted |
 | [0030](./0030-outbox-relay-attempt-cap.md) | Outbox relay attempt cap | Accepted |
 | [0031](./0031-reports-api-openapi-contract.md) | The reports API has its own OpenAPI contract | Accepted |
+| [0032](./0032-analytics-claim-and-apply-in-one-transaction.md) | The analytics consumer's dedupe claim and projection write commit in one transaction | Accepted; amends 0012 |
 
 Each of these reconstructs a decision that is actually visible in this
 repository's history or code — none is a generic placeholder.

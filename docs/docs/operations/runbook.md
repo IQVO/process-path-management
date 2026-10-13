@@ -144,13 +144,18 @@ handles each message as:
 1. Decode as CloudEvents. Anything else (bad JSON, the retired flat
    envelope, missing attributes) goes straight to the DLQ and is committed.
 2. Types other than the three `ProcessPath*` types are committed as a no-op.
-3. `MarkProcessed(event id)` in `analytics_consumed_events`, retried up to 3
-   attempts (backoff 100 ms → 2 s). Already seen → commit, nothing applied.
-4. Apply the projection (one transaction: insert into
-   `analytics_processed_events`, upsert the day row of
-   `catalogue_growth_rollup`), retried up to 3 attempts.
-5. If step 3 or 4 exhausts its retries, the message goes to the DLQ and the
-   offset is committed anyway.
+3. Claim and apply in ONE analytics transaction
+   ([ADR 0032](../adr/0032-analytics-claim-and-apply-in-one-transaction.md)):
+   `MarkProcessed(event id)` in `analytics_consumed_events`, then, if the id
+   is new, the projection (insert into `analytics_processed_events`, upsert
+   the day row of `catalogue_growth_rollup`). Already seen → commit, nothing
+   applied. A failure rolls the claim back with the write, and the whole step
+   is retried up to 3 attempts (backoff 100 ms → 2 s).
+4. If step 3 exhausts its retries, the message goes to the DLQ (error
+   prefixed `claim and apply:`) and the offset is committed anyway.
+5. A shutdown mid-step is never dead-lettered: the offset stays uncommitted
+   and, because the interrupted transaction left no claim, the redelivery
+   after the restart applies the event exactly once.
 
 The DLQ writer auto-creates the `.dlq` topic and retries for up to
 40 × 250 ms while the new topic elects a leader. If the DLQ write or an

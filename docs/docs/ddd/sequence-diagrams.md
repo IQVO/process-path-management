@@ -342,21 +342,21 @@ sequenceDiagram
     else type is not a ProcessPath event
         C->>T: CommitMessages, skipped
     else ProcessPath event
+        Note over C,S: one analytics transaction, analyticsstore.UnitOfWork (ADR 0032)
         C->>S: MarkProcessed(ce id) into analytics_consumed_events
-        alt already seen
-            C->>T: CommitMessages
-        else new
+        alt new
             C->>S: ApplyProcessPathCreated, Updated or Deactivated
             S->>S: claim analytics_processed_events, upsert catalogue_growth_rollup
-            alt still failing after 3 attempts
-                C->>DLQ: dead-letter
-            end
-            C->>T: CommitMessages
         end
+        Note over C,S: COMMIT both, or roll both back and retry the step
+        alt still failing after 3 attempts
+            C->>DLQ: dead-letter
+        end
+        C->>T: CommitMessages
     end
 ```
 
 Source: `internal/adapters/inbound/kafka/analytics_consumer.go`,
-`internal/adapters/outbound/analyticsstore/{consumed_events_repo.go,postgres_projection.go}`,
+`internal/adapters/outbound/analyticsstore/{consumed_events_repo.go,postgres_projection.go,unit_of_work.go}`,
 `cmd/pathmgmt-projector/main.go`. Omits: retry backoff and the DLQ
 topic-readiness wait.

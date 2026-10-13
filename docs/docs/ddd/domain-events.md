@@ -110,11 +110,13 @@ This context consumes **no other context's events**. Its only consumer,
 | `...processpath.ProcessPathDeactivated` | `paths_deactivated += 1` |
 | `...cptschedule.CPTScheduleChanged` and any unknown type | committed and skipped |
 | non-CloudEvents message | dead-lettered to `warehouse.process-path-management.analytics.dlq`, then committed |
-| projecting type whose dedupe or projection still fails after `maxAnalyticsHandlerAttempts` (3) | dead-lettered to the same DLQ, then committed (ADR 0012) |
+| projecting type whose claim+apply step still fails after `maxAnalyticsHandlerAttempts` (3) | dead-lettered to the same DLQ, then committed (ADR 0012, ADR 0032) |
 
 Dedupe is on the CloudEvents `id`, twice: `analytics_consumed_events`
 (consumer gate) and `analytics_processed_events` (claimed inside the
-projection transaction).
+projection transaction). Both claims and the rollup upsert commit in ONE
+analytics transaction (ADR 0032), so a projector stop between the claim and
+the apply leaves no claim and the redelivery applies the event exactly once.
 
 ## Delivery guarantees
 

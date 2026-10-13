@@ -62,7 +62,7 @@ func TestAnalyticsConsumer_ShutdownMidHandle_IsCleanAndDeadLettersNothing(t *tes
 	projection := &blockingProjection{entered: make(chan struct{}, 1)}
 	consumer := inboundkafka.NewAnalyticsConsumerInGroup(brokerList, topic,
 		fmt.Sprintf("itest-shutdown-group-%d", time.Now().UnixNano()),
-		projection, newMemoryProcessedEvents(), nil)
+		projection, newMemoryProcessedEvents(), nil, nil)
 	defer func() { _ = consumer.Close() }()
 
 	consumeCtx, consumeCancel := context.WithCancel(context.Background())
