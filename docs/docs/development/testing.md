@@ -131,9 +131,13 @@ domain layer: 63 mutants, all killed.
 | `make check-all` | `check` + `coverage` + `arch-test` + `bdd` |
 | `make check-fast`, `make guide-lint`, `make harness-test` | Agent-harness gates (`scripts/harness/`) |
 
-The coverage package list differs between the two gates: `make coverage`
-includes `./internal/analytics/...`, the CI `test` job measures only
-`./internal/domain/...,./internal/application/...`.
+The Makefile is the single source of the coverage scope and threshold
+(gap 16d): the CI `test` job runs `make coverage` instead of its own
+`go test -coverpkg=...` command, which had drifted to
+`./internal/domain/...,./internal/application/...` only (it left out
+`./internal/analytics/...`). `repo_lint.py` rule R8 (CI `guide-lint` job)
+fails a PR whose workflow passes `-coverpkg` itself, or whose Makefile
+gate no workflow runs. Measured on this change: `Coverage: 98.7% (gate: 90%)`.
 
 ## CI (`.github/workflows/ci.yml`)
 
@@ -143,9 +147,9 @@ Triggers: push and pull request to `main`, `develop`; weekly schedule
 | Job | Runs | When |
 | --- | --- | --- |
 | `lint` | golangci-lint `v2.14.0` | every run |
-| `guide-lint` | `scripts/harness/guide_lint.py`, `repo_lint.py`, `test_hook.py`, `test_repo_lint.py` | every run |
+| `guide-lint` | `scripts/harness/guide_lint.py`, `repo_lint.py` (R1-R8; R8 = coverage scope only in the Makefile), `test_hook.py`, `test_repo_lint.py` | every run |
 | `complexity` | golangci-lint `--enable-only gocyclo,gocognit,cyclop,funlen,nestif`, plus an informational gocyclo report (> 10) | every run |
-| `test` | build, vet, gofmt, unit tests with coverage, 90 % gate | every run |
+| `test` | build, vet, gofmt, then `make coverage` (unit tests with the Makefile's coverage scope and 90 % gate) | every run |
 | `bdd` | `go test ./... -run TestFeatures -v` | every run |
 | `contract` | Schemathesis via `scripts/contract-test.sh` | every run |
 | `evals-tests` | `go test ./internal/adapters/inbound/mcp/... -race -run '^TestEval\|^TestMCPEvalSuite' -v` | every run |

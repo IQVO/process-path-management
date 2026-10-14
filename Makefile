@@ -72,12 +72,18 @@ lint:
 test:
 	$(GO) test ./... -race
 
+# The ONLY definition of the coverage scope and gate: CI's `test` job runs
+# `make coverage` (gap 16d), and repo_lint R8 fails any workflow that runs
+# `go test -coverpkg=...` itself, so the package set cannot drift again.
 coverage:
 	$(GO) test ./... -race -coverprofile=$(COVERAGE_OUT) -coverpkg=$(COVERAGE_PKGS)
 	@COVERAGE=$$($(GO) tool cover -func=$(COVERAGE_OUT) | awk '/^total:/ {print $$3}' | tr -d '%'); \
-	echo "Coverage: $${COVERAGE}% (gate: $(COVERAGE_THRESHOLD)%)"; \
+	echo "Coverage: $${COVERAGE}% (gate: $(COVERAGE_THRESHOLD)%, scope: $(COVERAGE_PKGS))"; \
+	if [ -n "$$GITHUB_STEP_SUMMARY" ]; then \
+		echo "### Coverage: $${COVERAGE}% (gate: $(COVERAGE_THRESHOLD)%, scope: \`$(COVERAGE_PKGS)\`)" >> "$$GITHUB_STEP_SUMMARY"; \
+	fi; \
 	if awk -v c="$$COVERAGE" -v t="$(COVERAGE_THRESHOLD)" 'BEGIN { exit !(c < t) }'; then \
-		echo "coverage $${COVERAGE}% is below the $(COVERAGE_THRESHOLD)% gate"; \
+		echo "::error::coverage $${COVERAGE}% is below the $(COVERAGE_THRESHOLD)% gate"; \
 		exit 1; \
 	fi
 
