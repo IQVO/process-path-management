@@ -3,7 +3,7 @@ id: 0033-relocate-process-path
 slug: /adr/0033-relocate-process-path
 title: "0033. A RELOCATE process path carries slot-plan moves as floor work"
 sidebar_label: "0033. RELOCATE process path"
-description: "ADR 0033 — the catalogue gains a RELOCATE path (matchPrefix relocate, direct, required capability relocate) so wes-work-planning can release approved slot-plan moves to fulfillment-execution as ordinary floor work. Its eligibility requires the slot-relocation attribute, so order-management never routes a customer order line onto it. The entry is declared in catalogue/paths.json and applied through POST /process-paths by scripts/seed_catalogue.py. Companion to slotting-optimization ADR 0010."
+description: "ADR 0033 — the catalogue gains a RELOCATE path (matchPrefix relocate, direct, required capability relocate) so wes-work-planning can release approved slot-plan moves to fulfillment-execution as ordinary floor work. Its intake is SLOT_RELOCATION only (ADR 0034), so order-management never routes a customer order line onto it. The entry is declared in catalogue/paths.json and applied through POST /process-paths by scripts/seed_catalogue.py. Companion to slotting-optimization ADR 0010."
 ---
 
 # 0033. A RELOCATE process path carries slot-plan moves as floor work
@@ -15,6 +15,8 @@ description: "ADR 0033 — the catalogue gains a RELOCATE path (matchPrefix relo
 (Option A of the 2026-10-13 decision log, which supersedes slotting ADR 0007).
 No schema change, no new event, no migration: the path is catalogue data
 under the existing `ProcessPath` model (ADR 0008 set the same precedent).
+How customer order lines are kept off it is decided by
+[ADR 0034](./0034-process-path-intake.md) (the path's `intake`).
 
 ## Context
 
@@ -63,7 +65,8 @@ outbox and `ProcessPathCreated` CloudEvent as every other path:
 | `direct` | `true` | A released relocation unit becomes one execution task, the same shape as the other paths. |
 | `requiredCapabilities` | `["relocate"]` | One capability named after the family, the convention PICK/PACK/REBIN/SLAM and ADR 0008 use. Only stations and associates certified for slot moves can claim the task, and workforce-management plans headcount against it. |
 | `cycleTimeP95` | `2h` | The fleet's flat default (ADR 0010 of this service). It feeds the promise engine only, and RELOCATE is never a promise candidate (next row). Operators revise it with `PUT` when they measure it. |
-| `eligibility` | `{"requiredProductAttributes": ["slot-relocation"]}` | A customer order line never carries the `slot-relocation` attribute. order-management's `lineEligible` therefore rejects every line for RELOCATE, whatever its cycle time, and the path is never chosen for customer orders. wes-work-planning plans relocation units directly on the path and does not evaluate eligibility, so the rule does not block the work it exists for. |
+| `eligibility` | `{}` (permissive) | Eligibility describes the unit of work a path can take, not who may route onto it. |
+| `intake` | `["SLOT_RELOCATION"]` | [ADR 0034](./0034-process-path-intake.md): only approved slot-plan moves route onto RELOCATE. order-management considers only paths whose intake contains `CUSTOMER_ORDER`, so RELOCATE is never chosen for a customer order line, whatever its cycle time. wes-work-planning plans relocation units directly on the path id. |
 | `destinationLocationRole` | unset | A move ends in a forward slot or a reserve bin, not in a Drop, WorkCenter or Shipping location. |
 
 The declaration lives in the repository as data, in the request-body shape of
@@ -97,19 +100,15 @@ never lists RELOCATE: relocation work has no truck to make.
   telemetry apply to them with no new machinery.
 - A new environment (kind cluster, e2e harness) gets the path from one
   idempotent command instead of an undocumented `curl`.
-- No consumer changes for the catalogue itself. All five consumers already
-  decode `ProcessPathCreated`, and order-management already evaluates
-  `requiredProductAttributes`.
+- No consumer changes for the catalogue entry itself. All five consumers
+  already decode `ProcessPathCreated`. Keeping customer order lines off the
+  path is order-management's intake rule (ADR 0034).
 
 **Harder**
 
-- `slot-relocation` is a convention in the product-attribute vocabulary:
-  nothing may ever classify a product with it. It is documented here and in
-  the ubiquitous language. If order-management ever gains an explicit
-  "not routable for orders" flag, this entry should move to it.
 - The path is data. An environment that skips the seed has no RELOCATE path,
   and wes-work-planning then rejects relocation units as an unknown path id
   (fail-closed: the work is refused, not silently routed elsewhere).
-- ADR 0008's families were defined with permissive eligibility. They are
-  equally visible to order-management's path selection. This ADR does not
-  change them; it is noted as a follow-up for the catalogue owners.
+- ADR 0008's families were defined with permissive eligibility and, after
+  ADR 0034, the empty intake, so they are no longer customer-order
+  candidates.

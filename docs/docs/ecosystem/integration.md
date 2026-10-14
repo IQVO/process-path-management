@@ -102,12 +102,20 @@ the whole catalogue. The three WES consumers do exactly that on boot.
 **RELOCATE** ([ADR 0033](../adr/0033-relocate-process-path.md)) is published
 like every other path, as a `ProcessPathCreated` keyed `RELOCATE`
 (`match_prefix` `relocate`, `direct`, `required_capabilities` `[relocate]`,
-`eligibility.required_product_attributes` `[slot-relocation]`), once
-`make seed-catalogue` applies `catalogue/paths.json`. wes-work-planning
-releases slot-plan moves on it. fulfillment-execution builds RELOCATE tasks
-that require `relocate`, and workforce-management plans `relocate` headcount
-against it. order-management's path selection never picks it, because no
-order line has the `slot-relocation` attribute.
+`intake` `[SLOT_RELOCATION]`), once `make seed-catalogue` applies
+`catalogue/paths.json`. wes-work-planning releases slot-plan moves on it.
+fulfillment-execution builds RELOCATE tasks that require `relocate`, and
+workforce-management plans `relocate` headcount against it.
+
+**Intake** ([ADR 0034](../adr/0034-process-path-intake.md)).
+`ProcessPathCreated`/`ProcessPathUpdated` carry `intake`, the demand sources
+allowed to route work onto the path (`CUSTOMER_ORDER`, `STOCK_TRANSFER`,
+`SLOT_RELOCATION`, `INVENTORY_CONTROL`); always present, `[]` when only an
+explicit path id reaches the path. order-management's path selection
+considers only paths whose intake contains `CUSTOMER_ORDER` (PICK in the
+declared catalogue) and falls back to `PICK` when none does, so it never
+picks PACK, REBIN, SLAM, RELOCATE or ADR 0008's families for an order line.
+An event without `intake` comes from a producer older than ADR 0034.
 
 **Failure behaviour.**
 

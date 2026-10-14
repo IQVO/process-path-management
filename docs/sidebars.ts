@@ -121,6 +121,7 @@ const sidebars: SidebarsConfig = {
         'adr/0031-reports-api-openapi-contract',
         'adr/0032-analytics-claim-and-apply-in-one-transaction',
         'adr/0033-relocate-process-path',
+        'adr/0034-process-path-intake',
       ],
     },
   ],

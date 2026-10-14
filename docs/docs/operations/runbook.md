@@ -67,7 +67,7 @@ outage surfaces as 500 responses and relay errors, not as an unready pod.
 
 | Schema | Files | Run by | DSN |
 | --- | --- | --- | --- |
-| OLTP | `migrations/0001_init` … `0008_outbox_trace_context` (`*.up.sql`) | `pathmgmt` **and** `mcp`, at every boot, before the pool opens | `MIGRATIONS_DATABASE_URL`, else `DATABASE_URL` |
+| OLTP | `migrations/0001_init` … `0009_intake` (`*.up.sql`) | `pathmgmt` **and** `mcp`, at every boot, before the pool opens | `MIGRATIONS_DATABASE_URL`, else `DATABASE_URL` |
 | Analytics | `migrations/analytics/0001_report.up.sql` | `pathmgmt-projector`, at every boot | `ANALYTICS_DATABASE_URL` |
 
 Both use golang-migrate (`internal/adapters/outbound/postgres/migrate.go`),
@@ -271,9 +271,16 @@ a live cluster as part of writing this page.
 
 After deploying a release that adds or changes an entry in
 `catalogue/paths.json` (for example `RELOCATE`,
-[ADR 0033](../adr/0033-relocate-process-path.md)), converge the store through
+[ADR 0033](../adr/0033-relocate-process-path.md), or the per-path `intake`,
+[ADR 0034](../adr/0034-process-path-intake.md)), converge the store through
 the API. Run it before the first consumer needs the path: for `RELOCATE`,
-that means before slotting-optimization approves a plan.
+that means before slotting-optimization approves a plan. After the release
+that adds migration `0009_intake`, every existing path stores intake `[]`
+until the seed runs; order-management then falls back to `PICK` for every
+order line (its fail-open rule), so seeding is not urgent, but it is what
+makes PICK the declared `CUSTOMER_ORDER` entry point. Expect one `PUT` per
+path whose intake differs (PICK and RELOCATE) and a `ProcessPathUpdated` for
+each.
 
 ```bash
 kubectl port-forward -n warehouse-systems svc/process-path-management 8080:80

@@ -38,13 +38,16 @@ maps to are on [Troubleshooting](../operations/troubleshooting.md).
 **Inputs:** `pathId`, `matchPrefix`, `direct`, `requiredCapabilities[]`,
 optional `destinationLocationRole`, `cycleTimeP95` (Go duration string),
 optional `eligibility` (`maxUnitsPerLine`, `requiredProductAttributes`,
-`excludedProductAttributes`, `nonSortable`). With Postgres, the HTTP route
-also requires an `Idempotency-Key` header.
+`excludedProductAttributes`, `nonSortable`), optional `intake` (demand
+sources, [ADR 0034](../adr/0034-process-path-intake.md); absent = `[]`).
+With Postgres, the HTTP route also requires an `Idempotency-Key` header.
 
 **Checks, in order:**
 
 1. HTTP adapter: `destinationLocationRole` is empty or one of `Drop`,
-   `WorkCenter`, `Shipping`; `cycleTimeP95` parses as a Go duration.
+   `WorkCenter`, `Shipping`; `cycleTimeP95` parses as a Go duration;
+   `intake` is a set of known demand sources (`shared.ParseIntake`,
+   `ErrInvalidIntake` otherwise).
 2. No path with this id exists, **active or deactivated**
    (`ErrPathAlreadyExists`). A deactivated id can never be reused.
 3. `processpath.Define`: non-empty `pathId`, non-empty and lower-case
@@ -61,10 +64,12 @@ also requires an `Idempotency-Key` header.
 calls this use case, through the same REST route, for every entry of
 `catalogue/paths.json` that the store does not hold yet. It calls `RevisePath`
 for an entry whose revisable fields drifted, and it never calls either for an
-identical or deactivated entry. The first declared entry is `RELOCATE`
-(matchPrefix `relocate`, direct, capability `relocate`, eligibility requiring
-`slot-relocation`), which carries slot-plan moves
+identical or deactivated entry. The file declares PICK, PACK, REBIN, SLAM
+and `RELOCATE` (matchPrefix `relocate`, direct, capability `relocate`,
+intake `SLOT_RELOCATION`), which carries slot-plan moves; every entry
+declares its intake
 ([ADR 0033](../adr/0033-relocate-process-path.md),
+[ADR 0034](../adr/0034-process-path-intake.md),
 [Process-path catalogue](../overview/process-path-catalogue.md)).
 
 ## `RevisePath`
@@ -72,7 +77,8 @@ identical or deactivated entry. The first declared entry is `RELOCATE`
 `internal/application/usecases/revise_path.go`
 
 **Inputs:** `pathId` (URL), `matchPrefix`, `requiredCapabilities[]`,
-`cycleTimeP95`, optional `eligibility`. `direct` and
+`cycleTimeP95`, optional `eligibility`, optional `intake` (absent or
+`null` keeps the current intake; `[]` clears it). `direct` and
 `destinationLocationRole` are not revisable.
 
 **Checks:** the path exists (`ErrPathNotFound`); it is Active
@@ -82,7 +88,7 @@ with `ErrConcurrentModification`
 ([ADR 0017](../adr/0017-optimistic-concurrency-version-column.md)).
 
 **Raises:** `ProcessPathUpdated` with the full new definition, only when
-`matchPrefix`, capabilities, cycle time or eligibility actually changed. An
+`matchPrefix`, capabilities, cycle time, eligibility or intake actually changed. An
 identical body returns 200 and publishes nothing.
 
 ## `DeactivatePath`

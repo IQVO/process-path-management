@@ -14,7 +14,7 @@ description: The process-path-management test pyramid as it exists in this repos
 | Unit | `*_test.go` next to the code (no build tag): domain aggregates, use cases with fakes (`internal/application/usecases/fakes_test.go`), HTTP handlers via `httptest`, encoders, relay/consumer logic with fake writers | In-process, in-memory adapters, `-race` | `make test` |
 | BDD (godog) | 6 files in `features/` with **32 scenarios**, driven by `features_test.go` (`TestFeatures`) | Black-box over HTTP against the real chi router wired to the in-memory repositories, a fixed clock and a recording publisher, so scenarios assert responses **and** the domain events raised | `make bdd` |
 | Contract | `scripts/contract-test.sh`; `internal/adapters/inbound/http/reports_contract_test.go` | Builds `cmd/pathmgmt`, boots it in-memory on `127.0.0.1:18085`, runs Schemathesis `4.28.0` against `apis/openapi.yaml` (100 examples per operation, 4 workers). The reports router is checked against `apis/openapi-reports.yaml` by Go tests ([ADR 0031](../adr/0031-reports-api-openapi-contract.md)) | `make contract`; the Go tests run in `make test` |
-| Integration | 25 files tagged `//go:build integration` (24 under `internal/adapters/...`, plus `internal/application/usecases/usecases_wiring_integration_test.go`) | Each test starts its own Postgres 16 and/or Kafka with testcontainers-go; no `DATABASE_URL`, no compose | `make integration` (needs Docker) |
+| Integration | 26 files tagged `//go:build integration` (25 under `internal/adapters/...`, plus `internal/application/usecases/usecases_wiring_integration_test.go`) | Each test starts its own Postgres 16 and/or Kafka with testcontainers-go; no `DATABASE_URL`, no compose | `make integration` (needs Docker) |
 | Architecture fitness | `internal/architecture/` | Static checks over the source tree and import graph | `make arch-test` |
 | MCP evals | `internal/adapters/inbound/mcp/eval_*_test.go`, `evalsuite_test.go`, `testdata/features/mcp_tools.feature` (14 scenarios) | In-process MCP client/server sessions | `go test ./internal/adapters/inbound/mcp/... -race -run '^TestEval\|^TestMCPEvalSuite' -v` |
 | Mutation | `.gremlins.yaml` | gremlins `v0.6.0` over `./internal/domain` | `make mutation-fast` (alias `make mutation`) |
@@ -31,6 +31,8 @@ description: The process-path-management test pyramid as it exists in this repos
 | `features/revise_and_events.feature` | 6 | `ProcessPathCreated`/`Updated`/`Deactivated` published (deactivation exactly once), no-op revision publishes nothing, malformed `cycleTimeP95`, re-defining a deactivated id rejected |
 | `features/deactivate.feature` | 5 | Deactivate, idempotent re-deactivate, 404, 409 while a CPT schedule lists the path, success once the schedule no longer lists it |
 | `features/cpt_schedule.feature` | 7 | Define and get a site schedule, 404 before definition, unknown or deactivated path in a cutoff, duplicate `cptId`, unrecognised timezone |
+| `features/relocate_path.feature` | 4 | The declared RELOCATE entry: defined Active, published with `intake` `SLOT_RELOCATION` and no fake eligibility, re-seed refused 409, sits beside PICK |
+| `features/process_path_intake.feature` | 12 | Intake ([ADR 0034](../adr/0034-process-path-intake.md)): define/read/publish, `[]` on the wire when absent, 422 `invalid-intake` for an unknown or repeated source, intake-only revise publishes `ProcessPathUpdated`, an omitted intake is kept, `[]` clears it, and the declared intake of PICK/PACK/REBIN/SLAM/RELOCATE (outline) |
 
 ### Contract test exclusions
 
@@ -59,7 +61,7 @@ coverage (it has the evals instead).
 
 | Area | Files (all `internal/adapters/...`) | What they prove against real infrastructure |
 | --- | --- | --- |
-| Postgres repositories | `outbound/postgres/process_path_repo_integration_test.go`, `process_path_create_integration_test.go`, `cpt_schedule_repo_integration_test.go`, `integration_test.go` | Mapping, insert-only create, schedule persistence |
+| Postgres repositories | `outbound/postgres/process_path_repo_integration_test.go`, `process_path_create_integration_test.go`, `cpt_schedule_repo_integration_test.go`, `intake_integration_test.go`, `integration_test.go` | Mapping, insert-only create, schedule persistence; the `intake` column (migration 0009) round-trips, a pre-0009 row reads as `[]`, an unknown stored value fails the read (`TestPostgres_IntakeRoundTrip`, `TestPostgres_RowWithoutIntake_ReadsAsTheEmptySet`, `TestPostgres_UnknownStoredIntake_FailsTheRead`, [ADR 0034](../adr/0034-process-path-intake.md)) |
 | Concurrency | `define_concurrent_integration_test.go`, `version_integration_test.go`, `process_path_locks_integration_test.go`, `cpt_path_race_integration_test.go`, `deactivate_cpt_integration_test.go` | Duplicate-create race, optimistic `version` column, `FOR UPDATE`/`FOR SHARE` serialisation of deactivate vs CPT schedule ([ADR 0028](../adr/0028-close-path-cpt-schedule-race-with-row-locks.md)) |
 | Outbox | `outbox_integration_test.go`, `analytics_outbox_integration_test.go`, `outbox_trace_integration_test.go`, `outbox_trace_kafka_integration_test.go` | Two rows per event, relay ordering and retry, the attempt cap (`TestOutboxRelay_MaxAttempts_PoisonRowIsExcludedAndTheNextRowPublishes`, `TestOutboxRelay_WithoutMaxAttempts_RetriesWithoutBound`, [ADR 0030](../adr/0030-outbox-relay-attempt-cap.md)), trace context stored and sent, and end to end through a real broker (`TestOutboxTrace_TraceparentCrossesTheOutboxToKafka`, `TestOutboxTrace_RowWithoutTraceHeadersRelaysUnchanged`, gap fix D27) |
 | Housekeeping and pools | `sweeper_integration_test.go`, `pool_limits_integration_test.go` | Batch deletes, `MaxConns` and `statement_timeout` actually applied |
@@ -135,7 +137,10 @@ domain layer: 63 mutants, all killed.
 
 The declared catalogue (`catalogue/paths.json`, ADR 0033) has its own tests:
 `internal/domain/processpath/declared_catalogue_test.go` defines every entry
-through the aggregate and pins `RELOCATE` field by field;
+through the aggregate, requires an `intake` array on every entry, pins the
+per-path intake table and exactly one `CUSTOMER_ORDER` entry point (PICK,
+[ADR 0034](../adr/0034-process-path-intake.md)), and pins `RELOCATE` field by
+field;
 `internal/adapters/outbound/kafka/relocate_golden_test.go` pins RELOCATE's
 `ProcessPathCreated` CloudEvent byte for byte on both streams;
 `features/relocate_path.feature` (step `the client defines the declared
