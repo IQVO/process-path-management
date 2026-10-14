@@ -24,7 +24,7 @@ func TestProcessPathRepo_Create_IsInsertOnly(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Microsecond)
 
-	first, err := processpath.Define("DUP", "dup", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, 2*time.Hour, shared.Eligibility{}, now)
+	first, err := processpath.Define("DUP", "dup", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, 2*time.Hour, shared.Eligibility{}, shared.Intake{}, now)
 	if err != nil {
 		t.Fatalf("define first: %v", err)
 	}
@@ -32,7 +32,7 @@ func TestProcessPathRepo_Create_IsInsertOnly(t *testing.T) {
 		t.Fatalf("create first: %v", err)
 	}
 
-	second, err := processpath.Define("DUP", "other", true, []shared.Capability{"pack"}, shared.DestinationLocationRoleUnset, 3*time.Hour, shared.Eligibility{}, now)
+	second, err := processpath.Define("DUP", "other", true, []shared.Capability{"pack"}, shared.DestinationLocationRoleUnset, 3*time.Hour, shared.Eligibility{}, shared.Intake{}, now)
 	if err != nil {
 		t.Fatalf("define second: %v", err)
 	}
@@ -52,7 +52,7 @@ func TestProcessPathRepo_Create_IsInsertOnly(t *testing.T) {
 	if err := repo.Save(ctx, loaded); err != nil {
 		t.Fatalf("deactivate save: %v", err)
 	}
-	third, err := processpath.Define("DUP", "dup", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, 2*time.Hour, shared.Eligibility{}, now)
+	third, err := processpath.Define("DUP", "dup", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, 2*time.Hour, shared.Eligibility{}, shared.Intake{}, now)
 	if err != nil {
 		t.Fatalf("define third: %v", err)
 	}

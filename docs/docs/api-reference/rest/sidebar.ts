@@ -35,7 +35,7 @@ const sidebar: SidebarsConfig = {
         {
           type: "doc",
           id: "api-reference/rest/revise-path",
-          label: "Revise an Active process path's matchPrefix/requiredCapabilities/cycleTimeP95/eligibility",
+          label: "Revise an Active process path's matchPrefix/requiredCapabilities/cycleTimeP95/eligibility/intake",
           className: "api-method put",
         },
         {

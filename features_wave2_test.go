@@ -811,6 +811,7 @@ func registerWave2Steps(sc *godog.ScenarioContext, w *world) {
 func (w2 *wave2) registerRequestSteps(sc *godog.ScenarioContext) {
 	sc.Step(`^the client sends (GET|POST|PUT|DELETE) "([^"]*)"$`, w2.clientSends)
 	sc.Step(`^the client sends (GET|POST|PUT|DELETE) "([^"]*)" with body:$`, w2.clientSendsWithBody)
+	sc.Step(`^the client defines the declared catalogue entry "([^"]*)"$`, w2.definesDeclaredCatalogueEntry)
 	sc.Step(`^the clock reads "([^"]*)"$`, w2.clockReads)
 	sc.Step(`^a process path "([^"]*)" is defined with matchPrefix "([^"]*)", capabilities "([^"]*)", and cycleTimeP95 "([^"]*)"$`, w2.definePathWithCycleTime)
 	sc.Step(`^the CPT schedule for site "([^"]*)" is defined with a cutoff at "([^"]*)" on days "([^"]*)" via "([^"]*)" eligible for paths "([^"]*)"$`, w2.defineCutoffSchedule)

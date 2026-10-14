@@ -20,7 +20,7 @@ func TestDefinePath_WithDestinationLocationRole_IsPersistedAndPublished(t *testi
 	now := time.Date(2026, 9, 13, 0, 0, 0, 0, time.UTC)
 	uc := &usecases.DefinePath{Repo: repo, Publisher: pub, Clock: fixedClock{now}}
 
-	p, err := uc.Execute(context.Background(), "PACK", "pack", true, []shared.Capability{"pack"}, shared.DestinationLocationRoleDrop, testCycleTimeP95, shared.Eligibility{})
+	p, err := uc.Execute(context.Background(), "PACK", "pack", true, []shared.Capability{"pack"}, shared.DestinationLocationRoleDrop, testCycleTimeP95, shared.Eligibility{}, shared.Intake{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -53,7 +53,7 @@ func TestDefinePath_NoDestinationLocationRole_DefaultsToUnset(t *testing.T) {
 	pub := &fakePublisher{}
 	uc := &usecases.DefinePath{Repo: repo, Publisher: pub, Clock: fixedClock{time.Now()}}
 
-	p, err := uc.Execute(context.Background(), "PICK", "pick", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, testCycleTimeP95, shared.Eligibility{})
+	p, err := uc.Execute(context.Background(), "PICK", "pick", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, testCycleTimeP95, shared.Eligibility{}, shared.Intake{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -76,7 +76,7 @@ func TestDefinePath_RejectsInvalidDestinationLocationRole(t *testing.T) {
 	pub := &fakePublisher{}
 	uc := &usecases.DefinePath{Repo: repo, Publisher: pub, Clock: fixedClock{time.Now()}}
 
-	_, err := uc.Execute(context.Background(), "PICK", "pick", true, []shared.Capability{"pick"}, shared.DestinationLocationRole("Storage"), testCycleTimeP95, shared.Eligibility{})
+	_, err := uc.Execute(context.Background(), "PICK", "pick", true, []shared.Capability{"pick"}, shared.DestinationLocationRole("Storage"), testCycleTimeP95, shared.Eligibility{}, shared.Intake{})
 	if !errors.Is(err, shared.ErrInvalidDestinationLocationRole) {
 		t.Fatalf("want ErrInvalidDestinationLocationRole, got %v", err)
 	}
@@ -93,12 +93,12 @@ func TestRevisePath_DoesNotAlterDestinationLocationRole(t *testing.T) {
 	pub := &fakePublisher{}
 	now := time.Now()
 	define := &usecases.DefinePath{Repo: repo, Publisher: pub, Clock: fixedClock{now}}
-	if _, err := define.Execute(context.Background(), "PACK", "pack", true, []shared.Capability{"pack"}, shared.DestinationLocationRoleWorkCenter, testCycleTimeP95, shared.Eligibility{}); err != nil {
+	if _, err := define.Execute(context.Background(), "PACK", "pack", true, []shared.Capability{"pack"}, shared.DestinationLocationRoleWorkCenter, testCycleTimeP95, shared.Eligibility{}, shared.Intake{}); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
 
 	revise := &usecases.RevisePath{Repo: repo, Publisher: pub, Clock: fixedClock{now.Add(time.Hour)}}
-	p, err := revise.Execute(context.Background(), "PACK", "pack-v2", []shared.Capability{"pack"}, testCycleTimeP95, shared.Eligibility{})
+	p, err := revise.Execute(context.Background(), "PACK", "pack-v2", []shared.Capability{"pack"}, testCycleTimeP95, shared.Eligibility{}, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

@@ -203,7 +203,7 @@ func newMCPHarness(t *testing.T) *mcpHarness {
 	mustDefine := func(id, matchPrefix string, caps ...shared.Capability) {
 		t.Helper()
 		if _, err := define.Execute(ctx, shared.PathId(id), matchPrefix, true, caps,
-			shared.DestinationLocationRoleUnset, 2*time.Hour, shared.Eligibility{}); err != nil {
+			shared.DestinationLocationRoleUnset, 2*time.Hour, shared.Eligibility{}, shared.Intake{}); err != nil {
 			t.Fatalf("seed define %s: %v", id, err)
 		}
 	}

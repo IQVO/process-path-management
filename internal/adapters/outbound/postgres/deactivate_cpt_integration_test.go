@@ -84,7 +84,7 @@ func TestDeactivatePath_ReferencedByCPTSchedule_IsRefusedWithNoOutboxRow(t *test
 
 	define := &usecases.DefinePath{Repo: paths, Publisher: pub, Clock: fixedClock{t: now}, UnitOfWork: uow}
 	for _, id := range []shared.PathId{"PICK", "PACK"} {
-		if _, err := define.Execute(ctx, id, "pick", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, 2*time.Hour, shared.Eligibility{}); err != nil {
+		if _, err := define.Execute(ctx, id, "pick", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, 2*time.Hour, shared.Eligibility{}, shared.Intake{}); err != nil {
 			t.Fatalf("define %s: %v", id, err)
 		}
 	}

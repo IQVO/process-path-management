@@ -27,7 +27,9 @@ The operator-configurable definition of one process path: its canonical
 id, the `matchPrefix` rule consumers use to resolve caller-supplied ids,
 whether it is `Direct`, the capabilities required to work it, an optional
 destination location role, and its fulfillment capability contract
-(`cycleTimeP95`, `eligibility`). Persisted by natural key; never deleted.
+(`cycleTimeP95`, `eligibility`), and its `intake`: the demand sources allowed
+to route work onto it ([ADR 0034](../adr/0034-process-path-intake.md)).
+Persisted by natural key; never deleted.
 
 ### 3. State Transitions
 
@@ -58,6 +60,7 @@ transition).
 | `matchPrefix` lower-case, never coerced | `processpath.ErrMatchPrefixNotLowercase` in `validate` |
 | at least one required capability | `processpath.ErrNoRequiredCapabilities` in `validate` |
 | `destinationLocationRole` empty or Drop/WorkCenter/Shipping | `shared.ErrInvalidDestinationLocationRole` via `shared.ParseDestinationLocationRole` |
+| `intake` is a set of known demand sources (no unknown, blank or repeated value); `[]` is valid | `shared.ErrInvalidIntake` via `shared.ParseIntake` (an `Intake` can only be built through it) |
 | `cycleTimeP95` strictly positive | `processpath.ErrInvalidCycleTime` in `validate` (also returned by the HTTP adapter for an unparsable duration) |
 | only an Active path can be revised | `processpath.ErrPathDeactivated` in `Revise` |
 | `pathId`, `direct`, `destinationLocationRole` immutable | `Revise` has no parameter for them |

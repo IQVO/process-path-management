@@ -52,6 +52,12 @@ type ProcessPathData struct {
 	DestinationLocationRole string           `json:"destination_location_role,omitempty"`
 	CycleTimeP95            string           `json:"cycle_time_p95,omitempty"`
 	Eligibility             *EligibilityData `json:"eligibility,omitempty"`
+	// Intake (ADR 0034) is the set of demand sources allowed to route
+	// work onto the path. Always present on ProcessPathCreated/Updated
+	// (an empty set is [] on the wire, never omitted, so a consumer can
+	// tell "routed only by explicit id" from "older producer"); absent on
+	// ProcessPathDeactivated, like every other definition field.
+	Intake *[]string `json:"intake,omitempty"`
 }
 
 // EligibilityData is the wire shape of shared.Eligibility. Omitted from
@@ -249,6 +255,7 @@ func mapEvent(event shared.DomainEvent) (mapped, error) {
 			DestinationLocationRole: string(e.DestinationLocationRole),
 			CycleTimeP95:            e.CycleTimeP95.String(),
 			Eligibility:             eligibilityToData(e.Eligibility),
+			Intake:                  intakeToData(e.Intake),
 		}}, nil
 	case shared.ProcessPathUpdated:
 		key := string(e.PathId)
@@ -260,6 +267,7 @@ func mapEvent(event shared.DomainEvent) (mapped, error) {
 			DestinationLocationRole: string(e.DestinationLocationRole),
 			CycleTimeP95:            e.CycleTimeP95.String(),
 			Eligibility:             eligibilityToData(e.Eligibility),
+			Intake:                  intakeToData(e.Intake),
 		}}, nil
 	case shared.ProcessPathDeactivated:
 		key := string(e.PathId)
@@ -318,6 +326,13 @@ func (p *Publisher) Close() error {
 		return w.Close()
 	}
 	return nil
+}
+
+// intakeToData maps an Intake onto its wire shape: a non-nil pointer to a
+// non-nil slice, so the empty set encodes as [] (ADR 0034).
+func intakeToData(in shared.Intake) *[]string {
+	out := in.Strings()
+	return &out
 }
 
 func capabilitiesToStrings(caps []shared.Capability) []string {

@@ -31,7 +31,7 @@ type DefinePath struct {
 	Metrics ports.PathMetrics
 }
 
-func (uc *DefinePath) Execute(ctx context.Context, id shared.PathId, matchPrefix string, direct bool, requiredCapabilities []shared.Capability, destinationLocationRole shared.DestinationLocationRole, cycleTimeP95 time.Duration, eligibility shared.Eligibility) (*processpath.ProcessPath, error) {
+func (uc *DefinePath) Execute(ctx context.Context, id shared.PathId, matchPrefix string, direct bool, requiredCapabilities []shared.Capability, destinationLocationRole shared.DestinationLocationRole, cycleTimeP95 time.Duration, eligibility shared.Eligibility, intake shared.Intake) (*processpath.ProcessPath, error) {
 	existing, err := uc.Repo.FindByID(ctx, id)
 	if err != nil {
 		return nil, err
@@ -42,7 +42,7 @@ func (uc *DefinePath) Execute(ctx context.Context, id shared.PathId, matchPrefix
 	}
 
 	now := uc.Clock.Now()
-	p, err := processpath.Define(id, matchPrefix, direct, requiredCapabilities, destinationLocationRole, cycleTimeP95, eligibility, now)
+	p, err := processpath.Define(id, matchPrefix, direct, requiredCapabilities, destinationLocationRole, cycleTimeP95, eligibility, intake, now)
 	if err != nil {
 		uc.recordRejected(ctx)
 		return nil, err
@@ -63,6 +63,7 @@ func (uc *DefinePath) Execute(ctx context.Context, id shared.PathId, matchPrefix
 			DestinationLocationRole: p.DestinationLocationRole(),
 			CycleTimeP95:            p.CycleTimeP95(),
 			Eligibility:             p.Eligibility(),
+			Intake:                  p.Intake(),
 			At:                      now,
 		})
 	})

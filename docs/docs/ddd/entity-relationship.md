@@ -30,6 +30,7 @@ erDiagram
         text destination_location_role "nullable, Drop WorkCenter Shipping"
         interval cycle_time_p95
         jsonb eligibility
+        text_array intake "demand sources, default empty (ADR 0034)"
         integer version
     }
 
@@ -87,7 +88,7 @@ erDiagram
 ```
 
 Source: `migrations/0001_init.up.sql` through
-`migrations/0008_outbox_trace_context.up.sql`; `schema_migrations` is golang-migrate's
+`migrations/0009_intake.up.sql`; `schema_migrations` is golang-migrate's
 own table (`internal/adapters/outbound/postgres/migrate.go`). `text_array`
 stands for Postgres `TEXT[]`. Omits: indexes
 (`idx_process_paths_active` partial on `status = 'ACTIVE'`,

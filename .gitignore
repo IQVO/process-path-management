@@ -3,3 +3,4 @@
 .env
 coverage.out
 .claude/settings.local.json
+__pycache__/

@@ -50,7 +50,11 @@ Returns one path in any status: `pathId`, `matchPrefix`, `direct`,
 `status` (`ACTIVE`/`DEACTIVATED`), `active` (boolean), `createdAt`,
 `updatedAt` (RFC 3339), `cycleTimeP95` (Go duration string such as
 `2h0m0s`), `eligibility` (`maxUnitsPerLine`, `requiredProductAttributes`,
-`excludedProductAttributes`, `nonSortable`, each omitted when unset).
+`excludedProductAttributes`, `nonSortable`, each omitted when unset),
+`intake` (the demand sources allowed to route work onto the path:
+`CUSTOMER_ORDER`, `STOCK_TRANSFER`, `SLOT_RELOCATION`, `INVENTORY_CONTROL`;
+always an array, `[]` when only an explicit path id reaches it,
+[ADR 0034](../adr/0034-process-path-intake.md)).
 An unknown id is a **tool error** (`usecases: process path not found`), not
 an empty success.
 

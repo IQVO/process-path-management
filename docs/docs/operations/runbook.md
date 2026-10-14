@@ -67,7 +67,7 @@ outage surfaces as 500 responses and relay errors, not as an unready pod.
 
 | Schema | Files | Run by | DSN |
 | --- | --- | --- | --- |
-| OLTP | `migrations/0001_init` … `0008_outbox_trace_context` (`*.up.sql`) | `pathmgmt` **and** `mcp`, at every boot, before the pool opens | `MIGRATIONS_DATABASE_URL`, else `DATABASE_URL` |
+| OLTP | `migrations/0001_init` … `0009_intake` (`*.up.sql`) | `pathmgmt` **and** `mcp`, at every boot, before the pool opens | `MIGRATIONS_DATABASE_URL`, else `DATABASE_URL` |
 | Analytics | `migrations/analytics/0001_report.up.sql` | `pathmgmt-projector`, at every boot | `ANALYTICS_DATABASE_URL` |
 
 Both use golang-migrate (`internal/adapters/outbound/postgres/migrate.go`),
@@ -266,6 +266,34 @@ The same report is available to agents through the MCP tool
 
 These follow from the code paths above. They have not been rehearsed against
 a live cluster as part of writing this page.
+
+### Seed the declared catalogue
+
+After deploying a release that adds or changes an entry in
+`catalogue/paths.json` (for example `RELOCATE`,
+[ADR 0033](../adr/0033-relocate-process-path.md), or the per-path `intake`,
+[ADR 0034](../adr/0034-process-path-intake.md)), converge the store through
+the API. Run it before the first consumer needs the path: for `RELOCATE`,
+that means before slotting-optimization approves a plan. After the release
+that adds migration `0009_intake`, every existing path stores intake `[]`
+until the seed runs; order-management then falls back to `PICK` for every
+order line (its fail-open rule), so seeding is not urgent, but it is what
+makes PICK the declared `CUSTOMER_ORDER` entry point. Expect one `PUT` per
+path whose intake differs (PICK and RELOCATE) and a `ProcessPathUpdated` for
+each.
+
+```bash
+kubectl port-forward -n warehouse-systems svc/process-path-management 8080:80
+make seed-catalogue BASE_URL=http://localhost:8080 SEED_ARGS=--dry-run
+make seed-catalogue BASE_URL=http://localhost:8080
+```
+
+The seed is idempotent. It POSTs absent entries, does nothing for identical
+ones, and PUTs revisable drift. It exits 1 on an entry it must not touch: a
+deactivated id, or a changed `direct` or `destinationLocationRole`. The full
+table is on [Process-path catalogue](../overview/process-path-catalogue.md).
+With `EVENT_PUBLISHER=kafka` and Postgres, the writes go through the outbox,
+so the consumers pick the change up live.
 
 ### Re-publish integration events
 

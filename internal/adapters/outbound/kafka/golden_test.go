@@ -40,10 +40,11 @@ func goldenEvents() []struct {
 				RequiredCapabilities: []shared.Capability{"pick"},
 				CycleTimeP95:         2 * time.Hour,
 				Eligibility:          shared.NewEligibility(&maxUnits, nil, []string{"hazmat"}, false),
+				Intake:               shared.MustIntake(shared.DemandSourceCustomerOrder),
 				At:                   goldenAt,
 			},
 			key:  "PICK",
-			data: `{"path_id":"PICK","match_prefix":"pick","direct":true,"required_capabilities":["pick"],"cycle_time_p95":"2h0m0s","eligibility":{"max_units_per_line":1,"excluded_product_attributes":["hazmat"]}}`,
+			data: `{"path_id":"PICK","match_prefix":"pick","direct":true,"required_capabilities":["pick"],"cycle_time_p95":"2h0m0s","eligibility":{"max_units_per_line":1,"excluded_product_attributes":["hazmat"]},"intake":["CUSTOMER_ORDER"]}`,
 		},
 		{
 			name: "ProcessPathUpdated",
@@ -54,7 +55,7 @@ func goldenEvents() []struct {
 				At:                      goldenAt,
 			},
 			key:  "PACK",
-			data: `{"path_id":"PACK","match_prefix":"pack","required_capabilities":["pack"],"destination_location_role":"Drop","cycle_time_p95":"0s","eligibility":{}}`,
+			data: `{"path_id":"PACK","match_prefix":"pack","required_capabilities":["pack"],"destination_location_role":"Drop","cycle_time_p95":"0s","eligibility":{},"intake":[]}`,
 		},
 		{
 			name:  "ProcessPathDeactivated",

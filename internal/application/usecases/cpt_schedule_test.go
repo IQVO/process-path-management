@@ -99,7 +99,7 @@ func validCutoffFor(t *testing.T, pathIds ...shared.PathId) cptschedule.Cutoff {
 func seedActivePath(t *testing.T, repo *fakeRepo, id shared.PathId) {
 	t.Helper()
 	define := &usecases.DefinePath{Repo: repo, Publisher: &fakePublisher{}, Clock: fixedClock{time.Now()}}
-	if _, err := define.Execute(context.Background(), id, "pick", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, 2*time.Hour, shared.Eligibility{}); err != nil {
+	if _, err := define.Execute(context.Background(), id, "pick", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, 2*time.Hour, shared.Eligibility{}, shared.Intake{}); err != nil {
 		t.Fatalf("seedActivePath: %v", err)
 	}
 }

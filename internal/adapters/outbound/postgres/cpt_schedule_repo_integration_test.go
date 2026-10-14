@@ -121,7 +121,7 @@ func TestPostgres_ProcessPathRoundTrip_CarriesCycleTimeP95AndEligibility(t *test
 	maxUnits := 1
 	eligibility := shared.NewEligibility(&maxUnits, []string{"giftWrap"}, []string{"hazmat"}, true)
 
-	p, err := processpath.Define(id, "singles", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, 90*time.Minute, eligibility, now)
+	p, err := processpath.Define(id, "singles", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, 90*time.Minute, eligibility, shared.Intake{}, now)
 	if err != nil {
 		t.Fatalf("unexpected error defining path: %v", err)
 	}

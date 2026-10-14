@@ -11,49 +11,49 @@ import (
 const testCycleTimeP95 = 2 * time.Hour
 
 func TestDefine_RejectsEmptyPathId(t *testing.T) {
-	_, err := Define("", "pick", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, testCycleTimeP95, shared.Eligibility{}, time.Now())
+	_, err := Define("", "pick", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, testCycleTimeP95, shared.Eligibility{}, shared.Intake{}, time.Now())
 	if !errors.Is(err, ErrEmptyPathId) {
 		t.Fatalf("want ErrEmptyPathId, got %v", err)
 	}
 }
 
 func TestDefine_RejectsEmptyMatchPrefix(t *testing.T) {
-	_, err := Define("PICK", "", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, testCycleTimeP95, shared.Eligibility{}, time.Now())
+	_, err := Define("PICK", "", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, testCycleTimeP95, shared.Eligibility{}, shared.Intake{}, time.Now())
 	if !errors.Is(err, ErrEmptyMatchPrefix) {
 		t.Fatalf("want ErrEmptyMatchPrefix, got %v", err)
 	}
 }
 
 func TestDefine_RejectsUppercaseMatchPrefix(t *testing.T) {
-	_, err := Define("PICK", "Pick", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, testCycleTimeP95, shared.Eligibility{}, time.Now())
+	_, err := Define("PICK", "Pick", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, testCycleTimeP95, shared.Eligibility{}, shared.Intake{}, time.Now())
 	if !errors.Is(err, ErrMatchPrefixNotLowercase) {
 		t.Fatalf("want ErrMatchPrefixNotLowercase, got %v", err)
 	}
 }
 
 func TestDefine_RejectsEmptyRequiredCapabilities(t *testing.T) {
-	_, err := Define("PICK", "pick", true, nil, shared.DestinationLocationRoleUnset, testCycleTimeP95, shared.Eligibility{}, time.Now())
+	_, err := Define("PICK", "pick", true, nil, shared.DestinationLocationRoleUnset, testCycleTimeP95, shared.Eligibility{}, shared.Intake{}, time.Now())
 	if !errors.Is(err, ErrNoRequiredCapabilities) {
 		t.Fatalf("want ErrNoRequiredCapabilities, got %v", err)
 	}
 }
 
 func TestDefine_RejectsInvalidDestinationLocationRole(t *testing.T) {
-	_, err := Define("PICK", "pick", true, []shared.Capability{"pick"}, shared.DestinationLocationRole("Storage"), testCycleTimeP95, shared.Eligibility{}, time.Now())
+	_, err := Define("PICK", "pick", true, []shared.Capability{"pick"}, shared.DestinationLocationRole("Storage"), testCycleTimeP95, shared.Eligibility{}, shared.Intake{}, time.Now())
 	if !errors.Is(err, shared.ErrInvalidDestinationLocationRole) {
 		t.Fatalf("want ErrInvalidDestinationLocationRole, got %v", err)
 	}
 }
 
 func TestDefine_RejectsZeroCycleTimeP95(t *testing.T) {
-	_, err := Define("PICK", "pick", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, 0, shared.Eligibility{}, time.Now())
+	_, err := Define("PICK", "pick", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, 0, shared.Eligibility{}, shared.Intake{}, time.Now())
 	if !errors.Is(err, ErrInvalidCycleTime) {
 		t.Fatalf("want ErrInvalidCycleTime, got %v", err)
 	}
 }
 
 func TestDefine_RejectsNegativeCycleTimeP95(t *testing.T) {
-	_, err := Define("PICK", "pick", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, -time.Hour, shared.Eligibility{}, time.Now())
+	_, err := Define("PICK", "pick", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, -time.Hour, shared.Eligibility{}, shared.Intake{}, time.Now())
 	if !errors.Is(err, ErrInvalidCycleTime) {
 		t.Fatalf("want ErrInvalidCycleTime, got %v", err)
 	}
@@ -61,7 +61,7 @@ func TestDefine_RejectsNegativeCycleTimeP95(t *testing.T) {
 
 func TestDefine_ValidInput_IsActiveWithMatchingFields(t *testing.T) {
 	now := time.Now()
-	p, err := Define("PICK", "pick", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, testCycleTimeP95, shared.Eligibility{}, now)
+	p, err := Define("PICK", "pick", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, testCycleTimeP95, shared.Eligibility{}, shared.Intake{}, now)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -86,7 +86,7 @@ func TestDefine_ValidInput_IsActiveWithMatchingFields(t *testing.T) {
 }
 
 func TestDefine_WithDestinationLocationRole_IsPersistedOnTheAggregate(t *testing.T) {
-	p, err := Define("PACK", "pack", true, []shared.Capability{"pack"}, shared.DestinationLocationRoleDrop, testCycleTimeP95, shared.Eligibility{}, time.Now())
+	p, err := Define("PACK", "pack", true, []shared.Capability{"pack"}, shared.DestinationLocationRoleDrop, testCycleTimeP95, shared.Eligibility{}, shared.Intake{}, time.Now())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -98,7 +98,7 @@ func TestDefine_WithDestinationLocationRole_IsPersistedOnTheAggregate(t *testing
 func TestDefine_WithEligibility_IsPersistedOnTheAggregate(t *testing.T) {
 	maxUnits := 1
 	eligibility := shared.NewEligibility(&maxUnits, []string{"giftWrap"}, []string{"hazmat"}, true)
-	p, err := Define("SINGLES", "singles", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, testCycleTimeP95, eligibility, time.Now())
+	p, err := Define("SINGLES", "singles", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, testCycleTimeP95, eligibility, shared.Intake{}, time.Now())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -108,17 +108,17 @@ func TestDefine_WithEligibility_IsPersistedOnTheAggregate(t *testing.T) {
 }
 
 func TestRevise_OnDeactivatedPath_ReturnsErrPathDeactivated(t *testing.T) {
-	p, _ := Define("PICK", "pick", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, testCycleTimeP95, shared.Eligibility{}, time.Now())
+	p, _ := Define("PICK", "pick", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, testCycleTimeP95, shared.Eligibility{}, shared.Intake{}, time.Now())
 	p.Deactivate(time.Now())
-	_, err := p.Revise("pick-v2", []shared.Capability{"pick"}, testCycleTimeP95, shared.Eligibility{}, time.Now())
+	_, err := p.Revise("pick-v2", []shared.Capability{"pick"}, testCycleTimeP95, shared.Eligibility{}, shared.Intake{}, time.Now())
 	if !errors.Is(err, ErrPathDeactivated) {
 		t.Fatalf("want ErrPathDeactivated, got %v", err)
 	}
 }
 
 func TestRevise_NoActualChange_ReturnsChangedFalse(t *testing.T) {
-	p, _ := Define("PICK", "pick", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, testCycleTimeP95, shared.Eligibility{}, time.Now())
-	changed, err := p.Revise("pick", []shared.Capability{"pick"}, testCycleTimeP95, shared.Eligibility{}, time.Now())
+	p, _ := Define("PICK", "pick", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, testCycleTimeP95, shared.Eligibility{}, shared.Intake{}, time.Now())
+	changed, err := p.Revise("pick", []shared.Capability{"pick"}, testCycleTimeP95, shared.Eligibility{}, shared.Intake{}, time.Now())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -128,9 +128,9 @@ func TestRevise_NoActualChange_ReturnsChangedFalse(t *testing.T) {
 }
 
 func TestRevise_ActualChange_ReturnsChangedTrueAndUpdatesFields(t *testing.T) {
-	p, _ := Define("PICK", "pick", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, testCycleTimeP95, shared.Eligibility{}, time.Now())
+	p, _ := Define("PICK", "pick", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, testCycleTimeP95, shared.Eligibility{}, shared.Intake{}, time.Now())
 	later := time.Now().Add(time.Hour)
-	changed, err := p.Revise("pick-zone-a", []shared.Capability{"pick", "hazmat"}, testCycleTimeP95, shared.Eligibility{}, later)
+	changed, err := p.Revise("pick-zone-a", []shared.Capability{"pick", "hazmat"}, testCycleTimeP95, shared.Eligibility{}, shared.Intake{}, later)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -149,22 +149,22 @@ func TestRevise_ActualChange_ReturnsChangedTrueAndUpdatesFields(t *testing.T) {
 }
 
 func TestRevise_InvalidInput_RejectedEvenOnActivePath(t *testing.T) {
-	p, _ := Define("PICK", "pick", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, testCycleTimeP95, shared.Eligibility{}, time.Now())
-	if _, err := p.Revise("", []shared.Capability{"pick"}, testCycleTimeP95, shared.Eligibility{}, time.Now()); !errors.Is(err, ErrEmptyMatchPrefix) {
+	p, _ := Define("PICK", "pick", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, testCycleTimeP95, shared.Eligibility{}, shared.Intake{}, time.Now())
+	if _, err := p.Revise("", []shared.Capability{"pick"}, testCycleTimeP95, shared.Eligibility{}, shared.Intake{}, time.Now()); !errors.Is(err, ErrEmptyMatchPrefix) {
 		t.Fatalf("want ErrEmptyMatchPrefix, got %v", err)
 	}
 }
 
 func TestRevise_RejectsZeroCycleTimeP95(t *testing.T) {
-	p, _ := Define("PICK", "pick", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, testCycleTimeP95, shared.Eligibility{}, time.Now())
-	if _, err := p.Revise("pick", []shared.Capability{"pick"}, 0, shared.Eligibility{}, time.Now()); !errors.Is(err, ErrInvalidCycleTime) {
+	p, _ := Define("PICK", "pick", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, testCycleTimeP95, shared.Eligibility{}, shared.Intake{}, time.Now())
+	if _, err := p.Revise("pick", []shared.Capability{"pick"}, 0, shared.Eligibility{}, shared.Intake{}, time.Now()); !errors.Is(err, ErrInvalidCycleTime) {
 		t.Fatalf("want ErrInvalidCycleTime, got %v", err)
 	}
 }
 
 func TestRevise_DoesNotAlterDestinationLocationRole(t *testing.T) {
-	p, _ := Define("PACK", "pack", true, []shared.Capability{"pack"}, shared.DestinationLocationRoleDrop, testCycleTimeP95, shared.Eligibility{}, time.Now())
-	if _, err := p.Revise("pack-v2", []shared.Capability{"pack"}, testCycleTimeP95, shared.Eligibility{}, time.Now()); err != nil {
+	p, _ := Define("PACK", "pack", true, []shared.Capability{"pack"}, shared.DestinationLocationRoleDrop, testCycleTimeP95, shared.Eligibility{}, shared.Intake{}, time.Now())
+	if _, err := p.Revise("pack-v2", []shared.Capability{"pack"}, testCycleTimeP95, shared.Eligibility{}, shared.Intake{}, time.Now()); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if p.DestinationLocationRole() != shared.DestinationLocationRoleDrop {
@@ -173,8 +173,8 @@ func TestRevise_DoesNotAlterDestinationLocationRole(t *testing.T) {
 }
 
 func TestRevise_CycleTimeP95Change_ReturnsChangedTrue(t *testing.T) {
-	p, _ := Define("PICK", "pick", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, testCycleTimeP95, shared.Eligibility{}, time.Now())
-	changed, err := p.Revise("pick", []shared.Capability{"pick"}, 3*time.Hour, shared.Eligibility{}, time.Now())
+	p, _ := Define("PICK", "pick", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, testCycleTimeP95, shared.Eligibility{}, shared.Intake{}, time.Now())
+	changed, err := p.Revise("pick", []shared.Capability{"pick"}, 3*time.Hour, shared.Eligibility{}, shared.Intake{}, time.Now())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -187,10 +187,10 @@ func TestRevise_CycleTimeP95Change_ReturnsChangedTrue(t *testing.T) {
 }
 
 func TestRevise_EligibilityChange_ReturnsChangedTrue(t *testing.T) {
-	p, _ := Define("PICK", "pick", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, testCycleTimeP95, shared.Eligibility{}, time.Now())
+	p, _ := Define("PICK", "pick", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, testCycleTimeP95, shared.Eligibility{}, shared.Intake{}, time.Now())
 	maxUnits := 1
 	newEligibility := shared.NewEligibility(&maxUnits, nil, nil, false)
-	changed, err := p.Revise("pick", []shared.Capability{"pick"}, testCycleTimeP95, newEligibility, time.Now())
+	changed, err := p.Revise("pick", []shared.Capability{"pick"}, testCycleTimeP95, newEligibility, shared.Intake{}, time.Now())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -203,7 +203,7 @@ func TestRevise_EligibilityChange_ReturnsChangedTrue(t *testing.T) {
 }
 
 func TestDeactivate_IsIdempotent(t *testing.T) {
-	p, _ := Define("PICK", "pick", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, testCycleTimeP95, shared.Eligibility{}, time.Now())
+	p, _ := Define("PICK", "pick", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, testCycleTimeP95, shared.Eligibility{}, shared.Intake{}, time.Now())
 	p.Deactivate(time.Now())
 	if p.Status() != StatusDeactivated {
 		t.Fatal("expected Deactivated after first call")
@@ -216,7 +216,7 @@ func TestDeactivate_IsIdempotent(t *testing.T) {
 }
 
 func TestRequiredCapabilities_ReturnsDefensiveCopy(t *testing.T) {
-	p, _ := Define("PICK", "pick", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, testCycleTimeP95, shared.Eligibility{}, time.Now())
+	p, _ := Define("PICK", "pick", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, testCycleTimeP95, shared.Eligibility{}, shared.Intake{}, time.Now())
 	caps := p.RequiredCapabilities()
 	caps[0] = "mutated"
 	if p.RequiredCapabilities()[0] != "pick" {
@@ -231,7 +231,7 @@ func TestRehydrate_ReconstructsWithoutRevalidating(t *testing.T) {
 	// uppercase matchPrefix), because it reconstructs already-persisted,
 	// already-validated-at-write-time data -- repository adapters must
 	// never re-run construction invariants on read.
-	p := Rehydrate("PICK", "PICK-LEGACY", false, []shared.Capability{"pick"}, shared.DestinationLocationRoleWorkCenter, testCycleTimeP95, shared.Eligibility{}, StatusDeactivated, created, updated, 7)
+	p := Rehydrate("PICK", "PICK-LEGACY", false, []shared.Capability{"pick"}, shared.DestinationLocationRoleWorkCenter, testCycleTimeP95, shared.Eligibility{}, shared.Intake{}, StatusDeactivated, created, updated, 7)
 	if p.ID() != "PICK" {
 		t.Fatalf("want id PICK, got %s", p.ID())
 	}
@@ -256,7 +256,7 @@ func TestRehydrate_ReconstructsWithoutRevalidating(t *testing.T) {
 		t.Fatalf("want rehydrated version 7, got %d", p.Version())
 	}
 	// And a fresh Define starts at 1.
-	fresh, err := Define("FRESH", "fresh", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, testCycleTimeP95, shared.Eligibility{}, time.Now())
+	fresh, err := Define("FRESH", "fresh", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, testCycleTimeP95, shared.Eligibility{}, shared.Intake{}, time.Now())
 	if err != nil {
 		t.Fatalf("Define: %v", err)
 	}
@@ -266,8 +266,8 @@ func TestRehydrate_ReconstructsWithoutRevalidating(t *testing.T) {
 }
 
 func TestRevise_DifferentCapabilityCount_ReturnsChangedTrue(t *testing.T) {
-	p, _ := Define("PICK", "pick", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, testCycleTimeP95, shared.Eligibility{}, time.Now())
-	changed, err := p.Revise("pick", []shared.Capability{"pick", "hazmat"}, testCycleTimeP95, shared.Eligibility{}, time.Now())
+	p, _ := Define("PICK", "pick", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, testCycleTimeP95, shared.Eligibility{}, shared.Intake{}, time.Now())
+	changed, err := p.Revise("pick", []shared.Capability{"pick", "hazmat"}, testCycleTimeP95, shared.Eligibility{}, shared.Intake{}, time.Now())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

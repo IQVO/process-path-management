@@ -77,7 +77,16 @@ loaded once at boot by three other services.
 > just consumed.
 
 Kept as a plain string type (not an enum) because the valid set is
-operator-configurable, not compiled in.
+operator-configurable, not compiled in. The families an environment must
+define are declared in `catalogue/paths.json` and applied through the API
+(see [Process-path catalogue](../overview/process-path-catalogue.md)).
+
+**RELOCATE** is the path that carries slot-plan moves (a SKU moved between
+bins, planned by wes-work-planning from an approved slotting plan) as
+floor work. Capability `relocate`; its intake is `SLOT_RELOCATION` only, so
+the path is never chosen for order fulfilment
+([ADR 0033](../adr/0033-relocate-process-path.md),
+[ADR 0034](../adr/0034-process-path-intake.md)).
 
 ## Capability
 
@@ -88,6 +97,22 @@ operator-configurable, not compiled in.
 
 This service does not invent a new capability vocabulary; it is the
 authoritative SOURCE for which capabilities a given path requires.
+
+## Intake and DemandSource
+
+> `Intake` is the set of **demand sources** allowed to route work onto a
+> path ([ADR 0034](../adr/0034-process-path-intake.md)). A `DemandSource`
+> is one of `CUSTOMER_ORDER` (order-management order lines),
+> `STOCK_TRANSFER` (network-inventory-planning transfer legs, via WES),
+> `SLOT_RELOCATION` (approved slot-plan moves, via WES) or
+> `INVENTORY_CONTROL` (amnesty, damage, problem solve).
+
+A set: distinct values, canonical order, unknown or repeated values rejected
+(`shared.ErrInvalidIntake`). The empty set is valid and means the path is
+reached only by an explicit path id from an upstream stage (PACK, REBIN,
+SLAM). Routing policy, not identity: revisable while Active. Not to be
+confused with **eligibility**, which says what a unit of work must look like
+to be routed to the path, not who may route it there.
 
 ## MatchPrefix
 

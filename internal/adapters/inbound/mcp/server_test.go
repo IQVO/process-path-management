@@ -23,7 +23,7 @@ func seed(t *testing.T) *memory.ProcessPathRepo {
 	t.Helper()
 	repo := memory.NewProcessPathRepo()
 
-	pick, err := processpath.Define(shared.PathId("PICK"), "pick", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, 2*time.Hour, shared.Eligibility{}, base)
+	pick, err := processpath.Define(shared.PathId("PICK"), "pick", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, 2*time.Hour, shared.Eligibility{}, shared.Intake{}, base)
 	if err != nil {
 		t.Fatalf("define PICK: %v", err)
 	}
@@ -31,7 +31,7 @@ func seed(t *testing.T) *memory.ProcessPathRepo {
 		t.Fatalf("save PICK: %v", err)
 	}
 
-	rebin, err := processpath.Define(shared.PathId("REBIN"), "rebin", false, []shared.Capability{"rebin"}, shared.DestinationLocationRoleUnset, 2*time.Hour, shared.Eligibility{}, base)
+	rebin, err := processpath.Define(shared.PathId("REBIN"), "rebin", false, []shared.Capability{"rebin"}, shared.DestinationLocationRoleUnset, 2*time.Hour, shared.Eligibility{}, shared.Intake{}, base)
 	if err != nil {
 		t.Fatalf("define REBIN: %v", err)
 	}

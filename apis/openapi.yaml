@@ -76,8 +76,8 @@ paths:
             The request body is missing or not valid JSON (including a JSON
             number too large for eligibility.maxUnitsPerLine's int64
             range, or a null element inside requiredCapabilities,
-            eligibility.requiredProductAttributes or
-            eligibility.excludedProductAttributes — every array element must
+            eligibility.requiredProductAttributes,
+            eligibility.excludedProductAttributes or intake — every array element must
             be a string), or the Idempotency-Key header is absent/empty.
           content:
             application/problem+json:
@@ -94,7 +94,8 @@ paths:
             pathId is empty, matchPrefix is empty/not lower-case,
             requiredCapabilities is empty, cycleTimeP95 is not a positive
             Go duration string, destinationLocationRole is not one of
-            Drop/WorkCenter/Shipping — or the Idempotency-Key header was
+            Drop/WorkCenter/Shipping, intake holds an unknown or repeated
+            demand source (invalid-intake) — or the Idempotency-Key header was
             already used with a request body that differs from this one.
           content:
             application/problem+json:
@@ -156,14 +157,15 @@ paths:
     put:
       tags: [process-paths]
       operationId: revisePath
-      summary: Revise an Active process path's matchPrefix/requiredCapabilities/cycleTimeP95/eligibility
+      summary: Revise an Active process path's matchPrefix/requiredCapabilities/cycleTimeP95/eligibility/intake
       description: >
         pathId and direct are not revisable (direct describes a structural
         routing fact, not an operator-tunable parameter). Returns 422 if the
         path is Deactivated — a deactivated path is a closed historical
         record. A no-op revision (identical matchPrefix,
-        requiredCapabilities, cycleTimeP95, and eligibility) is a
-        successful 200 that does NOT republish ProcessPathUpdated.
+        requiredCapabilities, cycleTimeP95, eligibility, and intake) is a
+        successful 200 that does NOT republish ProcessPathUpdated. intake
+        (ADR 0034) is optional here: omitting it keeps the current intake.
       parameters:
         - $ref: "#/components/parameters/PathIdPathParam"
       requestBody:
@@ -184,8 +186,8 @@ paths:
             The request body is missing or not valid JSON (including a JSON
             number too large for eligibility.maxUnitsPerLine's int64 range,
             or a null element inside requiredCapabilities,
-            eligibility.requiredProductAttributes or
-            eligibility.excludedProductAttributes — every array element must
+            eligibility.requiredProductAttributes,
+            eligibility.excludedProductAttributes or intake — every array element must
             be a string).
           content:
             application/problem+json:
@@ -208,7 +210,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ProblemDetails"
         "422":
-          description: The path is deactivated, or matchPrefix/requiredCapabilities/cycleTimeP95 is invalid
+          description: The path is deactivated, or matchPrefix/requiredCapabilities/cycleTimeP95/intake is invalid
           content:
             application/problem+json:
               schema:
@@ -410,6 +412,8 @@ components:
           $ref: "#/components/schemas/CycleTimeP95"
         eligibility:
           $ref: "#/components/schemas/Eligibility"
+        intake:
+          $ref: "#/components/schemas/Intake"
     RevisePathRequest:
       type: object
       required: [matchPrefix, requiredCapabilities, cycleTimeP95]
@@ -428,6 +432,14 @@ components:
           $ref: "#/components/schemas/CycleTimeP95"
         eligibility:
           $ref: "#/components/schemas/Eligibility"
+        intake:
+          allOf:
+            - $ref: "#/components/schemas/Intake"
+          description: >
+            Optional on revise (ADR 0034): absent or JSON null keeps the
+            path's current intake, so a client that predates the field
+            never clears it; an array (the empty array included) replaces
+            it.
     ProcessPath:
       type: object
       properties:
@@ -450,6 +462,16 @@ components:
           $ref: "#/components/schemas/CycleTimeP95"
         eligibility:
           $ref: "#/components/schemas/Eligibility"
+        intake:
+          type: array
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/DemandSource"
+          description: >
+            The demand sources allowed to route work onto this path (ADR
+            0034), in canonical (sorted) order. Always present; [] when the
+            path is reached only by an explicit path id.
+          example: ["CUSTOMER_ORDER"]
         status:
           type: string
           enum: [ACTIVE, DEACTIVATED]
@@ -519,6 +541,29 @@ components:
           type: boolean
           nullable: true
           default: false
+    DemandSource:
+      type: string
+      enum: [CUSTOMER_ORDER, STOCK_TRANSFER, SLOT_RELOCATION, INVENTORY_CONTROL]
+      description: >
+        One source of demand that may route work onto a process path (ADR
+        0034). CUSTOMER_ORDER: order-management order lines.
+        STOCK_TRANSFER: network-inventory-planning transfer legs, planned
+        through wes-work-planning. SLOT_RELOCATION: approved slot-plan
+        moves, planned through wes-work-planning. INVENTORY_CONTROL:
+        internal inventory work (amnesty, damage, problem solve).
+    Intake:
+      type: array
+      nullable: true
+      uniqueItems: true
+      items:
+        $ref: "#/components/schemas/DemandSource"
+      description: >
+        The set of demand sources allowed to route work onto the path (ADR
+        0034): routing policy, revisable like eligibility. Omitted, JSON
+        null or [] on define is the empty set, meaning the path is reached
+        only by an explicit path id from an upstream stage (PACK, REBIN,
+        SLAM). An unknown or repeated value is a 422 invalid-intake.
+      example: ["CUSTOMER_ORDER"]
     DefineCPTScheduleRequest:
       type: object
       required: [timezone, cutoffs]

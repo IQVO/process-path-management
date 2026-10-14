@@ -92,7 +92,7 @@ func TestOutbox_DefinePath_CommitsAggregateAndEventTogether(t *testing.T) {
 		UnitOfWork: postgres.NewUnitOfWork(pool),
 	}
 
-	if _, err := uc.Execute(ctx, "PICK", "pick", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, 2*time.Hour, shared.Eligibility{}); err != nil {
+	if _, err := uc.Execute(ctx, "PICK", "pick", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, 2*time.Hour, shared.Eligibility{}, shared.Intake{}); err != nil {
 		t.Fatalf("define: %v", err)
 	}
 	if got := countOutbox(t, pool, "published_at IS NULL AND event_type = '"+cloudevents.TypeProcessPathCreated+"' AND aggregate_id = 'PICK'"); got != 1 {
@@ -118,7 +118,7 @@ func TestOutbox_PublishFailure_RollsBackAggregate(t *testing.T) {
 		UnitOfWork: postgres.NewUnitOfWork(pool),
 	}
 
-	if _, err := uc.Execute(ctx, "PACK", "pack", true, []shared.Capability{"pack"}, shared.DestinationLocationRoleUnset, 2*time.Hour, shared.Eligibility{}); err == nil {
+	if _, err := uc.Execute(ctx, "PACK", "pack", true, []shared.Capability{"pack"}, shared.DestinationLocationRoleUnset, 2*time.Hour, shared.Eligibility{}, shared.Intake{}); err == nil {
 		t.Fatal("expected the invalid event_id to fail the publish")
 	}
 	found, err := postgres.NewProcessPathRepo(pool).FindByID(ctx, "PACK")
@@ -145,10 +145,10 @@ func TestOutboxRelay_PublishesInOrderAndMarksRows(t *testing.T) {
 	revise := &usecases.RevisePath{Repo: repo, Publisher: pub, Clock: fixedClock{t: now.Add(time.Second)}, UnitOfWork: uow}
 	deactivate := &usecases.DeactivatePath{Repo: repo, Publisher: pub, Clock: fixedClock{t: now.Add(2 * time.Second)}, UnitOfWork: uow}
 
-	if _, err := define.Execute(ctx, "SLAM", "slam", true, []shared.Capability{"slam"}, shared.DestinationLocationRoleUnset, 2*time.Hour, shared.Eligibility{}); err != nil {
+	if _, err := define.Execute(ctx, "SLAM", "slam", true, []shared.Capability{"slam"}, shared.DestinationLocationRoleUnset, 2*time.Hour, shared.Eligibility{}, shared.Intake{}); err != nil {
 		t.Fatalf("define: %v", err)
 	}
-	if _, err := revise.Execute(ctx, "SLAM", "slam-lane", []shared.Capability{"slam"}, 3*time.Hour, shared.Eligibility{}); err != nil {
+	if _, err := revise.Execute(ctx, "SLAM", "slam-lane", []shared.Capability{"slam"}, 3*time.Hour, shared.Eligibility{}, nil); err != nil {
 		t.Fatalf("revise: %v", err)
 	}
 	if err := deactivate.Execute(ctx, "SLAM"); err != nil {
@@ -198,7 +198,7 @@ func TestOutboxRelay_SinkFailure_StopsAtFailedRowAndRetriesLater(t *testing.T) {
 	uow := postgres.NewUnitOfWork(pool)
 	define := &usecases.DefinePath{Repo: repo, Publisher: pub, Clock: fixedClock{t: now}, UnitOfWork: uow}
 	for _, id := range []shared.PathId{"A1", "B2", "C3"} {
-		if _, err := define.Execute(ctx, id, strings.ToLower(string(id)), true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, 2*time.Hour, shared.Eligibility{}); err != nil {
+		if _, err := define.Execute(ctx, id, strings.ToLower(string(id)), true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, 2*time.Hour, shared.Eligibility{}, shared.Intake{}); err != nil {
 			t.Fatalf("define %s: %v", id, err)
 		}
 	}
