@@ -140,6 +140,18 @@ chart-test:
 	bash charts/process-path-management/tests/render_test.sh
 	python3 charts/process-path-management/tests/test_service_selectors.py
 
+# The declared process-path catalogue (catalogue/paths.json, ADR 0033).
+# seed-catalogue applies it to a running service through the REST API
+# (idempotent; SEED_ARGS=--dry-run previews). catalogue-test runs the seed's
+# tests against a fake API, as the `guide-lint` CI job does.
+.PHONY: seed-catalogue catalogue-test
+BASE_URL ?= http://localhost:8080
+seed-catalogue:
+	python3 scripts/seed_catalogue.py --base-url $(BASE_URL) $(SEED_ARGS)
+
+catalogue-test:
+	python3 scripts/test_seed_catalogue.py
+
 # The fast self-correction loop: run this after every change, before committing.
 check: fmt-check vet build lint test
 
