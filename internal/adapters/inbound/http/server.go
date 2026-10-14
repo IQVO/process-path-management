@@ -155,8 +155,13 @@ func (s *Server) handleDefinePath(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, err)
 		return
 	}
+	intake, err := shared.ParseIntake(req.Intake)
+	if err != nil {
+		writeError(w, r, err)
+		return
+	}
 
-	p, err := s.DefinePath.Execute(r.Context(), shared.PathId(req.PathId), req.MatchPrefix, req.Direct, toCapabilities(req.RequiredCapabilities), destinationLocationRole, cycleTimeP95, toEligibility(req.Eligibility))
+	p, err := s.DefinePath.Execute(r.Context(), shared.PathId(req.PathId), req.MatchPrefix, req.Direct, toCapabilities(req.RequiredCapabilities), destinationLocationRole, cycleTimeP95, toEligibility(req.Eligibility), intake)
 	if err != nil {
 		writeError(w, r, err)
 		return
@@ -216,8 +221,13 @@ func (s *Server) handleRevisePath(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, err)
 		return
 	}
+	intake, err := toOptionalIntake(req.Intake)
+	if err != nil {
+		writeError(w, r, err)
+		return
+	}
 
-	p, err := s.RevisePath.Execute(r.Context(), pathId, req.MatchPrefix, toCapabilities(req.RequiredCapabilities), cycleTimeP95, toEligibility(req.Eligibility))
+	p, err := s.RevisePath.Execute(r.Context(), pathId, req.MatchPrefix, toCapabilities(req.RequiredCapabilities), cycleTimeP95, toEligibility(req.Eligibility), intake)
 	if err != nil {
 		writeError(w, r, err)
 		return
@@ -287,6 +297,7 @@ func toProcessPathResponse(p *processpath.ProcessPath) processPathResponse {
 		DestinationLocationRole: string(p.DestinationLocationRole()),
 		CycleTimeP95:            p.CycleTimeP95().String(),
 		Eligibility:             toEligibilityResponse(p.Eligibility()),
+		Intake:                  p.Intake().Strings(),
 		Status:                  string(p.Status()),
 		CreatedAt:               p.CreatedAt().UTC().Format(timeFormat),
 		UpdatedAt:               p.UpdatedAt().UTC().Format(timeFormat),
@@ -310,6 +321,20 @@ func toEligibility(req *eligibilityRequest) shared.Eligibility {
 		return shared.Eligibility{}
 	}
 	return shared.NewEligibility(req.MaxUnitsPerLine, req.RequiredProductAttributes, req.ExcludedProductAttributes, req.NonSortable)
+}
+
+// toOptionalIntake maps the revise body's optional intake (ADR 0034): nil
+// (absent or null on the wire) keeps the path's current intake, anything
+// else is validated as the replacement set ([] included).
+func toOptionalIntake(req *nonNullStrings) (*shared.Intake, error) {
+	if req == nil {
+		return nil, nil
+	}
+	in, err := shared.ParseIntake(*req)
+	if err != nil {
+		return nil, err
+	}
+	return &in, nil
 }
 
 // parseCycleTimeP95 parses a Go duration string (e.g. "2h", "90m"). A

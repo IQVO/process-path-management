@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -46,10 +47,10 @@ func NewProcessPathRepo(pool *pgxpool.Pool) *ProcessPathRepo {
 // conflict.
 func (r *ProcessPathRepo) Create(ctx context.Context, p *processpath.ProcessPath) error {
 	tag, err := querierFrom(ctx, r.pool).Exec(ctx, `
-		INSERT INTO process_paths (id, match_prefix, direct, required_capabilities, destination_location_role, cycle_time_p95, eligibility, status, created_at, updated_at, version)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 1)
+		INSERT INTO process_paths (id, match_prefix, direct, required_capabilities, destination_location_role, cycle_time_p95, eligibility, intake, status, created_at, updated_at, version)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 1)
 		ON CONFLICT (id) DO NOTHING
-	`, string(p.ID()), p.MatchPrefix(), p.Direct(), capabilitiesToStrings(p.RequiredCapabilities()), destinationLocationRoleToColumn(p.DestinationLocationRole()), durationToInterval(p.CycleTimeP95()), eligibilityToRow(p.Eligibility()), string(p.Status()), p.CreatedAt(), p.UpdatedAt())
+	`, string(p.ID()), p.MatchPrefix(), p.Direct(), capabilitiesToStrings(p.RequiredCapabilities()), destinationLocationRoleToColumn(p.DestinationLocationRole()), durationToInterval(p.CycleTimeP95()), eligibilityToRow(p.Eligibility()), p.Intake().Strings(), string(p.Status()), p.CreatedAt(), p.UpdatedAt())
 	if err != nil {
 		return err
 	}
@@ -69,18 +70,19 @@ func (r *ProcessPathRepo) Create(ctx context.Context, p *processpath.ProcessPath
 // starts at version 1.
 func (r *ProcessPathRepo) Save(ctx context.Context, p *processpath.ProcessPath) error {
 	tag, err := querierFrom(ctx, r.pool).Exec(ctx, `
-		INSERT INTO process_paths (id, match_prefix, direct, required_capabilities, destination_location_role, cycle_time_p95, eligibility, status, created_at, updated_at, version)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 1)
+		INSERT INTO process_paths (id, match_prefix, direct, required_capabilities, destination_location_role, cycle_time_p95, eligibility, intake, status, created_at, updated_at, version)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 1)
 		ON CONFLICT (id) DO UPDATE
 		  SET match_prefix          = EXCLUDED.match_prefix,
 		      required_capabilities = EXCLUDED.required_capabilities,
 		      cycle_time_p95        = EXCLUDED.cycle_time_p95,
 		      eligibility           = EXCLUDED.eligibility,
+		      intake                = EXCLUDED.intake,
 		      status                = EXCLUDED.status,
 		      updated_at            = EXCLUDED.updated_at,
 		      version               = process_paths.version + 1
-		WHERE process_paths.version = $11
-	`, string(p.ID()), p.MatchPrefix(), p.Direct(), capabilitiesToStrings(p.RequiredCapabilities()), destinationLocationRoleToColumn(p.DestinationLocationRole()), durationToInterval(p.CycleTimeP95()), eligibilityToRow(p.Eligibility()), string(p.Status()), p.CreatedAt(), p.UpdatedAt(), p.Version())
+		WHERE process_paths.version = $12
+	`, string(p.ID()), p.MatchPrefix(), p.Direct(), capabilitiesToStrings(p.RequiredCapabilities()), destinationLocationRoleToColumn(p.DestinationLocationRole()), durationToInterval(p.CycleTimeP95()), eligibilityToRow(p.Eligibility()), p.Intake().Strings(), string(p.Status()), p.CreatedAt(), p.UpdatedAt(), p.Version())
 	if err != nil {
 		return err
 	}
@@ -95,7 +97,7 @@ func (r *ProcessPathRepo) Save(ctx context.Context, p *processpath.ProcessPath) 
 
 func (r *ProcessPathRepo) FindByID(ctx context.Context, id shared.PathId) (*processpath.ProcessPath, error) {
 	row := querierFrom(ctx, r.pool).QueryRow(ctx, `
-		SELECT id, match_prefix, direct, required_capabilities, destination_location_role, cycle_time_p95, eligibility, status, created_at, updated_at, version
+		SELECT id, match_prefix, direct, required_capabilities, destination_location_role, cycle_time_p95, eligibility, intake, status, created_at, updated_at, version
 		FROM process_paths
 		WHERE id = $1
 	`, string(id))
@@ -110,7 +112,7 @@ func (r *ProcessPathRepo) FindByID(ctx context.Context, id shared.PathId) (*proc
 // COMMITTED, re-reads the latest committed row once the lock is granted.
 func (r *ProcessPathRepo) FindByIDForUpdate(ctx context.Context, id shared.PathId) (*processpath.ProcessPath, error) {
 	row := querierFrom(ctx, r.pool).QueryRow(ctx, `
-		SELECT id, match_prefix, direct, required_capabilities, destination_location_role, cycle_time_p95, eligibility, status, created_at, updated_at, version
+		SELECT id, match_prefix, direct, required_capabilities, destination_location_role, cycle_time_p95, eligibility, intake, status, created_at, updated_at, version
 		FROM process_paths
 		WHERE id = $1
 		FOR UPDATE
@@ -133,7 +135,7 @@ func (r *ProcessPathRepo) LockByIDsForShare(ctx context.Context, ids []shared.Pa
 		keys[i] = string(id)
 	}
 	return r.list(ctx, `
-		SELECT id, match_prefix, direct, required_capabilities, destination_location_role, cycle_time_p95, eligibility, status, created_at, updated_at, version
+		SELECT id, match_prefix, direct, required_capabilities, destination_location_role, cycle_time_p95, eligibility, intake, status, created_at, updated_at, version
 		FROM process_paths
 		WHERE id = ANY($1)
 		ORDER BY id
@@ -143,7 +145,7 @@ func (r *ProcessPathRepo) LockByIDsForShare(ctx context.Context, ids []shared.Pa
 
 func (r *ProcessPathRepo) ListActive(ctx context.Context) ([]*processpath.ProcessPath, error) {
 	return r.list(ctx, `
-		SELECT id, match_prefix, direct, required_capabilities, destination_location_role, cycle_time_p95, eligibility, status, created_at, updated_at, version
+		SELECT id, match_prefix, direct, required_capabilities, destination_location_role, cycle_time_p95, eligibility, intake, status, created_at, updated_at, version
 		FROM process_paths
 		WHERE status = 'ACTIVE'
 		ORDER BY id
@@ -152,7 +154,7 @@ func (r *ProcessPathRepo) ListActive(ctx context.Context) ([]*processpath.Proces
 
 func (r *ProcessPathRepo) ListAll(ctx context.Context) ([]*processpath.ProcessPath, error) {
 	return r.list(ctx, `
-		SELECT id, match_prefix, direct, required_capabilities, destination_location_role, cycle_time_p95, eligibility, status, created_at, updated_at, version
+		SELECT id, match_prefix, direct, required_capabilities, destination_location_role, cycle_time_p95, eligibility, intake, status, created_at, updated_at, version
 		FROM process_paths
 		ORDER BY id
 	`)
@@ -185,16 +187,24 @@ func scanProcessPath(row pgx.Row) (*processpath.ProcessPath, error) {
 		destinationLocationRole *string
 		cycleTimeP95            pgtype.Interval
 		eligibility             eligibilityRow
+		intake                  []string
 		status                  string
 		createdAt, updatedAt    time.Time
 		version                 int
 	)
-	err := row.Scan(&id, &matchPrefix, &direct, &requiredCapabilities, &destinationLocationRole, &cycleTimeP95, &eligibility, &status, &createdAt, &updatedAt, &version)
+	err := row.Scan(&id, &matchPrefix, &direct, &requiredCapabilities, &destinationLocationRole, &cycleTimeP95, &eligibility, &intake, &status, &createdAt, &updatedAt, &version)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
+	}
+	// A stored intake is re-validated (ADR 0034): only this service writes
+	// the column, so an unknown value means a hand edit or a newer
+	// binary's vocabulary, and loading it loudly beats routing on a guess.
+	parsedIntake, err := shared.ParseIntake(intake)
+	if err != nil {
+		return nil, fmt.Errorf("process path %s: stored intake %v: %w", id, intake, err)
 	}
 	return processpath.Rehydrate(
 		shared.PathId(id),
@@ -204,6 +214,7 @@ func scanProcessPath(row pgx.Row) (*processpath.ProcessPath, error) {
 		destinationLocationRoleFromColumn(destinationLocationRole),
 		intervalToDuration(cycleTimeP95),
 		eligibility.toDomain(),
+		parsedIntake,
 		processpath.Status(status),
 		createdAt,
 		updatedAt,

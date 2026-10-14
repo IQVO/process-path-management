@@ -380,6 +380,59 @@ class RepoLint(unittest.TestCase):
         code, out = lint(root)
         self.assertEqual(code, 0, out)
 
+    # ---- R11: coverage scope has one source of truth (the Makefile) ------------------------------------
+    MK_COVERAGE = ("COVERPKG := ./internal/domain/...,./internal/application/...,./internal/analytics/...\n"
+                   "coverage:\n\tgo test ./... -race -coverprofile=coverage.out -coverpkg=$(COVERPKG)\n")
+
+    def test_r11_incident_ci_defines_its_own_coverpkg_set(self):
+        # 16d: CI measured domain+application while `make coverage` also measured analytics
+        wf = """
+        name: CI
+        on: push
+        jobs:
+          test:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: actions/checkout@v7
+              - name: Unit tests with coverage
+                run: |
+                  go test ./... -race \\
+                    -coverprofile=coverage.out \\
+                    -coverpkg=./internal/domain/...,./internal/application/...
+        """
+        code, out = lint(make({".github/workflows/ci.yml": wf, "Makefile": self.MK_COVERAGE}))
+        self.assertEqual(code, 1, out)
+        self.assertEqual(out.count("[R11]"), 2, out)   # the -coverpkg line AND the gate CI never calls
+        self.assertIn("-coverpkg", out)
+        self.assertIn("make coverage", out)
+
+    def test_r11_ci_calling_make_coverage_is_clean(self):
+        wf = """
+        name: CI
+        on: push
+        jobs:
+          test:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: actions/checkout@v7
+              # the scope lives in the Makefile, never -coverpkg here
+              - run: make coverage
+              - run: go test ./internal/domain/... -coverprofile=/tmp/cov.out -covermode=atomic
+        """
+        code, out = lint(make({".github/workflows/ci.yml": wf, "Makefile": self.MK_COVERAGE}))
+        self.assertEqual(code, 0, out)
+
+    def test_r11_makefile_gate_never_run_by_ci(self):
+        wf = "name: CI\non: push\njobs:\n  t:\n    runs-on: x\n    steps:\n      - run: go test ./...\n"
+        code, out = lint(make({".github/workflows/ci.yml": wf, "Makefile": self.MK_COVERAGE}))
+        self.assertEqual(code, 1, out)
+        self.assertIn("[R11] Makefile:2", out)
+
+    def test_r11_ignore_marker_and_no_makefile_gate(self):
+        wf = ("name: CI\non: push\njobs:\n  t:\n    runs-on: x\n    steps:\n"
+              "      - run: go test ./... -coverpkg=./x/... # repo-lint: ignore one-off experiment\n")
+        self.assertEqual(lint(make({".github/workflows/ci.yml": wf}))[0], 0)
+
     def test_empty_repo_is_clean(self):
         self.assertEqual(lint(make({"README.md": "x\n"}))[0], 0)
 

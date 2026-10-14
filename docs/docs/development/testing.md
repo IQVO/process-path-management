@@ -14,7 +14,7 @@ description: The process-path-management test pyramid as it exists in this repos
 | Unit | `*_test.go` next to the code (no build tag): domain aggregates, use cases with fakes (`internal/application/usecases/fakes_test.go`), HTTP handlers via `httptest`, encoders, relay/consumer logic with fake writers | In-process, in-memory adapters, `-race` | `make test` |
 | BDD (godog) | 6 files in `features/` with **32 scenarios**, driven by `features_test.go` (`TestFeatures`) | Black-box over HTTP against the real chi router wired to the in-memory repositories, a fixed clock and a recording publisher, so scenarios assert responses **and** the domain events raised | `make bdd` |
 | Contract | `scripts/contract-test.sh`; `internal/adapters/inbound/http/reports_contract_test.go` | Builds `cmd/pathmgmt`, boots it in-memory on `127.0.0.1:18085`, runs Schemathesis `4.28.0` against `apis/openapi.yaml` (100 examples per operation, 4 workers). The reports router is checked against `apis/openapi-reports.yaml` by Go tests ([ADR 0031](../adr/0031-reports-api-openapi-contract.md)) | `make contract`; the Go tests run in `make test` |
-| Integration | 25 files tagged `//go:build integration` (24 under `internal/adapters/...`, plus `internal/application/usecases/usecases_wiring_integration_test.go`) | Each test starts its own Postgres 16 and/or Kafka with testcontainers-go; no `DATABASE_URL`, no compose | `make integration` (needs Docker) |
+| Integration | 26 files tagged `//go:build integration` (25 under `internal/adapters/...`, plus `internal/application/usecases/usecases_wiring_integration_test.go`) | Each test starts its own Postgres 16 and/or Kafka with testcontainers-go; no `DATABASE_URL`, no compose | `make integration` (needs Docker) |
 | Architecture fitness | `internal/architecture/` | Static checks over the source tree and import graph | `make arch-test` |
 | MCP evals | `internal/adapters/inbound/mcp/eval_*_test.go`, `evalsuite_test.go`, `testdata/features/mcp_tools.feature` (14 scenarios) | In-process MCP client/server sessions | `go test ./internal/adapters/inbound/mcp/... -race -run '^TestEval\|^TestMCPEvalSuite' -v` |
 | Mutation | `.gremlins.yaml` | gremlins `v0.6.0` over `./internal/domain` | `make mutation-fast` (alias `make mutation`) |
@@ -31,6 +31,8 @@ description: The process-path-management test pyramid as it exists in this repos
 | `features/revise_and_events.feature` | 6 | `ProcessPathCreated`/`Updated`/`Deactivated` published (deactivation exactly once), no-op revision publishes nothing, malformed `cycleTimeP95`, re-defining a deactivated id rejected |
 | `features/deactivate.feature` | 5 | Deactivate, idempotent re-deactivate, 404, 409 while a CPT schedule lists the path, success once the schedule no longer lists it |
 | `features/cpt_schedule.feature` | 7 | Define and get a site schedule, 404 before definition, unknown or deactivated path in a cutoff, duplicate `cptId`, unrecognised timezone |
+| `features/relocate_path.feature` | 4 | The declared RELOCATE entry: defined Active, published with `intake` `SLOT_RELOCATION` and no fake eligibility, re-seed refused 409, sits beside PICK |
+| `features/process_path_intake.feature` | 12 | Intake ([ADR 0034](../adr/0034-process-path-intake.md)): define/read/publish, `[]` on the wire when absent, 422 `invalid-intake` for an unknown or repeated source, intake-only revise publishes `ProcessPathUpdated`, an omitted intake is kept, `[]` clears it, and the declared intake of PICK/PACK/REBIN/SLAM/RELOCATE (outline) |
 
 ### Contract test exclusions
 
@@ -59,7 +61,7 @@ coverage (it has the evals instead).
 
 | Area | Files (all `internal/adapters/...`) | What they prove against real infrastructure |
 | --- | --- | --- |
-| Postgres repositories | `outbound/postgres/process_path_repo_integration_test.go`, `process_path_create_integration_test.go`, `cpt_schedule_repo_integration_test.go`, `integration_test.go` | Mapping, insert-only create, schedule persistence |
+| Postgres repositories | `outbound/postgres/process_path_repo_integration_test.go`, `process_path_create_integration_test.go`, `cpt_schedule_repo_integration_test.go`, `intake_integration_test.go`, `integration_test.go` | Mapping, insert-only create, schedule persistence; the `intake` column (migration 0009) round-trips, a pre-0009 row reads as `[]`, an unknown stored value fails the read (`TestPostgres_IntakeRoundTrip`, `TestPostgres_RowWithoutIntake_ReadsAsTheEmptySet`, `TestPostgres_UnknownStoredIntake_FailsTheRead`, [ADR 0034](../adr/0034-process-path-intake.md)) |
 | Concurrency | `define_concurrent_integration_test.go`, `version_integration_test.go`, `process_path_locks_integration_test.go`, `cpt_path_race_integration_test.go`, `deactivate_cpt_integration_test.go` | Duplicate-create race, optimistic `version` column, `FOR UPDATE`/`FOR SHARE` serialisation of deactivate vs CPT schedule ([ADR 0028](../adr/0028-close-path-cpt-schedule-race-with-row-locks.md)) |
 | Outbox | `outbox_integration_test.go`, `analytics_outbox_integration_test.go`, `outbox_trace_integration_test.go`, `outbox_trace_kafka_integration_test.go` | Two rows per event, relay ordering and retry, the attempt cap (`TestOutboxRelay_MaxAttempts_PoisonRowIsExcludedAndTheNextRowPublishes`, `TestOutboxRelay_WithoutMaxAttempts_RetriesWithoutBound`, [ADR 0030](../adr/0030-outbox-relay-attempt-cap.md)), trace context stored and sent, and end to end through a real broker (`TestOutboxTrace_TraceparentCrossesTheOutboxToKafka`, `TestOutboxTrace_RowWithoutTraceHeadersRelaysUnchanged`, gap fix D27) |
 | Housekeeping and pools | `sweeper_integration_test.go`, `pool_limits_integration_test.go` | Batch deletes, `MaxConns` and `statement_timeout` actually applied |
@@ -130,10 +132,30 @@ domain layer: 63 mutants, all killed.
 | `make check` | `fmt-check vet build lint test` (the lefthook pre-push gate) |
 | `make check-all` | `check` + `coverage` + `arch-test` + `bdd` |
 | `make check-fast`, `make guide-lint`, `make harness-test` | Agent-harness gates (`scripts/harness/`) |
+| `make catalogue-test` | `python3 scripts/test_seed_catalogue.py`: the declared-catalogue seed against an in-process fake API (ADR 0033) |
+| `make seed-catalogue BASE_URL=... [SEED_ARGS=--dry-run]` | applies `catalogue/paths.json` to a running service through the REST API (not a test; see the runbook) |
 
-The coverage package list differs between the two gates: `make coverage`
-includes `./internal/analytics/...`, the CI `test` job measures only
-`./internal/domain/...,./internal/application/...`.
+The declared catalogue (`catalogue/paths.json`, ADR 0033) has its own tests:
+`internal/domain/processpath/declared_catalogue_test.go` defines every entry
+through the aggregate, requires an `intake` array on every entry, pins the
+per-path intake table and exactly one `CUSTOMER_ORDER` entry point (PICK,
+[ADR 0034](../adr/0034-process-path-intake.md)), and pins `RELOCATE` field by
+field;
+`internal/adapters/outbound/kafka/relocate_golden_test.go` pins RELOCATE's
+`ProcessPathCreated` CloudEvent byte for byte on both streams;
+`features/relocate_path.feature` (step `the client defines the declared
+catalogue entry "<id>"` in `features_catalogue_test.go`) posts the file's
+bytes through the real router; and `scripts/test_seed_catalogue.py` covers
+every row of the seed's convergence table (it also runs in the CI
+`guide-lint` job).
+
+The Makefile is the single source of the coverage scope and threshold
+(gap 16d): the CI `test` job runs `make coverage` instead of its own
+`go test -coverpkg=...` command, which had drifted to
+`./internal/domain/...,./internal/application/...` only (it left out
+`./internal/analytics/...`). `repo_lint.py` rule R11 (CI `guide-lint` job)
+fails a PR whose workflow passes `-coverpkg` itself, or whose Makefile
+gate no workflow runs. Measured on this change: `Coverage: 98.7% (gate: 90%)`.
 
 ## CI (`.github/workflows/ci.yml`)
 
@@ -143,9 +165,9 @@ Triggers: push and pull request to `main`, `develop`; weekly schedule
 | Job | Runs | When |
 | --- | --- | --- |
 | `lint` | golangci-lint `v2.14.0` | every run |
-| `guide-lint` | `scripts/harness/guide_lint.py`, `repo_lint.py`, `test_hook.py`, `test_repo_lint.py` | every run |
+| `guide-lint` | `scripts/harness/guide_lint.py`, `repo_lint.py` (R1-R7 and R11; R11 = coverage scope only in the Makefile), `test_hook.py`, `test_repo_lint.py` | every run |
 | `complexity` | golangci-lint `--enable-only gocyclo,gocognit,cyclop,funlen,nestif`, plus an informational gocyclo report (> 10) | every run |
-| `test` | build, vet, gofmt, unit tests with coverage, 90 % gate | every run |
+| `test` | build, vet, gofmt, then `make coverage` (unit tests with the Makefile's coverage scope and 90 % gate) | every run |
 | `bdd` | `go test ./... -run TestFeatures -v` | every run |
 | `contract` | Schemathesis via `scripts/contract-test.sh` | every run |
 | `evals-tests` | `go test ./internal/adapters/inbound/mcp/... -race -run '^TestEval\|^TestMCPEvalSuite' -v` | every run |

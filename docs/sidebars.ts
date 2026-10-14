@@ -22,6 +22,7 @@ const sidebars: SidebarsConfig = {
         'overview/introduction',
         'overview/architecture',
         'overview/quickstart',
+        'overview/process-path-catalogue',
       ],
     },
     {
@@ -119,6 +120,8 @@ const sidebars: SidebarsConfig = {
         'adr/0030-outbox-relay-attempt-cap',
         'adr/0031-reports-api-openapi-contract',
         'adr/0032-analytics-claim-and-apply-in-one-transaction',
+        'adr/0033-relocate-process-path',
+        'adr/0034-process-path-intake',
       ],
     },
   ],

@@ -72,12 +72,18 @@ lint:
 test:
 	$(GO) test ./... -race
 
+# The ONLY definition of the coverage scope and gate: CI's `test` job runs
+# `make coverage` (gap 16d), and repo_lint R11 fails any workflow that runs
+# `go test -coverpkg=...` itself, so the package set cannot drift again.
 coverage:
 	$(GO) test ./... -race -coverprofile=$(COVERAGE_OUT) -coverpkg=$(COVERAGE_PKGS)
 	@COVERAGE=$$($(GO) tool cover -func=$(COVERAGE_OUT) | awk '/^total:/ {print $$3}' | tr -d '%'); \
-	echo "Coverage: $${COVERAGE}% (gate: $(COVERAGE_THRESHOLD)%)"; \
+	echo "Coverage: $${COVERAGE}% (gate: $(COVERAGE_THRESHOLD)%, scope: $(COVERAGE_PKGS))"; \
+	if [ -n "$$GITHUB_STEP_SUMMARY" ]; then \
+		echo "### Coverage: $${COVERAGE}% (gate: $(COVERAGE_THRESHOLD)%, scope: \`$(COVERAGE_PKGS)\`)" >> "$$GITHUB_STEP_SUMMARY"; \
+	fi; \
 	if awk -v c="$$COVERAGE" -v t="$(COVERAGE_THRESHOLD)" 'BEGIN { exit !(c < t) }'; then \
-		echo "coverage $${COVERAGE}% is below the $(COVERAGE_THRESHOLD)% gate"; \
+		echo "::error::coverage $${COVERAGE}% is below the $(COVERAGE_THRESHOLD)% gate"; \
 		exit 1; \
 	fi
 
@@ -139,6 +145,18 @@ contract:
 chart-test:
 	bash charts/process-path-management/tests/render_test.sh
 	python3 charts/process-path-management/tests/test_service_selectors.py
+
+# The declared process-path catalogue (catalogue/paths.json, ADR 0033).
+# seed-catalogue applies it to a running service through the REST API
+# (idempotent; SEED_ARGS=--dry-run previews). catalogue-test runs the seed's
+# tests against a fake API, as the `guide-lint` CI job does.
+.PHONY: seed-catalogue catalogue-test
+BASE_URL ?= http://localhost:8080
+seed-catalogue:
+	python3 scripts/seed_catalogue.py --base-url $(BASE_URL) $(SEED_ARGS)
+
+catalogue-test:
+	python3 scripts/test_seed_catalogue.py
 
 # The fast self-correction loop: run this after every change, before committing.
 check: fmt-check vet build lint test

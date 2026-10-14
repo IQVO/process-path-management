@@ -111,7 +111,7 @@ internal/
     outbound/analyticsstore/      analytics projection/report store (Postgres + in-memory)
     outbound/telemetry/           OTel traces/metrics/logs
   architecture/                   arch-go + fitness tests
-migrations/                       golang-migrate SQL files (0001–0008); migrations/analytics/ for the report DB
+migrations/                       golang-migrate SQL files (0001–0009); migrations/analytics/ for the report DB
 apis/openapi.yaml                 This service's OWN REST API (8 operations; /readyz is served but not in the spec)
 apis/asyncapi.yaml                What this service PUBLISHES (integration + analytics topics)
 features/                         godog/Gherkin BDD acceptance tests

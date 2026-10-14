@@ -16,7 +16,7 @@ func seedPaths(t *testing.T, paths *postgres.ProcessPathRepo, uow *postgres.Unit
 	t.Helper()
 	define := &usecases.DefinePath{Repo: paths, Publisher: noopPublisher{}, Clock: fixedClock{t: time.Now().UTC().Truncate(time.Microsecond)}, UnitOfWork: uow}
 	for _, id := range ids {
-		if _, err := define.Execute(context.Background(), id, "p", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, time.Hour, shared.Eligibility{}); err != nil {
+		if _, err := define.Execute(context.Background(), id, "p", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, time.Hour, shared.Eligibility{}, shared.Intake{}); err != nil {
 			t.Fatalf("define %s: %v", id, err)
 		}
 	}

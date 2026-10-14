@@ -73,6 +73,11 @@ const (
 // (shared.DestinationLocationRoleUnset, the zero value, is a fully valid
 // permanent state) — see ADR 0009.
 //
+// Intake (ADR 0034) is the set of demand sources allowed to route work
+// onto the path. It is routing policy, not identity, so it is revisable
+// like eligibility; the empty set (the zero value) is valid and means the
+// path is reached only by an explicit path id from an upstream stage.
+//
 // version is the optimistic-concurrency token (ADR 0017): inert
 // infrastructure metadata the domain never reads, exactly like id — the
 // Postgres repo guards its upsert with it and the HTTP adapter maps a
@@ -86,6 +91,7 @@ type ProcessPath struct {
 	destinationLocationRole shared.DestinationLocationRole
 	cycleTimeP95            time.Duration
 	eligibility             shared.Eligibility
+	intake                  shared.Intake
 	status                  Status
 	createdAt               time.Time
 	updatedAt               time.Time
@@ -106,7 +112,9 @@ type ProcessPath struct {
 // (ADR 0010): cycleTimeP95 must be strictly positive
 // (ErrInvalidCycleTime otherwise); eligibility has no invariant of its
 // own — its zero value is a fully valid, permissive declaration.
-func Define(id shared.PathId, matchPrefix string, direct bool, requiredCapabilities []shared.Capability, destinationLocationRole shared.DestinationLocationRole, cycleTimeP95 time.Duration, eligibility shared.Eligibility, now time.Time) (*ProcessPath, error) {
+// intake (ADR 0034) is already a validated set (shared.ParseIntake); its
+// zero value, the empty set, is valid too.
+func Define(id shared.PathId, matchPrefix string, direct bool, requiredCapabilities []shared.Capability, destinationLocationRole shared.DestinationLocationRole, cycleTimeP95 time.Duration, eligibility shared.Eligibility, intake shared.Intake, now time.Time) (*ProcessPath, error) {
 	if id == "" {
 		return nil, ErrEmptyPathId
 	}
@@ -121,6 +129,7 @@ func Define(id shared.PathId, matchPrefix string, direct bool, requiredCapabilit
 		destinationLocationRole: destinationLocationRole,
 		cycleTimeP95:            cycleTimeP95,
 		eligibility:             eligibility,
+		intake:                  intake,
 		status:                  StatusActive,
 		createdAt:               now,
 		updatedAt:               now,
@@ -134,7 +143,7 @@ func Define(id shared.PathId, matchPrefix string, direct bool, requiredCapabilit
 // row's optimistic-concurrency version (ADR 0017): the adapter passes
 // what it read, Save guards on it, and a mismatch surfaces as
 // ports.ErrConcurrentModification.
-func Rehydrate(id shared.PathId, matchPrefix string, direct bool, requiredCapabilities []shared.Capability, destinationLocationRole shared.DestinationLocationRole, cycleTimeP95 time.Duration, eligibility shared.Eligibility, status Status, createdAt, updatedAt time.Time, version int) *ProcessPath {
+func Rehydrate(id shared.PathId, matchPrefix string, direct bool, requiredCapabilities []shared.Capability, destinationLocationRole shared.DestinationLocationRole, cycleTimeP95 time.Duration, eligibility shared.Eligibility, intake shared.Intake, status Status, createdAt, updatedAt time.Time, version int) *ProcessPath {
 	return &ProcessPath{
 		id:                      id,
 		matchPrefix:             matchPrefix,
@@ -143,6 +152,7 @@ func Rehydrate(id shared.PathId, matchPrefix string, direct bool, requiredCapabi
 		destinationLocationRole: destinationLocationRole,
 		cycleTimeP95:            cycleTimeP95,
 		eligibility:             eligibility,
+		intake:                  intake,
 		status:                  status,
 		createdAt:               createdAt,
 		updatedAt:               updatedAt,
@@ -151,14 +161,14 @@ func Rehydrate(id shared.PathId, matchPrefix string, direct bool, requiredCapabi
 }
 
 // Revise updates matchPrefix/requiredCapabilities/cycleTimeP95/eligibility
-// on an Active path.
+// and intake (ADR 0034) on an Active path.
 // Returns ErrPathDeactivated if the path is not Active. Returns true if
 // anything actually changed (the caller uses this to decide whether to
 // raise ProcessPathUpdated — a no-op revision raises nothing, so
 // consumers never have to diff two identical payloads to notice nothing
 // changed). destinationLocationRole is never revisable — see the
 // ProcessPath doc comment for why it is immutable like Direct.
-func (p *ProcessPath) Revise(matchPrefix string, requiredCapabilities []shared.Capability, cycleTimeP95 time.Duration, eligibility shared.Eligibility, now time.Time) (changed bool, err error) {
+func (p *ProcessPath) Revise(matchPrefix string, requiredCapabilities []shared.Capability, cycleTimeP95 time.Duration, eligibility shared.Eligibility, intake shared.Intake, now time.Time) (changed bool, err error) {
 	if p.status != StatusActive {
 		return false, ErrPathDeactivated
 	}
@@ -166,13 +176,14 @@ func (p *ProcessPath) Revise(matchPrefix string, requiredCapabilities []shared.C
 		return false, err
 	}
 	if p.matchPrefix == matchPrefix && capabilitiesEqual(p.requiredCapabilities, requiredCapabilities) &&
-		p.cycleTimeP95 == cycleTimeP95 && p.eligibility.Equal(eligibility) {
+		p.cycleTimeP95 == cycleTimeP95 && p.eligibility.Equal(eligibility) && p.intake.Equal(intake) {
 		return false, nil
 	}
 	p.matchPrefix = matchPrefix
 	p.requiredCapabilities = append([]shared.Capability(nil), requiredCapabilities...)
 	p.cycleTimeP95 = cycleTimeP95
 	p.eligibility = eligibility
+	p.intake = intake
 	p.updatedAt = now
 	return true, nil
 }
@@ -212,6 +223,10 @@ func (p *ProcessPath) CycleTimeP95() time.Duration { return p.cycleTimeP95 }
 // Eligibility is the rules a unit of work must satisfy to be routed to
 // this path (ADR 0010). The zero value is fully permissive.
 func (p *ProcessPath) Eligibility() shared.Eligibility { return p.eligibility }
+
+// Intake is the set of demand sources allowed to route work onto this
+// path (ADR 0034). Empty means only an explicit path id reaches it.
+func (p *ProcessPath) Intake() shared.Intake { return p.intake }
 
 func (p *ProcessPath) Status() Status       { return p.status }
 func (p *ProcessPath) IsActive() bool       { return p.status == StatusActive }
