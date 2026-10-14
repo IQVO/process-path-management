@@ -57,6 +57,22 @@ func declaredEligibility(entry map[string]any) shared.Eligibility {
 	return shared.NewEligibility(maxUnits, declaredStrings(e, "requiredProductAttributes"), declaredStrings(e, "excludedProductAttributes"), nonSortable)
 }
 
+// declaredIntake parses the entry's intake (ADR 0034). Every declared entry
+// must carry the key, the empty array included: an omitted intake would
+// silently mean "no demand source", which is a routing decision the
+// catalogue has to make explicitly.
+func declaredIntake(t *testing.T, entry map[string]any) shared.Intake {
+	t.Helper()
+	if _, ok := entry["intake"].([]any); !ok {
+		t.Fatalf("declared entry %v has no intake array: every entry declares its demand sources (ADR 0034)", entry["pathId"])
+	}
+	in, err := shared.ParseIntake(declaredStrings(entry, "intake"))
+	if err != nil {
+		t.Fatalf("declared entry %v: intake %v: %v", entry["pathId"], entry["intake"], err)
+	}
+	return in
+}
+
 func defineDeclared(t *testing.T, entry map[string]any) (*ProcessPath, error) {
 	t.Helper()
 	id, _ := entry["pathId"].(string)
@@ -72,7 +88,7 @@ func defineDeclared(t *testing.T, entry map[string]any) (*ProcessPath, error) {
 	for _, c := range declaredStrings(entry, "requiredCapabilities") {
 		caps = append(caps, shared.Capability(c))
 	}
-	return Define(shared.PathId(id), prefix, direct, caps, shared.DestinationLocationRole(role), cycle, declaredEligibility(entry), shared.Intake{}, time.Now())
+	return Define(shared.PathId(id), prefix, direct, caps, shared.DestinationLocationRole(role), cycle, declaredEligibility(entry), declaredIntake(t, entry), time.Now())
 }
 
 func TestDeclaredCatalogue_EveryEntryIsAValidActivePath(t *testing.T) {
@@ -105,9 +121,10 @@ func findDeclared(t *testing.T, id string) map[string]any {
 
 // TestDeclaredCatalogue_RelocatePath pins the RELOCATE entry ADR 0033
 // decided: family prefix `relocate`, direct, one required capability
-// `relocate`, no destination role, and an eligibility that only
-// slot-relocation work satisfies (so order-management's path selection
-// never routes a customer order line onto it).
+// `relocate`, no destination role, the permissive eligibility, and an
+// intake of SLOT_RELOCATION only (ADR 0034), which is what keeps
+// order-management's path selection from routing a customer order line
+// onto it. No fake eligibility attribute does that job any more.
 func TestDeclaredCatalogue_RelocatePath(t *testing.T) {
 	p, err := defineDeclared(t, findDeclared(t, "RELOCATE"))
 	if err != nil {
@@ -122,11 +139,51 @@ func TestDeclaredCatalogue_RelocatePath(t *testing.T) {
 	if p.DestinationLocationRole() != shared.DestinationLocationRoleUnset {
 		t.Fatalf("RELOCATE destinationLocationRole = %q, want unset", p.DestinationLocationRole())
 	}
-	if !slices.Equal(p.Eligibility().RequiredProductAttributes(), []string{"slot-relocation"}) {
-		t.Fatalf("RELOCATE requiredProductAttributes = %v, want [slot-relocation]", p.Eligibility().RequiredProductAttributes())
+	if !p.Eligibility().Equal(shared.Eligibility{}) {
+		t.Fatalf("RELOCATE eligibility = %+v, want the permissive zero value (intake keeps order lines off it)", p.Eligibility())
 	}
-	if p.Eligibility().MaxUnitsPerLine() != nil || len(p.Eligibility().ExcludedProductAttributes()) != 0 || p.Eligibility().NonSortable() {
-		t.Fatalf("RELOCATE eligibility declares more than the slot-relocation rule: %+v", p.Eligibility())
+	if !p.Intake().Equal(shared.MustIntake(shared.DemandSourceSlotRelocation)) {
+		t.Fatalf("RELOCATE intake = %v, want [SLOT_RELOCATION]", p.Intake().Strings())
+	}
+}
+
+// TestDeclaredCatalogue_IntakePerPath pins E5's routing table (ADR 0034):
+// PICK is the only customer-order entry point; PACK, REBIN and SLAM are
+// downstream stages reached only by an explicit path id; RELOCATE takes
+// slot-relocation work only.
+func TestDeclaredCatalogue_IntakePerPath(t *testing.T) {
+	want := map[string][]string{
+		"PICK":     {"CUSTOMER_ORDER"},
+		"PACK":     {},
+		"REBIN":    {},
+		"SLAM":     {},
+		"RELOCATE": {"SLOT_RELOCATION"},
+	}
+	for id, sources := range want {
+		p, err := defineDeclared(t, findDeclared(t, id))
+		if err != nil {
+			t.Fatalf("Define(%s) = %v", id, err)
+		}
+		if !slices.Equal(p.Intake().Strings(), sources) {
+			t.Fatalf("%s intake = %v, want %v", id, p.Intake().Strings(), sources)
+		}
+	}
+}
+
+// TestDeclaredCatalogue_ExactlyOneCustomerOrderEntryPoint guards the
+// regression E5 found: with every path a candidate, a customer order line
+// tied on cycle time and resolved to PACK. The catalogue must offer
+// CUSTOMER_ORDER on PICK and nowhere else.
+func TestDeclaredCatalogue_ExactlyOneCustomerOrderEntryPoint(t *testing.T) {
+	var entryPoints []string
+	for _, entry := range loadDeclaredCatalogue(t) {
+		if declaredIntake(t, entry).Contains(shared.DemandSourceCustomerOrder) {
+			id, _ := entry["pathId"].(string)
+			entryPoints = append(entryPoints, id)
+		}
+	}
+	if !slices.Equal(entryPoints, []string{"PICK"}) {
+		t.Fatalf("CUSTOMER_ORDER entry points = %v, want [PICK]", entryPoints)
 	}
 }
 
@@ -139,7 +196,7 @@ func TestDeclaredCatalogue_ReseedingAnIdenticalEntryChangesNothing(t *testing.T)
 	if err != nil {
 		t.Fatalf("Define(RELOCATE) = %v", err)
 	}
-	changed, err := p.Revise(p.MatchPrefix(), p.RequiredCapabilities(), p.CycleTimeP95(), p.Eligibility(), shared.Intake{}, time.Now())
+	changed, err := p.Revise(p.MatchPrefix(), p.RequiredCapabilities(), p.CycleTimeP95(), p.Eligibility(), p.Intake(), time.Now())
 	if err != nil || changed {
 		t.Fatalf("Revise with the declared values = (changed %v, err %v), want (false, nil)", changed, err)
 	}

@@ -1,14 +1,44 @@
 {
   "paths": [
     {
+      "pathId": "PICK",
+      "matchPrefix": "pick",
+      "direct": true,
+      "requiredCapabilities": ["pick"],
+      "cycleTimeP95": "2h",
+      "intake": ["CUSTOMER_ORDER"]
+    },
+    {
+      "pathId": "PACK",
+      "matchPrefix": "pack",
+      "direct": true,
+      "requiredCapabilities": ["pack"],
+      "cycleTimeP95": "2h",
+      "intake": []
+    },
+    {
+      "pathId": "REBIN",
+      "matchPrefix": "rebin",
+      "direct": true,
+      "requiredCapabilities": ["rebin"],
+      "cycleTimeP95": "2h",
+      "intake": []
+    },
+    {
+      "pathId": "SLAM",
+      "matchPrefix": "slam",
+      "direct": true,
+      "requiredCapabilities": ["slam"],
+      "cycleTimeP95": "2h",
+      "intake": []
+    },
+    {
       "pathId": "RELOCATE",
       "matchPrefix": "relocate",
       "direct": true,
       "requiredCapabilities": ["relocate"],
       "cycleTimeP95": "2h",
-      "eligibility": {
-        "requiredProductAttributes": ["slot-relocation"]
-      }
+      "intake": ["SLOT_RELOCATION"]
     }
   ]
 }

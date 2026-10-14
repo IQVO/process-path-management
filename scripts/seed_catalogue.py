@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""seed_catalogue: apply the declared process-path catalogue through the public REST API (ADR 0033).
+"""seed_catalogue: apply the declared process-path catalogue through the public REST API (ADR 0033, 0034).
 
 catalogue/paths.json is the reviewed record of the paths every environment must define. Each entry is a
 POST /process-paths body. This script converges a running process-path-management to it through the
@@ -11,6 +11,8 @@ warehouse.process-path-management.events. It is idempotent and safe to re-run:
   absent                                           POST /process-paths            -> ProcessPathCreated
   present, identical                               nothing (no spurious ProcessPathUpdated)
   present, a revisable field differs               PUT /process-paths/{pathId}    -> ProcessPathUpdated
+    (matchPrefix, requiredCapabilities, cycleTimeP95, eligibility, intake; intake drift alone, e.g. a path
+     defined before ADR 0034 that stores intake [], is revised like any other field)
   present, direct/destinationLocationRole differ   reported, exit 1 (immutable: define a new pathId)
   present, DEACTIVATED                             reported, exit 1 (a deactivated id is never resurrected)
 
@@ -31,7 +33,7 @@ import urllib.error
 import urllib.request
 
 DEFAULT_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "catalogue", "paths.json")
-REVISABLE = ("matchPrefix", "requiredCapabilities", "cycleTimeP95", "eligibility")
+REVISABLE = ("matchPrefix", "requiredCapabilities", "cycleTimeP95", "eligibility", "intake")
 _DURATION_UNITS = {"ns": 1e-9, "us": 1e-6, "\u00b5s": 1e-6, "ms": 1e-3, "s": 1.0, "m": 60.0, "h": 3600.0}
 _DURATION_RX = re.compile(r"(\d+(?:\.\d+)?)(ns|us|\u00b5s|ms|s|m|h)")
 
@@ -56,9 +58,15 @@ def normalize_eligibility(e):
             tuple(e.get("excludedProductAttributes") or ()), bool(e.get("nonSortable")))
 
 
+def normalize_intake(values):
+    """The intake is a set (ADR 0034): order and absence do not matter, [] and a missing field are equal."""
+    return tuple(sorted(values or ()))
+
+
 def revisable_view(p):
     return (p.get("matchPrefix"), tuple(p.get("requiredCapabilities") or ()),
-            go_duration_seconds(p.get("cycleTimeP95")), normalize_eligibility(p.get("eligibility")))
+            go_duration_seconds(p.get("cycleTimeP95")), normalize_eligibility(p.get("eligibility")),
+            normalize_intake(p.get("intake")))
 
 
 def immutable_view(p):
@@ -118,6 +126,10 @@ def load(path):
         missing = [k for k in ("pathId", "matchPrefix", "requiredCapabilities", "cycleTimeP95") if not e.get(k)]
         if missing:
             raise ValueError(f"{path}: entry {e.get('pathId')!r} is missing {missing}")
+        if not isinstance(e.get("intake"), list):
+            # ADR 0034: every entry declares its demand sources, [] included; an omitted intake would
+            # leave the routing decision to whatever the store happens to hold.
+            raise ValueError(f"{path}: entry {e.get('pathId')!r} must declare an intake array (ADR 0034)")
     return entries
 
 

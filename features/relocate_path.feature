@@ -3,7 +3,7 @@
 # work: wes-work-planning releases them on this path, fulfillment-execution
 # executes them as RELOCATE tasks for operators holding the `relocate`
 # capability, and order-management must never route a customer order line
-# onto it. The entry is declared in catalogue/paths.json and applied through
+# onto it: its intake is SLOT_RELOCATION only (ADR 0034). The entry is declared in catalogue/paths.json and applied through
 # POST /process-paths by scripts/seed_catalogue.py; these scenarios post the
 # declared bytes through the real router and assert what the five catalogue
 # consumers will replay from warehouse.process-path-management.events.
@@ -24,7 +24,8 @@ Feature: The RELOCATE process path
     And the response field "direct" is "true"
     And the response field "requiredCapabilities" is "relocate"
     And the response field "cycleTimeP95" is "2h0m0s"
-    And the response field "eligibility.requiredProductAttributes" is "slot-relocation"
+    And the response field "eligibility.requiredProductAttributes" is absent
+    And the response field "intake" is "SLOT_RELOCATION"
     And the response field "destinationLocationRole" is absent
     And the response field "status" is "ACTIVE"
     And exactly one "ProcessPathCreated" event was published for path "RELOCATE"
@@ -41,7 +42,8 @@ Feature: The RELOCATE process path
     And the CloudEvent field "data.match_prefix" is "relocate"
     And the CloudEvent field "data.direct" is "true"
     And the CloudEvent field "data.required_capabilities" is "relocate"
-    And the CloudEvent field "data.eligibility.required_product_attributes" is "slot-relocation"
+    And the CloudEvent field "data.eligibility.required_product_attributes" is absent
+    And the CloudEvent field "data.intake" is "SLOT_RELOCATION"
     And the CloudEvent field "data.destination_location_role" is absent
 
   @bdd

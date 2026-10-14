@@ -21,7 +21,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import seed_catalogue as seed  # noqa: E402
 
 RELOCATE = {"pathId": "RELOCATE", "matchPrefix": "relocate", "direct": True, "requiredCapabilities": ["relocate"],
-            "cycleTimeP95": "2h", "eligibility": {"requiredProductAttributes": ["slot-relocation"]}}
+            "cycleTimeP95": "2h", "intake": ["SLOT_RELOCATION"]}
+PICK = {"pathId": "PICK", "matchPrefix": "pick", "direct": True, "requiredCapabilities": ["pick"],
+        "cycleTimeP95": "2h", "intake": ["CUSTOMER_ORDER"]}
 
 
 def stored(desired, **over):
@@ -108,11 +110,54 @@ class SeedCatalogue(unittest.TestCase):
         self.assertIn("noop", out)
 
     def test_changed_revisable_field_is_revised_with_put(self):
-        FakeApi.store["RELOCATE"] = stored(RELOCATE, eligibility={})
+        FakeApi.store["RELOCATE"] = stored(RELOCATE, cycleTimeP95="3h0m0s")
         code, out = self.run_seed([RELOCATE])
         self.assertEqual(code, 0, out)
-        self.assertEqual(FakeApi.writes, [("PUT", "RELOCATE", sorted(seed.REVISABLE))], out)
-        self.assertEqual(FakeApi.store["RELOCATE"]["eligibility"], RELOCATE["eligibility"])
+        declared_revisable = sorted(k for k in seed.REVISABLE if k in RELOCATE)
+        self.assertEqual(FakeApi.writes, [("PUT", "RELOCATE", declared_revisable)], out)
+        self.assertEqual(FakeApi.store["RELOCATE"]["cycleTimeP95"], RELOCATE["cycleTimeP95"])
+
+    def test_intake_drift_alone_is_revised_with_put(self):
+        # A path defined before ADR 0034 stores intake [] (migration 0009's default).
+        FakeApi.store["PICK"] = stored(PICK, intake=[])
+        code, out = self.run_seed([PICK])
+        self.assertEqual(code, 0, out)
+        self.assertEqual([(m, pid) for m, pid, _ in FakeApi.writes], [("PUT", "PICK")], out)
+        self.assertIn("intake", FakeApi.writes[0][2])
+        self.assertEqual(FakeApi.store["PICK"]["intake"], ["CUSTOMER_ORDER"])
+
+    def test_intake_from_an_older_server_without_the_field_is_revised(self):
+        older = stored(PICK)
+        del older["intake"]
+        FakeApi.store["PICK"] = older
+        code, out = self.run_seed([PICK])
+        self.assertEqual(code, 0, out)
+        self.assertEqual([(m, pid) for m, pid, _ in FakeApi.writes], [("PUT", "PICK")], out)
+
+    def test_intake_is_compared_as_a_set(self):
+        both = dict(RELOCATE, intake=["STOCK_TRANSFER", "SLOT_RELOCATION"])
+        FakeApi.store["RELOCATE"] = stored(both, intake=["SLOT_RELOCATION", "STOCK_TRANSFER"])
+        code, out = self.run_seed([both])
+        self.assertEqual((code, FakeApi.writes), (0, []), out)
+
+    def test_dropped_fake_eligibility_is_cleared_with_put(self):
+        # RELOCATE as the first #160 draft defined it: a fake slot-relocation attribute, no intake.
+        FakeApi.store["RELOCATE"] = stored(RELOCATE, intake=[],
+                                           eligibility={"requiredProductAttributes": ["slot-relocation"]})
+        code, out = self.run_seed([RELOCATE])
+        self.assertEqual(code, 0, out)
+        self.assertEqual([(m, pid) for m, pid, _ in FakeApi.writes], [("PUT", "RELOCATE")], out)
+        self.assertNotIn("eligibility", FakeApi.writes[0][2])  # absent on PUT = the permissive default
+
+    def test_an_entry_without_intake_is_rejected_at_load(self):
+        no_intake = {k: v for k, v in RELOCATE.items() if k != "intake"}
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+            json.dump({"paths": [no_intake]}, f)
+        try:
+            with self.assertRaises(ValueError):
+                seed.load(f.name)
+        finally:
+            os.unlink(f.name)
 
     def test_immutable_difference_is_refused_and_fails(self):
         FakeApi.store["RELOCATE"] = stored(RELOCATE, direct=False)
@@ -142,6 +187,12 @@ class SeedCatalogue(unittest.TestCase):
         self.assertEqual(len(relocate), 1)
         self.assertEqual(relocate[0]["requiredCapabilities"], ["relocate"])
         self.assertEqual(relocate[0]["matchPrefix"], "relocate")
+        self.assertNotIn("eligibility", relocate[0])  # no fake slot-relocation attribute (ADR 0034)
+
+    def test_repository_catalogue_declares_intake_for_every_path(self):
+        intake = {e["pathId"]: e["intake"] for e in seed.load(seed.DEFAULT_FILE)}
+        self.assertEqual(intake, {"PICK": ["CUSTOMER_ORDER"], "PACK": [], "REBIN": [], "SLAM": [],
+                                  "RELOCATE": ["SLOT_RELOCATION"]})
 
 
 if __name__ == "__main__":
