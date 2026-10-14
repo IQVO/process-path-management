@@ -13,17 +13,17 @@ import (
 // RELOCATE path (catalogue/paths.json, ADR 0033) publishes on both streams.
 // wes-work-planning, fulfillment-execution and workforce-management read
 // match_prefix/direct/required_capabilities from it; order-management reads
-// eligibility and must see the slot-relocation requirement that keeps
-// customer order lines off this path.
+// intake (ADR 0034) and must see SLOT_RELOCATION only, which keeps customer
+// order lines off this path without any fake eligibility attribute.
 func TestGolden_RelocatePathCreated(t *testing.T) {
 	event := shared.ProcessPathCreated{
 		PathId: "RELOCATE", MatchPrefix: "relocate", Direct: true,
 		RequiredCapabilities: []shared.Capability{"relocate"},
 		CycleTimeP95:         2 * time.Hour,
-		Eligibility:          shared.NewEligibility(nil, []string{"slot-relocation"}, nil, false),
+		Intake:               shared.MustIntake(shared.DemandSourceSlotRelocation),
 		At:                   goldenAt,
 	}
-	data := `{"path_id":"RELOCATE","match_prefix":"relocate","direct":true,"required_capabilities":["relocate"],"cycle_time_p95":"2h0m0s","eligibility":{"required_product_attributes":["slot-relocation"]}}`
+	data := `{"path_id":"RELOCATE","match_prefix":"relocate","direct":true,"required_capabilities":["relocate"],"cycle_time_p95":"2h0m0s","eligibility":{},"intake":["SLOT_RELOCATION"]}`
 
 	w := &fakeWriter{}
 	p := &outboundkafka.Publisher{Writer: w, NewId: func() string { return goldenId }}

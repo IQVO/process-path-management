@@ -76,6 +76,15 @@ info:
     already knows, exactly as it already must for any future addition —
     see ADR 0010's Consequences section.
 
+    ## ADR 0034: process-path intake
+
+    `ProcessPathCreated`/`ProcessPathUpdated` gained an additive `intake`
+    array: the demand sources (`CUSTOMER_ORDER`, `STOCK_TRANSFER`,
+    `SLOT_RELOCATION`, `INVENTORY_CONTROL`) allowed to route work onto the
+    path. order-management's path selection considers only paths whose
+    intake contains `CUSTOMER_ORDER`; `[]` means the path is reached only by
+    an explicit path id (PACK, REBIN, SLAM).
+
     ## Consumers
 
     `fulfillment-execution`, `wes-work-planning`, `workforce-management`
@@ -194,6 +203,8 @@ components:
               direct: true
               required_capabilities: ["pick"]
               cycle_time_p95: 24h0m0s
+              eligibility: {}
+              intake: ["CUSTOMER_ORDER"]
         - name: packPathDefinedWithDestinationLocationRole
           summary: A new PACK path defined with a declared Drop destination role.
           payload:
@@ -212,6 +223,8 @@ components:
               required_capabilities: ["pack"]
               destination_location_role: Drop
               cycle_time_p95: 6h0m0s
+              eligibility: {}
+              intake: []
         - name: singlesPathDefinedWithEligibility
           summary: >-
             A new SINGLES path with a narrowed eligibility (ADR 0010):
@@ -237,11 +250,12 @@ components:
                 required_product_attributes: ["giftWrap"]
                 excluded_product_attributes: ["hazmat"]
                 non_sortable: true
+              intake: ["CUSTOMER_ORDER"]
 
     ProcessPathUpdated:
       name: ProcessPathUpdated
       title: Process Path Updated
-      summary: An Active path's matchPrefix, requiredCapabilities, cycleTimeP95, or eligibility was revised.
+      summary: An Active path's matchPrefix, requiredCapabilities, cycleTimeP95, eligibility, or intake was revised.
       description: >-
         Raised when RevisePath actually changes something. Not raised for
         a no-op update.
@@ -268,6 +282,8 @@ components:
               direct: true
               required_capabilities: ["pick", "hazmat"]
               cycle_time_p95: 24h0m0s
+              eligibility: {}
+              intake: ["CUSTOMER_ORDER"]
 
     ProcessPathDeactivated:
       name: ProcessPathDeactivated
@@ -367,6 +383,7 @@ components:
               required_capabilities: ["pick"]
               cycle_time_p95: 24h0m0s
               eligibility: {}
+              intake: ["CUSTOMER_ORDER"]
 
     ProcessPathUpdatedAnalytics:
       name: ProcessPathUpdated
@@ -396,6 +413,7 @@ components:
               required_capabilities: ["pick", "hazmat"]
               cycle_time_p95: 24h0m0s
               eligibility: {}
+              intake: ["CUSTOMER_ORDER"]
 
     ProcessPathDeactivatedAnalytics:
       name: ProcessPathDeactivated
@@ -604,7 +622,7 @@ components:
           example: PACK
           description: >-
             required_capabilities/match_prefix/direct/cycle_time_p95/
-            eligibility are omitted (not empty-arrayed/zeroed) on a
+            eligibility/intake are omitted (not empty-arrayed/zeroed) on a
             deactivation — it carries no definition data, only the
             PathId and the fact that it happened.
 
@@ -654,6 +672,25 @@ components:
           example: "24h0m0s"
         eligibility:
           $ref: "#/components/schemas/EligibilityData"
+        intake:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            enum: ["CUSTOMER_ORDER", "STOCK_TRANSFER", "SLOT_RELOCATION", "INVENTORY_CONTROL"]
+          description: >-
+            The set of demand sources allowed to route work onto this path
+            (ADR 0034), in canonical (sorted) order. Always present on
+            ProcessPathCreated/Updated; `[]` means the path is reached only
+            by an explicit path id from an upstream stage (PACK, REBIN,
+            SLAM) and no demand source may select it. CUSTOMER_ORDER is
+            order-management's order lines, STOCK_TRANSFER
+            network-inventory-planning's transfer legs (via WES),
+            SLOT_RELOCATION approved slot-plan moves (via WES),
+            INVENTORY_CONTROL internal amnesty/damage/problem-solve work.
+            A consumer that receives no `intake` (a producer older than ADR
+            0034) must treat it as unknown, not as `[]`.
+          example: ["CUSTOMER_ORDER"]
 
     EligibilityData:
       type: object

@@ -65,6 +65,10 @@ type processPathDTO struct {
 	UpdatedAt               string         `json:"updatedAt"`
 	CycleTimeP95            string         `json:"cycleTimeP95"`
 	Eligibility             eligibilityDTO `json:"eligibility"`
+	// Intake (ADR 0034) is the set of demand sources allowed to route
+	// work onto the path; always present, [] when only an explicit path
+	// id reaches it.
+	Intake []string `json:"intake"`
 }
 
 // eligibilityDTO is the tool-boundary representation of
@@ -102,6 +106,7 @@ func toProcessPathDTO(p *processpath.ProcessPath) processPathDTO {
 			ExcludedProductAttributes: e.ExcludedProductAttributes(),
 			NonSortable:               e.NonSortable(),
 		},
+		Intake: p.Intake().Strings(),
 	}
 }
 
