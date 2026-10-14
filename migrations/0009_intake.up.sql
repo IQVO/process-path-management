@@ -1,0 +1,14 @@
+-- ADR 0034: process-path intake.
+--
+-- process_paths gains intake, the set of demand sources allowed to route
+-- work onto the path (CUSTOMER_ORDER, STOCK_TRANSFER, SLOT_RELOCATION,
+-- INVENTORY_CONTROL). Additive: existing rows get the empty set, which is
+-- a valid declaration ("reached only by an explicit path id"), and the
+-- declared catalogue's seed (catalogue/paths.json, scripts/seed_catalogue.py)
+-- then revises each path to its declared intake through PUT, so the change
+-- is published as ProcessPathUpdated like any other revision.
+--
+-- The DEFAULT stays: a pod of the previous release that inserts during a
+-- rolling deploy does not name the column, and the empty set is the
+-- correct value for it.
+ALTER TABLE process_paths ADD COLUMN intake TEXT[] NOT NULL DEFAULT '{}';

@@ -78,6 +78,9 @@ type defineProcessPathRequest struct {
 	// Eligibility is optional; an absent object is the fully permissive
 	// zero value (ADR 0010).
 	Eligibility *eligibilityRequest `json:"eligibility,omitempty"`
+	// Intake is the optional set of demand sources allowed to route work
+	// onto the path (ADR 0034); absent or null is the empty set.
+	Intake nonNullStrings `json:"intake,omitempty"`
 }
 
 // reviseProcessPathRequest is the PUT /process-paths/{pathId} request
@@ -90,6 +93,10 @@ type reviseProcessPathRequest struct {
 	// CycleTimeP95 and Eligibility are revisable (ADR 0010).
 	CycleTimeP95 string              `json:"cycleTimeP95"`
 	Eligibility  *eligibilityRequest `json:"eligibility,omitempty"`
+	// Intake (ADR 0034) is revisable but optional on the wire: absent or
+	// null keeps the path's current intake, so a client that predates the
+	// field never clears it; [] clears it.
+	Intake *nonNullStrings `json:"intake,omitempty"`
 }
 
 // processPathResponse is the response body for every endpoint that
@@ -108,9 +115,12 @@ type processPathResponse struct {
 	// contract (ADR 0010).
 	CycleTimeP95 string              `json:"cycleTimeP95"`
 	Eligibility  eligibilityResponse `json:"eligibility"`
-	Status       string              `json:"status"`
-	CreatedAt    string              `json:"createdAt"`
-	UpdatedAt    string              `json:"updatedAt"`
+	// Intake (ADR 0034) is always present; [] when no demand source may
+	// route work onto the path.
+	Intake    []string `json:"intake"`
+	Status    string   `json:"status"`
+	CreatedAt string   `json:"createdAt"`
+	UpdatedAt string   `json:"updatedAt"`
 }
 
 // --- CPT schedule (ADR 0010) -----------------------------------------------

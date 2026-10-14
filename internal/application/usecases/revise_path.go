@@ -10,7 +10,7 @@ import (
 )
 
 // RevisePath updates an existing Active path's matchPrefix/
-// requiredCapabilities/cycleTimeP95/eligibility and publishes
+// requiredCapabilities/cycleTimeP95/eligibility/intake and publishes
 // ProcessPathUpdated -- but ONLY if the revision actually changes
 // something (see ProcessPath.Revise's changed return value). A no-op
 // revision request is a successful no-op, not an error and not a
@@ -24,7 +24,11 @@ type RevisePath struct {
 	UnitOfWork ports.UnitOfWork
 }
 
-func (uc *RevisePath) Execute(ctx context.Context, id shared.PathId, matchPrefix string, requiredCapabilities []shared.Capability, cycleTimeP95 time.Duration, eligibility shared.Eligibility) (*processpath.ProcessPath, error) {
+// Execute revises the path. intake is optional (ADR 0034): nil keeps the path's current intake, so a
+// client that predates the field (the console's revise form, an older
+// seed) never silently clears it; a non-nil value, the empty set
+// included, replaces it.
+func (uc *RevisePath) Execute(ctx context.Context, id shared.PathId, matchPrefix string, requiredCapabilities []shared.Capability, cycleTimeP95 time.Duration, eligibility shared.Eligibility, intake *shared.Intake) (*processpath.ProcessPath, error) {
 	p, err := uc.Repo.FindByID(ctx, id)
 	if err != nil {
 		return nil, err
@@ -33,8 +37,12 @@ func (uc *RevisePath) Execute(ctx context.Context, id shared.PathId, matchPrefix
 		return nil, ErrPathNotFound
 	}
 
+	revisedIntake := p.Intake()
+	if intake != nil {
+		revisedIntake = *intake
+	}
 	now := uc.Clock.Now()
-	changed, err := p.Revise(matchPrefix, requiredCapabilities, cycleTimeP95, eligibility, now)
+	changed, err := p.Revise(matchPrefix, requiredCapabilities, cycleTimeP95, eligibility, revisedIntake, now)
 	if err != nil {
 		return nil, err
 	}
@@ -53,6 +61,7 @@ func (uc *RevisePath) Execute(ctx context.Context, id shared.PathId, matchPrefix
 			DestinationLocationRole: p.DestinationLocationRole(),
 			CycleTimeP95:            p.CycleTimeP95(),
 			Eligibility:             p.Eligibility(),
+			Intake:                  p.Intake(),
 			At:                      now,
 		})
 	})

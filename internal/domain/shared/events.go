@@ -33,14 +33,17 @@ type ProcessPathCreated struct {
 	// this path.
 	CycleTimeP95 time.Duration
 	Eligibility  Eligibility
-	At           time.Time
+	// Intake is the set of demand sources allowed to route work onto
+	// the path (ADR 0034); always carried, the empty set included.
+	Intake Intake
+	At     time.Time
 }
 
 func (e ProcessPathCreated) EventName() string     { return "ProcessPathCreated" }
 func (e ProcessPathCreated) OccurredAt() time.Time { return e.At }
 
 // ProcessPathUpdated is raised when an ACTIVE path's matchPrefix,
-// requiredCapabilities, cycleTimeP95, or eligibility is revised. Not
+// requiredCapabilities, cycleTimeP95, eligibility or intake is revised. Not
 // raised for a no-op update (see ProcessPath.Revise's early-return) —
 // consumers should not have to diff two payloads to notice nothing
 // changed.
@@ -58,7 +61,9 @@ type ProcessPathUpdated struct {
 	// contract (ADR 0010) — both are revisable via Revise.
 	CycleTimeP95 time.Duration
 	Eligibility  Eligibility
-	At           time.Time
+	// Intake (ADR 0034) is revisable via Revise.
+	Intake Intake
+	At     time.Time
 }
 
 func (e ProcessPathUpdated) EventName() string     { return "ProcessPathUpdated" }

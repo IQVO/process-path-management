@@ -36,7 +36,7 @@ func TestOutbox_MultiEncoder_EnqueuesOnBothTopics(t *testing.T) {
 		UnitOfWork: postgres.NewUnitOfWork(pool),
 	}
 
-	if _, err := uc.Execute(ctx, "ZIP", "zip", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, 2*time.Hour, shared.Eligibility{}); err != nil {
+	if _, err := uc.Execute(ctx, "ZIP", "zip", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, 2*time.Hour, shared.Eligibility{}, shared.Intake{}); err != nil {
 		t.Fatalf("define: %v", err)
 	}
 
@@ -84,7 +84,7 @@ func TestOutbox_MultiEncoder_RollsBackBothRowsOnFailure(t *testing.T) {
 		UnitOfWork: postgres.NewUnitOfWork(pool),
 	}
 
-	if _, err := uc.Execute(ctx, "BAD1", "bad1", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, 2*time.Hour, shared.Eligibility{}); err == nil {
+	if _, err := uc.Execute(ctx, "BAD1", "bad1", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, 2*time.Hour, shared.Eligibility{}, shared.Intake{}); err == nil {
 		t.Fatal("expected the invalid event_id to fail the publish")
 	}
 	found, err := postgres.NewProcessPathRepo(pool).FindByID(ctx, "BAD1")

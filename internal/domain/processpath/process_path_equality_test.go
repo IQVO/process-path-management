@@ -32,11 +32,11 @@ func TestCapabilitiesEqual(t *testing.T) {
 }
 
 func TestRevise_IdenticalMultiCapability_ReturnsChangedFalse(t *testing.T) {
-	p, err := Define("PICK", "pick", true, []shared.Capability{"pick", "hazmat"}, shared.DestinationLocationRoleUnset, testCycleTimeP95, shared.Eligibility{}, time.Now())
+	p, err := Define("PICK", "pick", true, []shared.Capability{"pick", "hazmat"}, shared.DestinationLocationRoleUnset, testCycleTimeP95, shared.Eligibility{}, shared.Intake{}, time.Now())
 	if err != nil {
 		t.Fatalf("setup: %v", err)
 	}
-	changed, err := p.Revise("pick", []shared.Capability{"pick", "hazmat"}, testCycleTimeP95, shared.Eligibility{}, time.Now())
+	changed, err := p.Revise("pick", []shared.Capability{"pick", "hazmat"}, testCycleTimeP95, shared.Eligibility{}, shared.Intake{}, time.Now())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -46,11 +46,11 @@ func TestRevise_IdenticalMultiCapability_ReturnsChangedFalse(t *testing.T) {
 }
 
 func TestRevise_SameCapabilityCount_DifferentCapability_ReturnsChangedTrue(t *testing.T) {
-	p, err := Define("PICK", "pick", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, testCycleTimeP95, shared.Eligibility{}, time.Now())
+	p, err := Define("PICK", "pick", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, testCycleTimeP95, shared.Eligibility{}, shared.Intake{}, time.Now())
 	if err != nil {
 		t.Fatalf("setup: %v", err)
 	}
-	changed, err := p.Revise("pick", []shared.Capability{"pack"}, testCycleTimeP95, shared.Eligibility{}, time.Now())
+	changed, err := p.Revise("pick", []shared.Capability{"pack"}, testCycleTimeP95, shared.Eligibility{}, shared.Intake{}, time.Now())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -66,11 +66,11 @@ func TestRevise_ReorderedCapabilities_ReturnsChangedTrue(t *testing.T) {
 	// requiredCapabilities is compared order-sensitively, so a
 	// reordered-but-equal set is reported as a change (and republishes
 	// ProcessPathUpdated).
-	p, err := Define("PICK", "pick", true, []shared.Capability{"pick", "hazmat"}, shared.DestinationLocationRoleUnset, testCycleTimeP95, shared.Eligibility{}, time.Now())
+	p, err := Define("PICK", "pick", true, []shared.Capability{"pick", "hazmat"}, shared.DestinationLocationRoleUnset, testCycleTimeP95, shared.Eligibility{}, shared.Intake{}, time.Now())
 	if err != nil {
 		t.Fatalf("setup: %v", err)
 	}
-	changed, err := p.Revise("pick", []shared.Capability{"hazmat", "pick"}, testCycleTimeP95, shared.Eligibility{}, time.Now())
+	changed, err := p.Revise("pick", []shared.Capability{"hazmat", "pick"}, testCycleTimeP95, shared.Eligibility{}, shared.Intake{}, time.Now())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

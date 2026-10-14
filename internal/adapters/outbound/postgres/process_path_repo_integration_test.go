@@ -23,7 +23,7 @@ func TestPostgres_ProcessPathRoundTrip(t *testing.T) {
 	id := shared.PathId("PICK-IT-" + time.Now().UTC().Format("150405.000000"))
 	now := time.Now().UTC().Truncate(time.Microsecond)
 
-	p, err := processpath.Define(id, "pick", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, 2*time.Hour, shared.Eligibility{}, now)
+	p, err := processpath.Define(id, "pick", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, 2*time.Hour, shared.Eligibility{}, shared.Intake{}, now)
 	if err != nil {
 		t.Fatalf("unexpected error defining path: %v", err)
 	}
@@ -50,7 +50,7 @@ func TestPostgres_ProcessPathRoundTrip(t *testing.T) {
 
 	// Revise, save, re-read: verify the update path (ON CONFLICT DO UPDATE)
 	// round-trips correctly, not just the initial insert.
-	changed, err := found.Revise("pick-zone-a", []shared.Capability{"pick", "hazmat"}, 3*time.Hour, shared.Eligibility{}, now.Add(time.Minute))
+	changed, err := found.Revise("pick-zone-a", []shared.Capability{"pick", "hazmat"}, 3*time.Hour, shared.Eligibility{}, shared.Intake{}, now.Add(time.Minute))
 	if err != nil {
 		t.Fatalf("unexpected error revising path: %v", err)
 	}

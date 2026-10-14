@@ -254,7 +254,7 @@ func newWiredUsecases(t *testing.T) *wiredUsecases {
 func (w *wiredUsecases) definePath(t *testing.T, id, matchPrefix string, capabilities ...shared.Capability) {
 	t.Helper()
 	if _, err := w.define.Execute(context.Background(), shared.PathId(id), matchPrefix, true,
-		capabilities, shared.DestinationLocationRoleUnset, w.cycleTimeP95, shared.Eligibility{}); err != nil {
+		capabilities, shared.DestinationLocationRoleUnset, w.cycleTimeP95, shared.Eligibility{}, shared.Intake{}); err != nil {
 		t.Fatalf("define %s: %v", id, err)
 	}
 }
@@ -296,7 +296,7 @@ func TestUsecases_ProcessPathLifecycleRoundTrip(t *testing.T) {
 	// bump the repo's own suite proves in isolation).
 	w.revise.Clock = wiringClock{now: w.wall.Add(time.Hour)}
 	if _, err := w.revise.Execute(ctx, "PICK", "pick", []shared.Capability{"pick", "hazmat"},
-		w.cycleTimeP95, shared.Eligibility{}); err != nil {
+		w.cycleTimeP95, shared.Eligibility{}, nil); err != nil {
 		t.Fatalf("revise PICK: %v", err)
 	}
 	revised, err := w.getPath.Execute(ctx, "PICK")
@@ -364,7 +364,7 @@ func TestUsecases_DefinePathRejectsDuplicateId(t *testing.T) {
 	w.definePath(t, "PACK", "pack", "pack")
 	_, err := w.define.Execute(ctx, "PACK", "pack-v2", true,
 		[]shared.Capability{"pack"}, shared.DestinationLocationRoleUnset,
-		w.cycleTimeP95, shared.Eligibility{})
+		w.cycleTimeP95, shared.Eligibility{}, shared.Intake{})
 	if !errors.Is(err, usecases.ErrPathAlreadyExists) {
 		t.Fatalf("re-define must fail with ErrPathAlreadyExists, got %v", err)
 	}
@@ -386,7 +386,7 @@ func TestUsecases_DefinePathRejectsDuplicateId(t *testing.T) {
 	}
 	if _, err := w.define.Execute(ctx, "PACK", "pack-v3", true,
 		[]shared.Capability{"pack"}, shared.DestinationLocationRoleUnset,
-		w.cycleTimeP95, shared.Eligibility{}); !errors.Is(err, usecases.ErrPathAlreadyExists) {
+		w.cycleTimeP95, shared.Eligibility{}, shared.Intake{}); !errors.Is(err, usecases.ErrPathAlreadyExists) {
 		t.Fatalf("re-define of a deactivated id must fail with ErrPathAlreadyExists, got %v", err)
 	}
 }

@@ -58,7 +58,7 @@ func TestCPTSchedule_DefineVsDeactivate_NeverNamesAnInactivePath(t *testing.T) {
 	var definedWins, deactivatedWins int
 	for it := 0; it < iterations; it++ {
 		pathId := shared.PathId(fmt.Sprintf("RACE-%02d", it))
-		if _, err := definePath.Execute(ctx, pathId, "race", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, 2*time.Hour, shared.Eligibility{}); err != nil {
+		if _, err := definePath.Execute(ctx, pathId, "race", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, 2*time.Hour, shared.Eligibility{}, shared.Intake{}); err != nil {
 			t.Fatalf("iteration %d: define path: %v", it, err)
 		}
 

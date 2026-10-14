@@ -64,7 +64,7 @@ func TestDefinePath_SaveAndPublishRunInsideOneUnitOfWork(t *testing.T) {
 	uow := &recordingUnitOfWork{}
 	uc := &usecases.DefinePath{Repo: repo, Publisher: pub, Clock: fixedClock{t: time.Unix(1700000000, 0).UTC()}, UnitOfWork: uow}
 
-	if _, err := uc.Execute(context.Background(), "PICK", "pick", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, testCycleTimeP95, shared.Eligibility{}); err != nil {
+	if _, err := uc.Execute(context.Background(), "PICK", "pick", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, testCycleTimeP95, shared.Eligibility{}, shared.Intake{}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if uow.opened != 1 || uow.committed != 1 || uow.rolledBack != 0 {
@@ -81,7 +81,7 @@ func TestDefinePath_PublishFailure_RollsBackTheUnitOfWork(t *testing.T) {
 	uow := &recordingUnitOfWork{}
 	uc := &usecases.DefinePath{Repo: repo, Publisher: pub, Clock: fixedClock{t: time.Unix(1700000000, 0).UTC()}, UnitOfWork: uow}
 
-	_, err := uc.Execute(context.Background(), "PICK", "pick", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, testCycleTimeP95, shared.Eligibility{})
+	_, err := uc.Execute(context.Background(), "PICK", "pick", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, testCycleTimeP95, shared.Eligibility{}, shared.Intake{})
 	if err == nil || err.Error() != "outbox insert failed" {
 		t.Fatalf("expected the publish error to propagate, got %v", err)
 	}
@@ -96,7 +96,7 @@ func TestDefinePath_UnitOfWorkBeginFailure_Propagates(t *testing.T) {
 	uow := &recordingUnitOfWork{beginErr: errors.New("begin failed")}
 	uc := &usecases.DefinePath{Repo: repo, Publisher: pub, Clock: fixedClock{t: time.Unix(1700000000, 0).UTC()}, UnitOfWork: uow}
 
-	if _, err := uc.Execute(context.Background(), "PICK", "pick", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, testCycleTimeP95, shared.Eligibility{}); err == nil || err.Error() != "begin failed" {
+	if _, err := uc.Execute(context.Background(), "PICK", "pick", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, testCycleTimeP95, shared.Eligibility{}, shared.Intake{}); err == nil || err.Error() != "begin failed" {
 		t.Fatalf("expected begin error, got %v", err)
 	}
 	if pub.count() != 0 {
@@ -109,7 +109,7 @@ func TestDefinePath_NilUnitOfWork_StillSavesAndPublishes(t *testing.T) {
 	pub := &scopedPublisher{}
 	uc := &usecases.DefinePath{Repo: repo, Publisher: pub, Clock: fixedClock{t: time.Unix(1700000000, 0).UTC()}}
 
-	if _, err := uc.Execute(context.Background(), "PICK", "pick", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, testCycleTimeP95, shared.Eligibility{}); err != nil {
+	if _, err := uc.Execute(context.Background(), "PICK", "pick", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, testCycleTimeP95, shared.Eligibility{}, shared.Intake{}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if pub.count() != 1 || pub.inScope[0] {
@@ -121,14 +121,14 @@ func TestRevisePath_SaveAndPublishRunInsideOneUnitOfWork(t *testing.T) {
 	now := time.Unix(1700000000, 0).UTC()
 	repo := newFakeRepo()
 	define := &usecases.DefinePath{Repo: repo, Publisher: &fakePublisher{}, Clock: fixedClock{t: now}}
-	if _, err := define.Execute(context.Background(), "PICK", "pick", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, testCycleTimeP95, shared.Eligibility{}); err != nil {
+	if _, err := define.Execute(context.Background(), "PICK", "pick", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, testCycleTimeP95, shared.Eligibility{}, shared.Intake{}); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
 
 	pub := &scopedPublisher{}
 	uow := &recordingUnitOfWork{}
 	uc := &usecases.RevisePath{Repo: repo, Publisher: pub, Clock: fixedClock{t: now.Add(time.Minute)}, UnitOfWork: uow}
-	if _, err := uc.Execute(context.Background(), "PICK", "pick-zone", []shared.Capability{"pick"}, testCycleTimeP95, shared.Eligibility{}); err != nil {
+	if _, err := uc.Execute(context.Background(), "PICK", "pick-zone", []shared.Capability{"pick"}, testCycleTimeP95, shared.Eligibility{}, nil); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if uow.committed != 1 || len(pub.inScope) != 1 || !pub.inScope[0] {
@@ -140,13 +140,13 @@ func TestRevisePath_NoOp_OpensNoUnitOfWork(t *testing.T) {
 	now := time.Unix(1700000000, 0).UTC()
 	repo := newFakeRepo()
 	define := &usecases.DefinePath{Repo: repo, Publisher: &fakePublisher{}, Clock: fixedClock{t: now}}
-	if _, err := define.Execute(context.Background(), "PICK", "pick", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, testCycleTimeP95, shared.Eligibility{}); err != nil {
+	if _, err := define.Execute(context.Background(), "PICK", "pick", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, testCycleTimeP95, shared.Eligibility{}, shared.Intake{}); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
 
 	uow := &recordingUnitOfWork{}
 	uc := &usecases.RevisePath{Repo: repo, Publisher: &scopedPublisher{}, Clock: fixedClock{t: now.Add(time.Minute)}, UnitOfWork: uow}
-	if _, err := uc.Execute(context.Background(), "PICK", "pick", []shared.Capability{"pick"}, testCycleTimeP95, shared.Eligibility{}); err != nil {
+	if _, err := uc.Execute(context.Background(), "PICK", "pick", []shared.Capability{"pick"}, testCycleTimeP95, shared.Eligibility{}, nil); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if uow.opened != 0 {
@@ -158,7 +158,7 @@ func TestDeactivatePath_SaveAndPublishRunInsideOneUnitOfWork(t *testing.T) {
 	now := time.Unix(1700000000, 0).UTC()
 	repo := newFakeRepo()
 	define := &usecases.DefinePath{Repo: repo, Publisher: &fakePublisher{}, Clock: fixedClock{t: now}}
-	if _, err := define.Execute(context.Background(), "PICK", "pick", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, testCycleTimeP95, shared.Eligibility{}); err != nil {
+	if _, err := define.Execute(context.Background(), "PICK", "pick", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, testCycleTimeP95, shared.Eligibility{}, shared.Intake{}); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
 
@@ -184,7 +184,7 @@ func TestDeactivatePath_PublishFailure_RollsBack(t *testing.T) {
 	now := time.Unix(1700000000, 0).UTC()
 	repo := newFakeRepo()
 	define := &usecases.DefinePath{Repo: repo, Publisher: &fakePublisher{}, Clock: fixedClock{t: now}}
-	if _, err := define.Execute(context.Background(), "PICK", "pick", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, testCycleTimeP95, shared.Eligibility{}); err != nil {
+	if _, err := define.Execute(context.Background(), "PICK", "pick", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, testCycleTimeP95, shared.Eligibility{}, shared.Intake{}); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
 

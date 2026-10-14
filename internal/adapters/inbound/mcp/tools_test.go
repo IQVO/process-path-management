@@ -40,7 +40,7 @@ func (h *harness) seedPath(t *testing.T, id, matchPrefix string, direct bool, ca
 	for _, c := range caps {
 		capabilities = append(capabilities, shared.Capability(c))
 	}
-	p, err := processpath.Define(shared.PathId(id), matchPrefix, direct, capabilities, shared.DestinationLocationRoleUnset, 2*time.Hour, shared.Eligibility{}, base)
+	p, err := processpath.Define(shared.PathId(id), matchPrefix, direct, capabilities, shared.DestinationLocationRoleUnset, 2*time.Hour, shared.Eligibility{}, shared.Intake{}, base)
 	if err != nil {
 		t.Fatalf("seedPath define: %v", err)
 	}
@@ -85,7 +85,7 @@ func TestGetProcessPath(t *testing.T) {
 // always did; an AI client should not need REST for that one field.
 func TestGetProcessPathCarriesDestinationLocationRole(t *testing.T) {
 	h := newHarness(t)
-	p, err := processpath.Define(shared.PathId("PACK"), "pack", false, []shared.Capability{"pack"}, shared.DestinationLocationRoleWorkCenter, 2*time.Hour, shared.Eligibility{}, base)
+	p, err := processpath.Define(shared.PathId("PACK"), "pack", false, []shared.Capability{"pack"}, shared.DestinationLocationRoleWorkCenter, 2*time.Hour, shared.Eligibility{}, shared.Intake{}, base)
 	if err != nil {
 		t.Fatalf("define: %v", err)
 	}

@@ -72,7 +72,7 @@ func defineDeclared(t *testing.T, entry map[string]any) (*ProcessPath, error) {
 	for _, c := range declaredStrings(entry, "requiredCapabilities") {
 		caps = append(caps, shared.Capability(c))
 	}
-	return Define(shared.PathId(id), prefix, direct, caps, shared.DestinationLocationRole(role), cycle, declaredEligibility(entry), time.Now())
+	return Define(shared.PathId(id), prefix, direct, caps, shared.DestinationLocationRole(role), cycle, declaredEligibility(entry), shared.Intake{}, time.Now())
 }
 
 func TestDeclaredCatalogue_EveryEntryIsAValidActivePath(t *testing.T) {
@@ -139,7 +139,7 @@ func TestDeclaredCatalogue_ReseedingAnIdenticalEntryChangesNothing(t *testing.T)
 	if err != nil {
 		t.Fatalf("Define(RELOCATE) = %v", err)
 	}
-	changed, err := p.Revise(p.MatchPrefix(), p.RequiredCapabilities(), p.CycleTimeP95(), p.Eligibility(), time.Now())
+	changed, err := p.Revise(p.MatchPrefix(), p.RequiredCapabilities(), p.CycleTimeP95(), p.Eligibility(), shared.Intake{}, time.Now())
 	if err != nil || changed {
 		t.Fatalf("Revise with the declared values = (changed %v, err %v), want (false, nil)", changed, err)
 	}

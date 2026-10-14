@@ -26,7 +26,7 @@ import (
 
 func definePath(t *testing.T, repo *postgres.ProcessPathRepo, ctx context.Context, id shared.PathId, matchPrefix string) *processpath.ProcessPath {
 	t.Helper()
-	p, err := processpath.Define(id, matchPrefix, true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, 2*time.Hour, shared.Eligibility{}, time.Now())
+	p, err := processpath.Define(id, matchPrefix, true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, 2*time.Hour, shared.Eligibility{}, shared.Intake{}, time.Now())
 	if err != nil {
 		t.Fatalf("define %s: %v", id, err)
 	}
@@ -56,7 +56,7 @@ func TestProcessPathRepo_Save_StaleVersionFails(t *testing.T) {
 		t.Fatalf("expected both loads at version 1, got %d/%d", first.Version(), second.Version())
 	}
 
-	if _, err := first.Revise("pick-a", []shared.Capability{"pick"}, 2*time.Hour, shared.Eligibility{}, time.Now()); err != nil {
+	if _, err := first.Revise("pick-a", []shared.Capability{"pick"}, 2*time.Hour, shared.Eligibility{}, shared.Intake{}, time.Now()); err != nil {
 		t.Fatalf("revise first: %v", err)
 	}
 	if err := repo.Save(ctx, first); err != nil {
@@ -64,7 +64,7 @@ func TestProcessPathRepo_Save_StaleVersionFails(t *testing.T) {
 	}
 
 	// second still holds version 1; the row is now at version 2.
-	if _, err := second.Revise("pick-b", []shared.Capability{"pick"}, 2*time.Hour, shared.Eligibility{}, time.Now()); err != nil {
+	if _, err := second.Revise("pick-b", []shared.Capability{"pick"}, 2*time.Hour, shared.Eligibility{}, shared.Intake{}, time.Now()); err != nil {
 		t.Fatalf("revise second: %v", err)
 	}
 	err = repo.Save(ctx, second)
@@ -99,7 +99,7 @@ func TestProcessPathRepo_Save_CurrentVersionSucceedsAndIncrements(t *testing.T) 
 	if loaded.Version() != 1 {
 		t.Fatalf("expected version 1 after first save, got %d", loaded.Version())
 	}
-	if _, err := loaded.Revise("pack-zone", []shared.Capability{"pack"}, 3*time.Hour, shared.Eligibility{}, time.Now()); err != nil {
+	if _, err := loaded.Revise("pack-zone", []shared.Capability{"pack"}, 3*time.Hour, shared.Eligibility{}, shared.Intake{}, time.Now()); err != nil {
 		t.Fatalf("revise: %v", err)
 	}
 	if err := repo.Save(ctx, loaded); err != nil {
@@ -143,10 +143,10 @@ func TestProcessPathRepo_ConcurrentSaves_ExactlyOneWinner(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load B: %v", err)
 	}
-	if _, err := loadedA.Revise("slam-a", []shared.Capability{"slam"}, 2*time.Hour, shared.Eligibility{}, time.Now()); err != nil {
+	if _, err := loadedA.Revise("slam-a", []shared.Capability{"slam"}, 2*time.Hour, shared.Eligibility{}, shared.Intake{}, time.Now()); err != nil {
 		t.Fatalf("mutate A: %v", err)
 	}
-	if _, err := loadedB.Revise("slam-b", []shared.Capability{"slam"}, 2*time.Hour, shared.Eligibility{}, time.Now()); err != nil {
+	if _, err := loadedB.Revise("slam-b", []shared.Capability{"slam"}, 2*time.Hour, shared.Eligibility{}, shared.Intake{}, time.Now()); err != nil {
 		t.Fatalf("mutate B: %v", err)
 	}
 

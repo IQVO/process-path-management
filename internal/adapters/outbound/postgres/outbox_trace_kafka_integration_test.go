@@ -124,7 +124,7 @@ func TestOutboxTrace_TraceparentCrossesTheOutboxToKafka(t *testing.T) {
 
 	reqCtx, reqSpan := tracer.Start(ctx, "POST /process-paths", trace.WithSpanKind(trace.SpanKindServer))
 	if _, err := define.Execute(reqCtx, "TRACED", "traced", true, []shared.Capability{"pick"},
-		shared.DestinationLocationRoleUnset, 2*time.Hour, shared.Eligibility{}); err != nil {
+		shared.DestinationLocationRoleUnset, 2*time.Hour, shared.Eligibility{}, shared.Intake{}); err != nil {
 		t.Fatalf("define: %v", err)
 	}
 	reqSpan.End()

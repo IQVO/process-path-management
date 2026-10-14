@@ -28,7 +28,7 @@ func (r *racedRepo) FindByID(context.Context, shared.PathId) (*processpath.Proce
 // rejection, and publishes no ProcessPathCreated.
 func TestDefinePath_LosingARace_ReturnsPathAlreadyExistsAndPublishesNothing(t *testing.T) {
 	now := time.Date(2026, 10, 6, 0, 0, 0, 0, time.UTC)
-	winner, err := processpath.Define("PICK", "pick", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, 2*time.Hour, shared.Eligibility{}, now)
+	winner, err := processpath.Define("PICK", "pick", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, 2*time.Hour, shared.Eligibility{}, shared.Intake{}, now)
 	if err != nil {
 		t.Fatalf("define winner: %v", err)
 	}
@@ -40,7 +40,7 @@ func TestDefinePath_LosingARace_ReturnsPathAlreadyExistsAndPublishesNothing(t *t
 	metrics := &recordingMetrics{}
 	uc := &usecases.DefinePath{Repo: repo, Publisher: pub, Clock: fixedClock{t: now}, Metrics: metrics}
 
-	_, err = uc.Execute(context.Background(), "PICK", "pick-b", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, 3*time.Hour, shared.Eligibility{})
+	_, err = uc.Execute(context.Background(), "PICK", "pick-b", true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, 3*time.Hour, shared.Eligibility{}, shared.Intake{})
 	if !errors.Is(err, usecases.ErrPathAlreadyExists) {
 		t.Fatalf("want ErrPathAlreadyExists, got %v", err)
 	}

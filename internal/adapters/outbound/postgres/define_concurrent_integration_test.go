@@ -47,7 +47,7 @@ func TestDefinePath_ConcurrentSameId_ExactlyOneCreated(t *testing.T) {
 			<-start
 			// Every racer proposes a DIFFERENT matchPrefix, so a silent
 			// overwrite is also visible in the surviving row.
-			_, errs[i] = uc.Execute(ctx, "RACE", "race-"+string(rune('a'+i)), true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, 2*time.Hour, shared.Eligibility{})
+			_, errs[i] = uc.Execute(ctx, "RACE", "race-"+string(rune('a'+i)), true, []shared.Capability{"pick"}, shared.DestinationLocationRoleUnset, 2*time.Hour, shared.Eligibility{}, shared.Intake{})
 		}()
 	}
 	close(start)
