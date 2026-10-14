@@ -26,6 +26,11 @@ Checks
                       (incident: e2e-tests' scheduled run went red although the scenario passed: the red_issue
                       steps ran from the workspace root, where scripts/harness/red_issue.py does not exist; a
                       manual dispatch never ran those schedule-only steps, so nobody saw it)
+  R11 coverage-scope  the coverage package set (`-coverpkg`) is defined ONLY in the Makefile `coverage` target and CI
+                      runs `make coverage`: no workflow `run:` step may pass `-coverpkg` itself, and when the Makefile
+                      has a coverage gate some workflow must run `make coverage`.
+                      (incident 16d: process-path-management and warehouse-ops-agent measured a different package
+                      set in CI than `make coverage`, so the local gate and the PR gate disagreed silently)
 
 Usage: repo_lint.py [--root .] [--stale-owners claudioed,other]   exit 0 clean, 1 findings.
 Suppress one line with the text `repo-lint: ignore` on it (use sparingly, say why).
@@ -343,6 +348,37 @@ def check_placeholders(root):
                     "replace it with the real value (see scripts/new-service.sh in warehouse-harness-template)")
 
 
+COVERPKG_RX = re.compile(r"(?:^|\s)-coverpkg[=\s]")
+MAKE_COVERAGE_RX = re.compile(r"\bmake\b[^#\n]*\bcoverage\b")
+
+
+def check_coverage_scope(root):
+    """R11: one source of truth for the coverage scope - the Makefile `coverage` target, called by CI."""
+    calls = 0
+    for w in workflows(root):
+        rp = rel(root, w)
+        for i, l in enumerate(read(w).splitlines(), 1):
+            s = l.strip()
+            if s.startswith("#") or "repo-lint: ignore" in l:
+                continue
+            if MAKE_COVERAGE_RX.search(s):
+                calls += 1
+            if COVERPKG_RX.search(s):
+                err("R11", rp, i, "a workflow step defines its own coverage package set (`-coverpkg`)",
+                    "the Makefile `coverage` target is the single source of the coverage scope; a second copy here "
+                    "drifts (incident 16d: CI and `make coverage` measured different package sets, so the local and "
+                    "PR gates disagreed without anyone noticing)",
+                    "replace the coverage test + gate steps with `run: make coverage` and change the scope or the "
+                    "threshold only in the Makefile")
+    mk = read(os.path.join(root, "Makefile"))
+    m = re.search(r"(?m)^coverage:.*\n((?:\t.*\n?)*)", mk)
+    if m and "-coverpkg" in m.group(1) and workflows(root) and calls == 0:
+        err("R11", "Makefile", mk[:m.start()].count("\n") + 1,
+            "the Makefile defines a coverage gate (`coverage` target) but no workflow runs `make coverage`",
+            "the coverage gate then runs only on laptops, or CI re-implements it with its own package set and drifts",
+            "run the gate in CI with a `run: make coverage` step (the unit-test job)")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--root", default=".")
@@ -355,6 +391,7 @@ def main():
     check_dependabot(root)
     check_owner_drift(root, owners)
     check_placeholders(root)
+    check_coverage_scope(root)
     for e in errors:
         print(e)
     print(f"repo-lint: {len(errors)} error(s)")
