@@ -57,6 +57,16 @@ also requires an `Idempotency-Key` header.
 **Metrics:** `process_path_management.paths.defined{outcome=accepted|rejected}`
 (rejections at steps 2–4).
 
+**Declared entries.** `scripts/seed_catalogue.py` (`make seed-catalogue`)
+calls this use case, through the same REST route, for every entry of
+`catalogue/paths.json` that the store does not hold yet. It calls `RevisePath`
+for an entry whose revisable fields drifted, and it never calls either for an
+identical or deactivated entry. The first declared entry is `RELOCATE`
+(matchPrefix `relocate`, direct, capability `relocate`, eligibility requiring
+`slot-relocation`), which carries slot-plan moves
+([ADR 0033](../adr/0033-relocate-process-path.md),
+[Process-path catalogue](../overview/process-path-catalogue.md)).
+
 ## `RevisePath`
 
 `internal/application/usecases/revise_path.go`

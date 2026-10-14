@@ -99,6 +99,16 @@ Every event is a **full snapshot** of the aggregate (except the
 deactivation), so a consumer that replays the topic from offset 0 rebuilds
 the whole catalogue. The three WES consumers do exactly that on boot.
 
+**RELOCATE** ([ADR 0033](../adr/0033-relocate-process-path.md)) is published
+like every other path, as a `ProcessPathCreated` keyed `RELOCATE`
+(`match_prefix` `relocate`, `direct`, `required_capabilities` `[relocate]`,
+`eligibility.required_product_attributes` `[slot-relocation]`), once
+`make seed-catalogue` applies `catalogue/paths.json`. wes-work-planning
+releases slot-plan moves on it. fulfillment-execution builds RELOCATE tasks
+that require `relocate`, and workforce-management plans `relocate` headcount
+against it. order-management's path selection never picks it, because no
+order line has the `slot-relocation` attribute.
+
 **Failure behaviour.**
 
 - *Broker down, cluster mode (Postgres + `EVENT_PUBLISHER=kafka`).* Writes

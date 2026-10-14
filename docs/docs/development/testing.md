@@ -130,6 +130,19 @@ domain layer: 63 mutants, all killed.
 | `make check` | `fmt-check vet build lint test` (the lefthook pre-push gate) |
 | `make check-all` | `check` + `coverage` + `arch-test` + `bdd` |
 | `make check-fast`, `make guide-lint`, `make harness-test` | Agent-harness gates (`scripts/harness/`) |
+| `make catalogue-test` | `python3 scripts/test_seed_catalogue.py`: the declared-catalogue seed against an in-process fake API (ADR 0033) |
+| `make seed-catalogue BASE_URL=... [SEED_ARGS=--dry-run]` | applies `catalogue/paths.json` to a running service through the REST API (not a test; see the runbook) |
+
+The declared catalogue (`catalogue/paths.json`, ADR 0033) has its own tests:
+`internal/domain/processpath/declared_catalogue_test.go` defines every entry
+through the aggregate and pins `RELOCATE` field by field;
+`internal/adapters/outbound/kafka/relocate_golden_test.go` pins RELOCATE's
+`ProcessPathCreated` CloudEvent byte for byte on both streams;
+`features/relocate_path.feature` (step `the client defines the declared
+catalogue entry "<id>"` in `features_catalogue_test.go`) posts the file's
+bytes through the real router; and `scripts/test_seed_catalogue.py` covers
+every row of the seed's convergence table (it also runs in the CI
+`guide-lint` job).
 
 The coverage package list differs between the two gates: `make coverage`
 includes `./internal/analytics/...`, the CI `test` job measures only

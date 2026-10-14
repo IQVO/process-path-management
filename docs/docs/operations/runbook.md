@@ -267,6 +267,27 @@ The same report is available to agents through the MCP tool
 These follow from the code paths above. They have not been rehearsed against
 a live cluster as part of writing this page.
 
+### Seed the declared catalogue
+
+After deploying a release that adds or changes an entry in
+`catalogue/paths.json` (for example `RELOCATE`,
+[ADR 0033](../adr/0033-relocate-process-path.md)), converge the store through
+the API. Run it before the first consumer needs the path: for `RELOCATE`,
+that means before slotting-optimization approves a plan.
+
+```bash
+kubectl port-forward -n warehouse-systems svc/process-path-management 8080:80
+make seed-catalogue BASE_URL=http://localhost:8080 SEED_ARGS=--dry-run
+make seed-catalogue BASE_URL=http://localhost:8080
+```
+
+The seed is idempotent. It POSTs absent entries, does nothing for identical
+ones, and PUTs revisable drift. It exits 1 on an entry it must not touch: a
+deactivated id, or a changed `direct` or `destinationLocationRole`. The full
+table is on [Process-path catalogue](../overview/process-path-catalogue.md).
+With `EVENT_PUBLISHER=kafka` and Postgres, the writes go through the outbox,
+so the consumers pick the change up live.
+
 ### Re-publish integration events
 
 Consumers rebuild their caches from the topic, so re-publishing is a

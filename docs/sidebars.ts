@@ -22,6 +22,7 @@ const sidebars: SidebarsConfig = {
         'overview/introduction',
         'overview/architecture',
         'overview/quickstart',
+        'overview/process-path-catalogue',
       ],
     },
     {

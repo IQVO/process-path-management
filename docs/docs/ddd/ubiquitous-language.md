@@ -77,7 +77,16 @@ loaded once at boot by three other services.
 > just consumed.
 
 Kept as a plain string type (not an enum) because the valid set is
-operator-configurable, not compiled in.
+operator-configurable, not compiled in. The families an environment must
+define are declared in `catalogue/paths.json` and applied through the API
+(see [Process-path catalogue](../overview/process-path-catalogue.md)).
+
+**RELOCATE** is the path that carries slot-plan moves (a SKU moved between
+bins, planned by wes-work-planning from an approved slotting plan) as
+floor work. Capability `relocate`; its eligibility requires the
+`slot-relocation` product attribute, which no customer order line carries, so
+the path is never chosen for order fulfilment
+([ADR 0033](../adr/0033-relocate-process-path.md)).
 
 ## Capability
 
