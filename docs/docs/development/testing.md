@@ -135,7 +135,7 @@ The Makefile is the single source of the coverage scope and threshold
 (gap 16d): the CI `test` job runs `make coverage` instead of its own
 `go test -coverpkg=...` command, which had drifted to
 `./internal/domain/...,./internal/application/...` only (it left out
-`./internal/analytics/...`). `repo_lint.py` rule R8 (CI `guide-lint` job)
+`./internal/analytics/...`). `repo_lint.py` rule R11 (CI `guide-lint` job)
 fails a PR whose workflow passes `-coverpkg` itself, or whose Makefile
 gate no workflow runs. Measured on this change: `Coverage: 98.7% (gate: 90%)`.
 
@@ -147,7 +147,7 @@ Triggers: push and pull request to `main`, `develop`; weekly schedule
 | Job | Runs | When |
 | --- | --- | --- |
 | `lint` | golangci-lint `v2.14.0` | every run |
-| `guide-lint` | `scripts/harness/guide_lint.py`, `repo_lint.py` (R1-R8; R8 = coverage scope only in the Makefile), `test_hook.py`, `test_repo_lint.py` | every run |
+| `guide-lint` | `scripts/harness/guide_lint.py`, `repo_lint.py` (R1-R7 and R11; R11 = coverage scope only in the Makefile), `test_hook.py`, `test_repo_lint.py` | every run |
 | `complexity` | golangci-lint `--enable-only gocyclo,gocognit,cyclop,funlen,nestif`, plus an informational gocyclo report (> 10) | every run |
 | `test` | build, vet, gofmt, then `make coverage` (unit tests with the Makefile's coverage scope and 90 % gate) | every run |
 | `bdd` | `go test ./... -run TestFeatures -v` | every run |

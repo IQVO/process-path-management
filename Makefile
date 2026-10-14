@@ -73,7 +73,7 @@ test:
 	$(GO) test ./... -race
 
 # The ONLY definition of the coverage scope and gate: CI's `test` job runs
-# `make coverage` (gap 16d), and repo_lint R8 fails any workflow that runs
+# `make coverage` (gap 16d), and repo_lint R11 fails any workflow that runs
 # `go test -coverpkg=...` itself, so the package set cannot drift again.
 coverage:
 	$(GO) test ./... -race -coverprofile=$(COVERAGE_OUT) -coverpkg=$(COVERAGE_PKGS)

@@ -108,7 +108,7 @@ jobs:
           fi
 
       # Coverage scope and gate live ONLY in the Makefile (gap 16d: the package
-      # set here had drifted from `make coverage`). repo_lint R8 (guide-lint
+      # set here had drifted from `make coverage`). repo_lint R11 (guide-lint
       # job) fails the PR if a workflow defines its own -coverpkg again.
       - name: Unit tests with coverage + gate (make coverage)
         run: make coverage
