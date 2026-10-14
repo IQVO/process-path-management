@@ -96,6 +96,7 @@ func (p *AnalyticsPublisher) PublishWithId(ctx context.Context, event shared.Dom
 func NewAnalyticsDirectPublisher(brokers []string, newId func() string) *AnalyticsPublisher {
 	return &AnalyticsPublisher{
 		encoder: NewAnalyticsEncoder(newId),
+		//kafka:fixed-topic-writer AnalyticsPublisher.writer is written only by PublishWithId and Publish, both building Message{Key, Value, Headers} with no Topic; the package's Topic-setting Message (Publisher.Send) goes through Publisher.Writer, which NewPublisher builds with no Topic
 		writer: &kafkago.Writer{
 			BatchTimeout:           syncWriterBatchTimeout,
 			RequiredAcks:           syncWriterRequiredAcks,
