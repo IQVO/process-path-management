@@ -1,0 +1,14 @@
+{
+  "paths": [
+    {
+      "pathId": "RELOCATE",
+      "matchPrefix": "relocate",
+      "direct": true,
+      "requiredCapabilities": ["relocate"],
+      "cycleTimeP95": "2h",
+      "eligibility": {
+        "requiredProductAttributes": ["slot-relocation"]
+      }
+    }
+  ]
+}

@@ -90,6 +90,7 @@ Typos, broken links and formatting are of course fair game.
 | [0030](./0030-outbox-relay-attempt-cap.md) | Outbox relay attempt cap | Accepted |
 | [0031](./0031-reports-api-openapi-contract.md) | The reports API has its own OpenAPI contract | Accepted |
 | [0032](./0032-analytics-claim-and-apply-in-one-transaction.md) | The analytics consumer's dedupe claim and projection write commit in one transaction | Accepted; amends 0012 |
+| [0033](./0033-relocate-process-path.md) | A RELOCATE process path carries slot-plan moves as floor work | Accepted; companion to slotting-optimization ADR 0010 |
 
 Each of these reconstructs a decision that is actually visible in this
 repository's history or code — none is a generic placeholder.
