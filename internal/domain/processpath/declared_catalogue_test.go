@@ -147,10 +147,44 @@ func TestDeclaredCatalogue_RelocatePath(t *testing.T) {
 	}
 }
 
+// TestDeclaredCatalogue_DispatchPath pins the DISPATCH entry ADR 0035
+// decided: family prefix `dispatch`, direct, one required capability
+// `dispatch`, no destination role, the permissive eligibility, and an
+// intake of STOCK_TRANSFER only (ADR 0034). The path id is the
+// fulfillment-execution task type (consume_work_released.go builds
+// task.Type(pathDef.Id)), so it is `DISPATCH`, never `TRANSFER_DISPATCH`;
+// the prefix still matches the `dispatch-transfer` id network-inventory-
+// planning releases the transfer dispatch leg under.
+func TestDeclaredCatalogue_DispatchPath(t *testing.T) {
+	p, err := defineDeclared(t, findDeclared(t, "DISPATCH"))
+	if err != nil {
+		t.Fatalf("Define(DISPATCH) = %v", err)
+	}
+	if p.MatchPrefix() != "dispatch" || !p.Direct() {
+		t.Fatalf("DISPATCH matchPrefix/direct = %q/%v, want dispatch/true", p.MatchPrefix(), p.Direct())
+	}
+	if !slices.Equal(p.RequiredCapabilities(), []shared.Capability{"dispatch"}) {
+		t.Fatalf("DISPATCH requiredCapabilities = %v, want [dispatch]", p.RequiredCapabilities())
+	}
+	if p.DestinationLocationRole() != shared.DestinationLocationRoleUnset {
+		t.Fatalf("DISPATCH destinationLocationRole = %q, want unset", p.DestinationLocationRole())
+	}
+	if p.CycleTimeP95() != 2*time.Hour {
+		t.Fatalf("DISPATCH cycleTimeP95 = %v, want 2h", p.CycleTimeP95())
+	}
+	if !p.Eligibility().Equal(shared.Eligibility{}) {
+		t.Fatalf("DISPATCH eligibility = %+v, want the permissive zero value (intake keeps order lines off it)", p.Eligibility())
+	}
+	if !p.Intake().Equal(shared.MustIntake(shared.DemandSourceStockTransfer)) {
+		t.Fatalf("DISPATCH intake = %v, want [STOCK_TRANSFER]", p.Intake().Strings())
+	}
+}
+
 // TestDeclaredCatalogue_IntakePerPath pins E5's routing table (ADR 0034):
 // PICK is the only customer-order entry point; PACK, REBIN and SLAM are
 // downstream stages reached only by an explicit path id; RELOCATE takes
-// slot-relocation work only.
+// slot-relocation work only; DISPATCH takes stock-transfer work only
+// (ADR 0035).
 func TestDeclaredCatalogue_IntakePerPath(t *testing.T) {
 	want := map[string][]string{
 		"PICK":     {"CUSTOMER_ORDER"},
@@ -158,6 +192,7 @@ func TestDeclaredCatalogue_IntakePerPath(t *testing.T) {
 		"REBIN":    {},
 		"SLAM":     {},
 		"RELOCATE": {"SLOT_RELOCATION"},
+		"DISPATCH": {"STOCK_TRANSFER"},
 	}
 	for id, sources := range want {
 		p, err := defineDeclared(t, findDeclared(t, id))
