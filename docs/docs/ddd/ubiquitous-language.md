@@ -94,6 +94,12 @@ The path id is the fulfillment-execution task type, so it is `DISPATCH`, not
 `TRANSFER_DISPATCH`
 ([ADR 0035](../adr/0035-dispatch-process-path.md)).
 
+**REPLENISH** is the path that carries pick-face top-ups (a replenishment
+planned by wes-work-planning from a pick-face-replenishment request).
+Capability `replenish`; its intake is `REPLENISHMENT` only, the one demand
+source that may route work onto it
+([ADR 0036](../adr/0036-replenish-process-path.md)).
+
 ## Capability
 
 > `Capability` is a named qualification a station/associate must hold to
@@ -110,7 +116,8 @@ authoritative SOURCE for which capabilities a given path requires.
 > path ([ADR 0034](../adr/0034-process-path-intake.md)). A `DemandSource`
 > is one of `CUSTOMER_ORDER` (order-management order lines),
 > `STOCK_TRANSFER` (network-inventory-planning transfer legs, via WES),
-> `SLOT_RELOCATION` (approved slot-plan moves, via WES) or
+> `SLOT_RELOCATION` (approved slot-plan moves, via WES),
+> `REPLENISHMENT` (pick-face top-ups, via WES; [ADR 0036](../adr/0036-replenish-process-path.md)) or
 > `INVENTORY_CONTROL` (amnesty, damage, problem solve).
 
 A set: distinct values, canonical order, unknown or repeated values rejected

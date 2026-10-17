@@ -93,6 +93,7 @@ Typos, broken links and formatting are of course fair game.
 | [0033](./0033-relocate-process-path.md) | A RELOCATE process path carries slot-plan moves as floor work | Accepted; companion to slotting-optimization ADR 0010; routing amended by 0034 |
 | [0034](./0034-process-path-intake.md) | A process path declares its intake: which demand sources may route work onto it | Accepted; amends 0033, extends 0010 |
 | [0035](./0035-dispatch-process-path.md) | A DISPATCH process path carries the transfer dispatch leg | Accepted; companion to fulfillment-execution ADR-0036; follows 0033, uses 0034's vocabulary |
+| [0036](./0036-replenish-process-path.md) | A REPLENISH process path and a REPLENISHMENT demand source carry pick-face top-ups | Accepted; companion to wes-work-planning ADR 0042 and fulfillment-execution ADR 0050; follows 0033/0035, extends 0034's vocabulary |
 
 Each of these reconstructs a decision that is actually visible in this
 repository's history or code — none is a generic placeholder.

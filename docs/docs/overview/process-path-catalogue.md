@@ -2,7 +2,7 @@
 id: process-path-catalogue
 title: The process-path catalogue
 sidebar_label: Process-path catalogue
-description: Which process-path families the fleet uses, where each one is declared, which demand sources may route work onto each (intake, ADR 0034), how a path gets into the store and onto warehouse.process-path-management.events, and the declared catalogue (catalogue/paths.json) with its idempotent seed (ADR 0033, ADR 0035).
+description: Which process-path families the fleet uses, where each one is declared, which demand sources may route work onto each (intake, ADR 0034), how a path gets into the store and onto warehouse.process-path-management.events, and the declared catalogue (catalogue/paths.json) with its idempotent seed (ADR 0033, ADR 0035, ADR 0036).
 ---
 
 # The process-path catalogue
@@ -26,6 +26,7 @@ restart.
 | `PREP`, `PROBLEM_SOLVE`, `WATER_SPIDER`, `AMNESTY`, `RETURNS`, `TRANSFER`, `DAMAGE` (prefix = kebab-case name) | same as the prefix | [ADR 0008](../adr/0008-fclm-aligned-process-path-families.md) | one-off `POST /process-paths` calls recorded in that ADR |
 | `DISPATCH` / `dispatch` | `dispatch` | **`catalogue/paths.json`** in this repository ([ADR 0035](../adr/0035-dispatch-process-path.md)) | `scripts/seed_catalogue.py` (`make seed-catalogue`) |
 | `RELOCATE` / `relocate` | `relocate` | **`catalogue/paths.json`** in this repository ([ADR 0033](../adr/0033-relocate-process-path.md)) | `scripts/seed_catalogue.py` (`make seed-catalogue`) |
+| `REPLENISH` / `replenish` | `replenish` | **`catalogue/paths.json`** in this repository ([ADR 0036](../adr/0036-replenish-process-path.md)) | `scripts/seed_catalogue.py` (`make seed-catalogue`) |
 
 New families are declared in `catalogue/paths.json`, never as an undocumented
 `curl`.
@@ -42,6 +43,7 @@ what a unit of work must look like; intake says who may send it.
 | `PACK`, `REBIN`, `SLAM` | `[]` | Downstream stages, fed by PICK's output through an explicit path id. |
 | `RELOCATE` | `["SLOT_RELOCATION"]` | Approved slot-plan moves only. |
 | `DISPATCH` | `["STOCK_TRANSFER"]` | The transfer dispatch leg only ([ADR 0035](../adr/0035-dispatch-process-path.md)). |
+| `REPLENISH` | `["REPLENISHMENT"]` | Pick-face top-ups only ([ADR 0036](../adr/0036-replenish-process-path.md)). `REPLENISHMENT` is accepted on no other path. |
 | ADR 0008's families | `[]` (not declared here yet) | Routed by explicit path id today. |
 
 order-management's path selection considers only active paths whose intake
@@ -63,7 +65,7 @@ define. Three tests keep it honest:
 - `internal/domain/processpath/declared_catalogue_test.go` defines every
   entry through the aggregate, so a declaration the service would reject
   cannot be merged.
-- `features/relocate_path.feature` and `features/process_path_intake.feature`
+- `features/relocate_path.feature`, `features/replenish_path.feature` and `features/process_path_intake.feature`
   post the file's bytes through the real router and assert the published
   CloudEvent, including each path's `intake`.
 - `scripts/test_seed_catalogue.py` runs the seed against a fake API.
@@ -118,6 +120,28 @@ Who must set what ([ADR 0035](../adr/0035-dispatch-process-path.md)):
 The intake is `STOCK_TRANSFER` only, so order-management never routes a
 customer order line onto DISPATCH. No arrival family is declared yet.
 
+### REPLENISH
+
+Pick-face top-ups run through the relocation chain: pick-face-replenishment
+requests one, wes-work-planning plans a `REPLENISH` work unit and releases it
+on this path, fulfillment-execution executes it as a `REPLENISH` task for an
+operator holding `replenish` (fulfillment-execution ADR 0050), and
+inventory-storage records the move. Without this entry a released replenishment
+matches no path and cannot be accepted.
+
+```json
+{"pathId": "REPLENISH", "matchPrefix": "replenish", "direct": true,
+ "requiredCapabilities": ["replenish"], "cycleTimeP95": "2h",
+ "intake": ["REPLENISHMENT"]}
+```
+
+`REPLENISHMENT` is a new value in the closed intake vocabulary
+([ADR 0036](../adr/0036-replenish-process-path.md)). It is the only source
+allowed to route work onto REPLENISH, and REPLENISH carries no other source.
+Eligibility is the permissive `{}` and `cycleTimeP95` is RELOCATE's flat 2h:
+neither is tuned here. Stations that execute the task need the capability
+`replenish`.
+
 ### Applying it
 
 ```bash
@@ -138,7 +162,9 @@ Run it after deploying a release that adds an entry. For RELOCATE, run it
 before slotting-optimization approves the first plan in that environment.
 Until then, wes-work-planning rejects relocation work as an unknown path id.
 For DISPATCH, run it before network-inventory-planning releases the first
-dispatch leg; until then the demand is dead-lettered.
+dispatch leg; until then the demand is dead-lettered. For REPLENISH, run it
+before wes-work-planning releases the first replenishment; re-running it
+afterwards changes nothing.
 Check what the consumers will replay with
-`curl -s localhost:8080/process-paths/RELOCATE` (or `.../DISPATCH`). Every entry also appears on
+`curl -s localhost:8080/process-paths/RELOCATE` (or `.../DISPATCH`, `.../REPLENISH`). Every entry also appears on
 the topic as a `ProcessPathCreated` keyed by its `pathId`.
