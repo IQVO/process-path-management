@@ -64,12 +64,15 @@ With Postgres, the HTTP route also requires an `Idempotency-Key` header.
 calls this use case, through the same REST route, for every entry of
 `catalogue/paths.json` that the store does not hold yet. It calls `RevisePath`
 for an entry whose revisable fields drifted, and it never calls either for an
-identical or deactivated entry. The file declares PICK, PACK, REBIN, SLAM
-and `RELOCATE` (matchPrefix `relocate`, direct, capability `relocate`,
-intake `SLOT_RELOCATION`), which carries slot-plan moves; every entry
+identical or deactivated entry. The file declares PICK, PACK, REBIN, SLAM,
+`RELOCATE` (matchPrefix `relocate`, direct, capability `relocate`, intake
+`SLOT_RELOCATION`), which carries slot-plan moves, and `DISPATCH`
+(matchPrefix `dispatch`, direct, capability `dispatch`, intake
+`STOCK_TRANSFER`), which carries the transfer dispatch leg; every entry
 declares its intake
 ([ADR 0033](../adr/0033-relocate-process-path.md),
 [ADR 0034](../adr/0034-process-path-intake.md),
+[ADR 0035](../adr/0035-dispatch-process-path.md),
 [Process-path catalogue](../overview/process-path-catalogue.md)).
 
 ## `RevisePath`

@@ -122,6 +122,7 @@ const sidebars: SidebarsConfig = {
         'adr/0032-analytics-claim-and-apply-in-one-transaction',
         'adr/0033-relocate-process-path',
         'adr/0034-process-path-intake',
+        'adr/0035-dispatch-process-path',
       ],
     },
   ],

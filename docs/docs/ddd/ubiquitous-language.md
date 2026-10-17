@@ -88,6 +88,12 @@ the path is never chosen for order fulfilment
 ([ADR 0033](../adr/0033-relocate-process-path.md),
 [ADR 0034](../adr/0034-process-path-intake.md)).
 
+**DISPATCH** is the path that carries the dispatch leg of an inter-warehouse
+stock transfer. Capability `dispatch`; its intake is `STOCK_TRANSFER` only.
+The path id is the fulfillment-execution task type, so it is `DISPATCH`, not
+`TRANSFER_DISPATCH`
+([ADR 0035](../adr/0035-dispatch-process-path.md)).
+
 ## Capability
 
 > `Capability` is a named qualification a station/associate must hold to

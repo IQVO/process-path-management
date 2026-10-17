@@ -111,3 +111,4 @@ Feature: Process-path intake
       | REBIN    |                 |
       | SLAM     |                 |
       | RELOCATE | SLOT_RELOCATION |
+      | DISPATCH | STOCK_TRANSFER  |

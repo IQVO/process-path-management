@@ -2,7 +2,7 @@
 id: process-path-catalogue
 title: The process-path catalogue
 sidebar_label: Process-path catalogue
-description: Which process-path families the fleet uses, where each one is declared, which demand sources may route work onto each (intake, ADR 0034), how a path gets into the store and onto warehouse.process-path-management.events, and the declared catalogue (catalogue/paths.json) with its idempotent seed (ADR 0033).
+description: Which process-path families the fleet uses, where each one is declared, which demand sources may route work onto each (intake, ADR 0034), how a path gets into the store and onto warehouse.process-path-management.events, and the declared catalogue (catalogue/paths.json) with its idempotent seed (ADR 0033, ADR 0035).
 ---
 
 # The process-path catalogue
@@ -24,7 +24,7 @@ restart.
 | --- | --- | --- | --- |
 | `PICK` / `pick`, `PACK` / `pack`, `REBIN` / `rebin`, `SLAM` / `slam` | same as the prefix | first by warehouse-infra's frozen sortable-fc catalogue file (the rollback copy of the retired file catalogue, [ADR 0002](../adr/0002-yaml-to-kafka-cutover.md)); their intake is declared in **`catalogue/paths.json`** ([ADR 0034](../adr/0034-process-path-intake.md)) | warehouse-infra's seed created them; `scripts/seed_catalogue.py` converges their intake |
 | `PREP`, `PROBLEM_SOLVE`, `WATER_SPIDER`, `AMNESTY`, `RETURNS`, `TRANSFER`, `DAMAGE` (prefix = kebab-case name) | same as the prefix | [ADR 0008](../adr/0008-fclm-aligned-process-path-families.md) | one-off `POST /process-paths` calls recorded in that ADR |
-| `TRANSFER_DISPATCH` / `transfer-dispatch` | the dispatch crew's capability | warehouse-infra's README (network-inventory-planning section) | a manual `POST` before the transfer dispatch leg is enabled |
+| `DISPATCH` / `dispatch` | `dispatch` | **`catalogue/paths.json`** in this repository ([ADR 0035](../adr/0035-dispatch-process-path.md)) | `scripts/seed_catalogue.py` (`make seed-catalogue`) |
 | `RELOCATE` / `relocate` | `relocate` | **`catalogue/paths.json`** in this repository ([ADR 0033](../adr/0033-relocate-process-path.md)) | `scripts/seed_catalogue.py` (`make seed-catalogue`) |
 
 New families are declared in `catalogue/paths.json`, never as an undocumented
@@ -41,7 +41,8 @@ what a unit of work must look like; intake says who may send it.
 | `PICK` | `["CUSTOMER_ORDER"]` | The one entry point for customer order lines. |
 | `PACK`, `REBIN`, `SLAM` | `[]` | Downstream stages, fed by PICK's output through an explicit path id. |
 | `RELOCATE` | `["SLOT_RELOCATION"]` | Approved slot-plan moves only. |
-| ADR 0008's families, `TRANSFER_DISPATCH` | `[]` (not declared here yet) | Routed by explicit path id today. |
+| `DISPATCH` | `["STOCK_TRANSFER"]` | The transfer dispatch leg only ([ADR 0035](../adr/0035-dispatch-process-path.md)). |
+| ADR 0008's families | `[]` (not declared here yet) | Routed by explicit path id today. |
 
 order-management's path selection considers only active paths whose intake
 contains `CUSTOMER_ORDER`. When none does (the catalogue has not been seeded
@@ -89,6 +90,34 @@ directly on the path id. The first draft of ADR 0033 used a fake
 0034 replaced it, and the seed clears it with a `PUT` wherever it was
 applied.
 
+### DISPATCH
+
+network-inventory-planning releases the dispatch leg of an inter-warehouse
+stock transfer as a `WorkDemandReleased` that names a path id. wes-work-planning
+forwards it, and fulfillment-execution builds the task from this catalogue. It
+sets the task type from the path's id, so the id has to be the task type
+fulfillment-execution's ADR-0036 names for the leg: `DISPATCH`, not
+`TRANSFER_DISPATCH`. Without this entry a dispatch demand matches no path and
+is dead-lettered.
+
+```json
+{"pathId": "DISPATCH", "matchPrefix": "dispatch", "direct": true,
+ "requiredCapabilities": ["dispatch"], "cycleTimeP95": "2h",
+ "intake": ["STOCK_TRANSFER"]}
+```
+
+Who must set what ([ADR 0035](../adr/0035-dispatch-process-path.md)):
+
+- network-inventory-planning's configured path id must be `dispatch-transfer`
+  (it starts with `dispatch-`, so it resolves to this entry). That is a
+  warehouse-infra change, not a change in this repository.
+- Stations that execute the leg need the capability `dispatch`.
+- The earlier instruction to `POST` a `TRANSFER_DISPATCH` /
+  `transfer-dispatch` path by hand is superseded: do not run it.
+
+The intake is `STOCK_TRANSFER` only, so order-management never routes a
+customer order line onto DISPATCH. No arrival family is declared yet.
+
 ### Applying it
 
 ```bash
@@ -108,6 +137,8 @@ make seed-catalogue BASE_URL=http://localhost:8080                       # conve
 Run it after deploying a release that adds an entry. For RELOCATE, run it
 before slotting-optimization approves the first plan in that environment.
 Until then, wes-work-planning rejects relocation work as an unknown path id.
+For DISPATCH, run it before network-inventory-planning releases the first
+dispatch leg; until then the demand is dead-lettered.
 Check what the consumers will replay with
-`curl -s localhost:8080/process-paths/RELOCATE`. Every entry also appears on
+`curl -s localhost:8080/process-paths/RELOCATE` (or `.../DISPATCH`). Every entry also appears on
 the topic as a `ProcessPathCreated` keyed by its `pathId`.
