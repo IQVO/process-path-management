@@ -93,7 +93,7 @@ func problemCatalog() []struct {
 		{processpath.ErrNoRequiredCapabilities, problemInfo{"no-required-capabilities", "requiredCapabilities must be non-empty"}},
 		{shared.ErrInvalidDestinationLocationRole, problemInfo{"invalid-destination-location-role", "destinationLocationRole must be one of Drop, WorkCenter, Shipping, or omitted"}},
 		{processpath.ErrInvalidCycleTime, problemInfo{"invalid-cycle-time-p95", "cycleTimeP95 must be a positive duration"}},
-		{shared.ErrInvalidIntake, problemInfo{"invalid-intake", "intake must be a set of distinct demand sources: CUSTOMER_ORDER, STOCK_TRANSFER, SLOT_RELOCATION, INVENTORY_CONTROL"}},
+		{shared.ErrInvalidIntake, problemInfo{"invalid-intake", "intake must be a set of distinct demand sources: CUSTOMER_ORDER, STOCK_TRANSFER, SLOT_RELOCATION, INVENTORY_CONTROL, REPLENISHMENT"}},
 		{usecases.ErrCPTScheduleNotFound, problemInfo{"cpt-schedule-not-found", "No CPT schedule exists for this site"}},
 		{usecases.ErrIneligiblePathId, problemInfo{"ineligible-path-id", "eligiblePathIds must reference an Active process path in this service's own store"}},
 		{cptschedule.ErrEmptyTimezone, problemInfo{"empty-timezone", "timezone must not be empty"}},

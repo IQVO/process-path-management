@@ -180,19 +180,92 @@ func TestDeclaredCatalogue_DispatchPath(t *testing.T) {
 	}
 }
 
+// TestDeclaredCatalogue_ReplenishPath pins the REPLENISH entry ADR 0036
+// decided: family prefix `replenish`, direct, one required capability
+// `replenish`, no destination role, the permissive eligibility, cycle time
+// 2h copied from RELOCATE, and an intake of REPLENISHMENT only (ADR 0034),
+// the only source allowed to route work onto it.
+func TestDeclaredCatalogue_ReplenishPath(t *testing.T) {
+	p, err := defineDeclared(t, findDeclared(t, "REPLENISH"))
+	if err != nil {
+		t.Fatalf("Define(REPLENISH) = %v", err)
+	}
+	if p.MatchPrefix() != "replenish" || !p.Direct() {
+		t.Fatalf("REPLENISH matchPrefix/direct = %q/%v, want replenish/true", p.MatchPrefix(), p.Direct())
+	}
+	if !slices.Equal(p.RequiredCapabilities(), []shared.Capability{"replenish"}) {
+		t.Fatalf("REPLENISH requiredCapabilities = %v, want [replenish]", p.RequiredCapabilities())
+	}
+	if p.DestinationLocationRole() != shared.DestinationLocationRoleUnset {
+		t.Fatalf("REPLENISH destinationLocationRole = %q, want unset", p.DestinationLocationRole())
+	}
+	if p.CycleTimeP95() != 2*time.Hour {
+		t.Fatalf("REPLENISH cycleTimeP95 = %v, want 2h", p.CycleTimeP95())
+	}
+	if !p.Eligibility().Equal(shared.Eligibility{}) {
+		t.Fatalf("REPLENISH eligibility = %+v, want the permissive zero value (intake keeps order lines off it)", p.Eligibility())
+	}
+	if !p.Intake().Equal(shared.MustIntake(shared.DemandSourceReplenishment)) {
+		t.Fatalf("REPLENISH intake = %v, want [REPLENISHMENT]", p.Intake().Strings())
+	}
+}
+
+// TestDeclaredCatalogue_ReplenishmentRoutesOnlyToReplenish pins both
+// halves of the REPLENISHMENT rule: REPLENISH carries no other source,
+// and no other declared path accepts REPLENISHMENT.
+func TestDeclaredCatalogue_ReplenishmentRoutesOnlyToReplenish(t *testing.T) {
+	var carriers []string
+	for _, entry := range loadDeclaredCatalogue(t) {
+		if declaredIntake(t, entry).Contains(shared.DemandSourceReplenishment) {
+			id, _ := entry["pathId"].(string)
+			carriers = append(carriers, id)
+		}
+	}
+	if !slices.Equal(carriers, []string{"REPLENISH"}) {
+		t.Fatalf("REPLENISHMENT carriers = %v, want [REPLENISH]", carriers)
+	}
+	if got := declaredStrings(findDeclared(t, "REPLENISH"), "intake"); !slices.Equal(got, []string{"REPLENISHMENT"}) {
+		t.Fatalf("REPLENISH intake = %v, want exactly [REPLENISHMENT]", got)
+	}
+}
+
+// TestDeclaredCatalogue_ExistingEntriesAreUnchanged freezes every entry
+// that predates REPLENISH, byte-for-field, so adding a path can never
+// silently revise PICK, PACK, REBIN, SLAM, RELOCATE or DISPATCH.
+func TestDeclaredCatalogue_ExistingEntriesAreUnchanged(t *testing.T) {
+	want := map[string]string{
+		"PICK":     `{"cycleTimeP95":"2h","direct":true,"intake":["CUSTOMER_ORDER"],"matchPrefix":"pick","pathId":"PICK","requiredCapabilities":["pick"]}`,
+		"PACK":     `{"cycleTimeP95":"2h","direct":true,"intake":[],"matchPrefix":"pack","pathId":"PACK","requiredCapabilities":["pack"]}`,
+		"REBIN":    `{"cycleTimeP95":"2h","direct":true,"intake":[],"matchPrefix":"rebin","pathId":"REBIN","requiredCapabilities":["rebin"]}`,
+		"SLAM":     `{"cycleTimeP95":"2h","direct":true,"intake":[],"matchPrefix":"slam","pathId":"SLAM","requiredCapabilities":["slam"]}`,
+		"RELOCATE": `{"cycleTimeP95":"2h","direct":true,"intake":["SLOT_RELOCATION"],"matchPrefix":"relocate","pathId":"RELOCATE","requiredCapabilities":["relocate"]}`,
+		"DISPATCH": `{"cycleTimeP95":"2h","direct":true,"intake":["STOCK_TRANSFER"],"matchPrefix":"dispatch","pathId":"DISPATCH","requiredCapabilities":["dispatch"]}`,
+	}
+	for id, w := range want {
+		got, err := json.Marshal(findDeclared(t, id))
+		if err != nil {
+			t.Fatalf("marshal %s: %v", id, err)
+		}
+		if string(got) != w {
+			t.Fatalf("declared %s changed\n got: %s\nwant: %s", id, got, w)
+		}
+	}
+}
+
 // TestDeclaredCatalogue_IntakePerPath pins E5's routing table (ADR 0034):
 // PICK is the only customer-order entry point; PACK, REBIN and SLAM are
 // downstream stages reached only by an explicit path id; RELOCATE takes
 // slot-relocation work only; DISPATCH takes stock-transfer work only
-// (ADR 0035).
+// (ADR 0035); REPLENISH takes replenishment work only (ADR 0036).
 func TestDeclaredCatalogue_IntakePerPath(t *testing.T) {
 	want := map[string][]string{
-		"PICK":     {"CUSTOMER_ORDER"},
-		"PACK":     {},
-		"REBIN":    {},
-		"SLAM":     {},
-		"RELOCATE": {"SLOT_RELOCATION"},
-		"DISPATCH": {"STOCK_TRANSFER"},
+		"PICK":      {"CUSTOMER_ORDER"},
+		"PACK":      {},
+		"REBIN":     {},
+		"SLAM":      {},
+		"RELOCATE":  {"SLOT_RELOCATION"},
+		"DISPATCH":  {"STOCK_TRANSFER"},
+		"REPLENISH": {"REPLENISHMENT"},
 	}
 	for id, sources := range want {
 		p, err := defineDeclared(t, findDeclared(t, id))
