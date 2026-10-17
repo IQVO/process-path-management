@@ -32,7 +32,7 @@ description: The process-path-management test pyramid as it exists in this repos
 | `features/deactivate.feature` | 5 | Deactivate, idempotent re-deactivate, 404, 409 while a CPT schedule lists the path, success once the schedule no longer lists it |
 | `features/cpt_schedule.feature` | 7 | Define and get a site schedule, 404 before definition, unknown or deactivated path in a cutoff, duplicate `cptId`, unrecognised timezone |
 | `features/relocate_path.feature` | 4 | The declared RELOCATE entry: defined Active, published with `intake` `SLOT_RELOCATION` and no fake eligibility, re-seed refused 409, sits beside PICK |
-| `features/process_path_intake.feature` | 12 | Intake ([ADR 0034](../adr/0034-process-path-intake.md)): define/read/publish, `[]` on the wire when absent, 422 `invalid-intake` for an unknown or repeated source, intake-only revise publishes `ProcessPathUpdated`, an omitted intake is kept, `[]` clears it, and the declared intake of PICK/PACK/REBIN/SLAM/RELOCATE (outline) |
+| `features/process_path_intake.feature` | 13 | Intake ([ADR 0034](../adr/0034-process-path-intake.md)): define/read/publish, `[]` on the wire when absent, 422 `invalid-intake` for an unknown or repeated source, intake-only revise publishes `ProcessPathUpdated`, an omitted intake is kept, `[]` clears it, and the declared intake of PICK/PACK/REBIN/SLAM/RELOCATE/DISPATCH (outline) |
 
 ### Contract test exclusions
 
@@ -141,10 +141,12 @@ The declared catalogue (`catalogue/paths.json`, ADR 0033) has its own tests:
 `internal/domain/processpath/declared_catalogue_test.go` defines every entry
 through the aggregate, requires an `intake` array on every entry, pins the
 per-path intake table and exactly one `CUSTOMER_ORDER` entry point (PICK,
-[ADR 0034](../adr/0034-process-path-intake.md)), and pins `RELOCATE` field by
+[ADR 0034](../adr/0034-process-path-intake.md)), and pins `RELOCATE` and
+`DISPATCH` ([ADR 0035](../adr/0035-dispatch-process-path.md)) field by
 field;
-`internal/adapters/outbound/kafka/relocate_golden_test.go` pins RELOCATE's
-`ProcessPathCreated` CloudEvent byte for byte on both streams;
+`internal/adapters/outbound/kafka/relocate_golden_test.go` and
+`dispatch_golden_test.go` pin the `ProcessPathCreated` CloudEvent of RELOCATE
+and DISPATCH byte for byte on both streams;
 `features/relocate_path.feature` (step `the client defines the declared
 catalogue entry "<id>"` in `features_catalogue_test.go`) posts the file's
 bytes through the real router; and `scripts/test_seed_catalogue.py` covers
