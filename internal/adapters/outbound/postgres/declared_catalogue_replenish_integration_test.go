@@ -1,8 +1,8 @@
 //go:build integration
 
 // ADR 0036: the declared REPLENISH entry (catalogue/paths.json) defined end
-// to end against a real Postgres and a real Kafka broker (testcontainers,
-// never KAFKA_BROKERS or localhost): the aggregate is persisted with the
+// to end against a real Postgres and a real Kafka broker (both started by
+// testcontainers helpers of this package, never an external environment), the aggregate is persisted with the
 // REPLENISHMENT intake, the outbox relay publishes ProcessPathCreated on
 // warehouse.process-path-management.events keyed REPLENISH, and the bytes
 // decode with the same payload shape wes-work-planning's catalogue consumer
