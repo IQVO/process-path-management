@@ -543,7 +543,7 @@ components:
           default: false
     DemandSource:
       type: string
-      enum: [CUSTOMER_ORDER, STOCK_TRANSFER, SLOT_RELOCATION, INVENTORY_CONTROL]
+      enum: [CUSTOMER_ORDER, STOCK_TRANSFER, SLOT_RELOCATION, INVENTORY_CONTROL, REPLENISHMENT]
       description: >
         One source of demand that may route work onto a process path (ADR
         0034). CUSTOMER_ORDER: order-management order lines.
@@ -551,6 +551,9 @@ components:
         through wes-work-planning. SLOT_RELOCATION: approved slot-plan
         moves, planned through wes-work-planning. INVENTORY_CONTROL:
         internal inventory work (amnesty, damage, problem solve).
+        REPLENISHMENT: pick-face top-ups from pick-face-replenishment,
+        planned through wes-work-planning (ADR 0036); the only source
+        declared on the REPLENISH path.
     Intake:
       type: array
       nullable: true
