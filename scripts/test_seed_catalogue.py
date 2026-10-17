@@ -24,6 +24,8 @@ RELOCATE = {"pathId": "RELOCATE", "matchPrefix": "relocate", "direct": True, "re
             "cycleTimeP95": "2h", "intake": ["SLOT_RELOCATION"]}
 PICK = {"pathId": "PICK", "matchPrefix": "pick", "direct": True, "requiredCapabilities": ["pick"],
         "cycleTimeP95": "2h", "intake": ["CUSTOMER_ORDER"]}
+DISPATCH = {"pathId": "DISPATCH", "matchPrefix": "dispatch", "direct": True, "requiredCapabilities": ["dispatch"],
+            "cycleTimeP95": "2h", "intake": ["STOCK_TRANSFER"]}
 
 
 def stored(desired, **over):
@@ -189,10 +191,32 @@ class SeedCatalogue(unittest.TestCase):
         self.assertEqual(relocate[0]["matchPrefix"], "relocate")
         self.assertNotIn("eligibility", relocate[0])  # no fake slot-relocation attribute (ADR 0034)
 
+    def test_repository_catalogue_declares_dispatch(self):
+        # ADR 0035: the path id is the fulfillment-execution task type, so DISPATCH (not TRANSFER_DISPATCH).
+        entries = seed.load(seed.DEFAULT_FILE)
+        dispatch = [e for e in entries if e["pathId"] == "DISPATCH"]
+        self.assertEqual(len(dispatch), 1)
+        self.assertEqual(dispatch[0], DISPATCH)
+        self.assertEqual([e["pathId"] for e in entries if e["pathId"].startswith("TRANSFER")], [])
+
     def test_repository_catalogue_declares_intake_for_every_path(self):
         intake = {e["pathId"]: e["intake"] for e in seed.load(seed.DEFAULT_FILE)}
         self.assertEqual(intake, {"PICK": ["CUSTOMER_ORDER"], "PACK": [], "REBIN": [], "SLAM": [],
-                                  "RELOCATE": ["SLOT_RELOCATION"]})
+                                  "RELOCATE": ["SLOT_RELOCATION"], "DISPATCH": ["STOCK_TRANSFER"]})
+
+    def test_dispatch_is_created_then_converges_idempotently_from_the_repository_catalogue(self):
+        # Seed the real catalogue file twice against the fake API: DISPATCH is created once, and the
+        # second run writes nothing at all (every declared entry is already present and identical).
+        entries = seed.load(seed.DEFAULT_FILE)
+        code, out = self.run_seed(entries)
+        self.assertEqual(code, 0, out)
+        creates = [w for w in FakeApi.writes if w[0] == "POST" and w[1] == "DISPATCH"]
+        self.assertEqual(len(creates), 1, out)
+        self.assertTrue(creates[0][2].startswith("seed-catalogue-DISPATCH-"), creates[0][2])
+        self.assertEqual(FakeApi.store["DISPATCH"]["intake"], ["STOCK_TRANSFER"])
+        FakeApi.writes.clear()
+        code, out = self.run_seed(entries)
+        self.assertEqual((code, FakeApi.writes), (0, []), out)
 
 
 if __name__ == "__main__":

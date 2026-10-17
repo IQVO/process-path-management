@@ -107,6 +107,15 @@ like every other path, as a `ProcessPathCreated` keyed `RELOCATE`
 fulfillment-execution builds RELOCATE tasks that require `relocate`, and
 workforce-management plans `relocate` headcount against it.
 
+**DISPATCH** ([ADR 0035](../adr/0035-dispatch-process-path.md)) is published
+the same way, as a `ProcessPathCreated` keyed `DISPATCH` (`match_prefix`
+`dispatch`, `direct`, `required_capabilities` `[dispatch]`, `intake`
+`[STOCK_TRANSFER]`). network-inventory-planning releases the transfer
+dispatch leg under a path id such as `dispatch-transfer`, which matches the
+`dispatch` prefix. fulfillment-execution builds the task from the path, and
+its task type is the path id, `DISPATCH`. It requires the capability
+`dispatch`.
+
 **Intake** ([ADR 0034](../adr/0034-process-path-intake.md)).
 `ProcessPathCreated`/`ProcessPathUpdated` carry `intake`, the demand sources
 allowed to route work onto the path (`CUSTOMER_ORDER`, `STOCK_TRANSFER`,
@@ -114,7 +123,7 @@ allowed to route work onto the path (`CUSTOMER_ORDER`, `STOCK_TRANSFER`,
 explicit path id reaches the path. order-management's path selection
 considers only paths whose intake contains `CUSTOMER_ORDER` (PICK in the
 declared catalogue) and falls back to `PICK` when none does, so it never
-picks PACK, REBIN, SLAM, RELOCATE or ADR 0008's families for an order line.
+picks PACK, REBIN, SLAM, RELOCATE, DISPATCH or ADR 0008's families for an order line.
 An event without `intake` comes from a producer older than ADR 0034.
 
 **Failure behaviour.**

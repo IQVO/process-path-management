@@ -39,6 +39,14 @@
       "requiredCapabilities": ["relocate"],
       "cycleTimeP95": "2h",
       "intake": ["SLOT_RELOCATION"]
+    },
+    {
+      "pathId": "DISPATCH",
+      "matchPrefix": "dispatch",
+      "direct": true,
+      "requiredCapabilities": ["dispatch"],
+      "cycleTimeP95": "2h",
+      "intake": ["STOCK_TRANSFER"]
     }
   ]
 }

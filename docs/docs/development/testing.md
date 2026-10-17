@@ -32,7 +32,7 @@ description: The process-path-management test pyramid as it exists in this repos
 | `features/deactivate.feature` | 5 | Deactivate, idempotent re-deactivate, 404, 409 while a CPT schedule lists the path, success once the schedule no longer lists it |
 | `features/cpt_schedule.feature` | 7 | Define and get a site schedule, 404 before definition, unknown or deactivated path in a cutoff, duplicate `cptId`, unrecognised timezone |
 | `features/relocate_path.feature` | 4 | The declared RELOCATE entry: defined Active, published with `intake` `SLOT_RELOCATION` and no fake eligibility, re-seed refused 409, sits beside PICK |
-| `features/process_path_intake.feature` | 12 | Intake ([ADR 0034](../adr/0034-process-path-intake.md)): define/read/publish, `[]` on the wire when absent, 422 `invalid-intake` for an unknown or repeated source, intake-only revise publishes `ProcessPathUpdated`, an omitted intake is kept, `[]` clears it, and the declared intake of PICK/PACK/REBIN/SLAM/RELOCATE (outline) |
+| `features/process_path_intake.feature` | 13 | Intake ([ADR 0034](../adr/0034-process-path-intake.md)): define/read/publish, `[]` on the wire when absent, 422 `invalid-intake` for an unknown or repeated source, intake-only revise publishes `ProcessPathUpdated`, an omitted intake is kept, `[]` clears it, and the declared intake of PICK/PACK/REBIN/SLAM/RELOCATE/DISPATCH (outline) |
 
 ### Contract test exclusions
 
@@ -88,6 +88,8 @@ integration test gates on `DATABASE_URL`/`KAFKA_BROKERS` or hardcodes
 | `TestCloudEventsOnly`, `TestReplayConsumersSetCommitInterval` (`events_fitness_test.go`) | CloudEvents 1.0 is the only envelope (no envelope-mode switch); a Kafka reader whose group id is generated per instance must set a commit interval |
 | `TestOutboxRelaysPassAttemptCap` (+ `TestOutboxRelayCapSensorFailsOnBadFixtures`, `outbox_relay_cap_fitness_test.go`) | Every non-test `cmd/` call to `NewOutboxRelay` passes `WithMaxAttempts` ([ADR 0030](../adr/0030-outbox-relay-attempt-cap.md)) |
 | `TestKafkaWritersSetRequiredAcks` (+ `TestKafkaWriterAcksSensorBites`, `kafka_writer_acks_fitness_test.go`) | Every kafka-go `Writer` literal in a non-test file under `internal/` or `cmd/` sets `RequiredAcks` (publishers use `syncWriterRequiredAcks`, the analytics DLQ writer `kafkago.RequireAll`): kafka-go defaults to `RequireNone` (acks=0), which silently drops a write on a broker blip while `WriteMessages` returns nil (fleet rollout 2026-10-13) |
+| `TestDeadLetterCallsGuardCancellation` (+ `TestDeadLetterShutdownSensorBites`, `kafka_dlq_shutdown_fitness_test.go`) | Every function in a non-test file under `internal/adapters/inbound/kafka` that sends to the dead-letter topic must reference `ctx.Err()` (any context-named value) or `context.Canceled` in its own body, or carry a `//dlq:deterministic <reason>` comment on the call line or the line above it. A handler that fails because the process is stopping must not dead-letter a good message and commit past it (network-fulfillment #89); a guard in the caller does not count. The sensor test proves the detector flags the pre-fix shape. |
+| `TestKafkaWriterTopicNotSetTwice` (+ `TestKafkaWriterTopicSensorBites`, `kafka_writer_topic_fitness_test.go`) | kafka-go rejects every write whose `Message.Topic` is set when the `Writer` also has a `Topic`. Per Go package under `internal/` and `cmd/`: once any kafka-go `Message` literal sets `Topic`, every `Writer` literal in that package must leave `Topic` empty, unless it carries `//kafka:fixed-topic-writer <reason>` and no Topic-setting Message is provably written through it. Writers configured after construction and `WriterConfig` are not covered. (Escape: warehouse-planning's domain DLQ writer, where no dead letter ever landed.) |
 | `TestMCPOptionalToolInputsCarryOmitempty` (+ `TestMCPOptionalToolInputsSensorFailsOnBadFixtures`, `mcp_optional_inputs_test.go`) | An MCP tool input field whose `jsonschema` description says "optional" carries `omitempty`, so the SDK does not mark it required (gap fix D16) |
 
 ### MCP evals
@@ -139,10 +141,12 @@ The declared catalogue (`catalogue/paths.json`, ADR 0033) has its own tests:
 `internal/domain/processpath/declared_catalogue_test.go` defines every entry
 through the aggregate, requires an `intake` array on every entry, pins the
 per-path intake table and exactly one `CUSTOMER_ORDER` entry point (PICK,
-[ADR 0034](../adr/0034-process-path-intake.md)), and pins `RELOCATE` field by
+[ADR 0034](../adr/0034-process-path-intake.md)), and pins `RELOCATE` and
+`DISPATCH` ([ADR 0035](../adr/0035-dispatch-process-path.md)) field by
 field;
-`internal/adapters/outbound/kafka/relocate_golden_test.go` pins RELOCATE's
-`ProcessPathCreated` CloudEvent byte for byte on both streams;
+`internal/adapters/outbound/kafka/relocate_golden_test.go` and
+`dispatch_golden_test.go` pin the `ProcessPathCreated` CloudEvent of RELOCATE
+and DISPATCH byte for byte on both streams;
 `features/relocate_path.feature` (step `the client defines the declared
 catalogue entry "<id>"` in `features_catalogue_test.go`) posts the file's
 bytes through the real router; and `scripts/test_seed_catalogue.py` covers
