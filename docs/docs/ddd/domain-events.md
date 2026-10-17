@@ -63,7 +63,7 @@ schema `ProcessPathData` in `apis/asyncapi.yaml`.
 | `eligibility.required_product_attributes` | string array | `omitempty` |
 | `eligibility.excluded_product_attributes` | string array | `omitempty` |
 | `eligibility.non_sortable` | boolean | `omitempty` |
-| `intake` | string array | demand sources allowed to route work onto the path: `CUSTOMER_ORDER`, `STOCK_TRANSFER`, `SLOT_RELOCATION`, `INVENTORY_CONTROL` ([ADR 0034](../adr/0034-process-path-intake.md)); always present on Created/Updated, `[]` when only an explicit path id reaches the path; canonical (sorted) order |
+| `intake` | string array | demand sources allowed to route work onto the path: `CUSTOMER_ORDER`, `STOCK_TRANSFER`, `SLOT_RELOCATION`, `INVENTORY_CONTROL`, `REPLENISHMENT` ([ADR 0034](../adr/0034-process-path-intake.md)); always present on Created/Updated, `[]` when only an explicit path id reaches the path; canonical (sorted) order |
 
 `ProcessPathUpdated` carries the full current definition (not a diff);
 `destination_location_role` is repeated unchanged because it is never
