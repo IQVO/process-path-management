@@ -49,6 +49,7 @@ work onto the path.
 | `STOCK_TRANSFER` | network-inventory-planning transfer legs, planned through wes-work-planning |
 | `SLOT_RELOCATION` | approved slot-plan moves from slotting-optimization, planned through wes-work-planning |
 | `INVENTORY_CONTROL` | internal inventory work: amnesty, damage, problem solve |
+| `REPLENISHMENT` | pick-face top-ups from pick-face-replenishment, planned through wes-work-planning (added by [ADR 0036](./0036-replenish-process-path.md)) |
 
 - **Shape.** A set: values are distinct and kept in canonical (sorted) order.
   An unknown, blank, lower-case or repeated value is rejected (`422
@@ -122,4 +123,5 @@ work onto the path.
   so this is not a misroute risk; the values are declared now so those
   consumers can adopt them without another contract change.
 - The vocabulary is closed. A fifth demand source needs a code change and an
-  ADR here, which is intended for a routing-policy enumeration.
+  ADR here, which is intended for a routing-policy enumeration. (ADR 0036 added
+  the fifth, `REPLENISHMENT`, by exactly that route.)

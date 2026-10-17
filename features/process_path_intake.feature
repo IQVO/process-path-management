@@ -105,10 +105,11 @@ Feature: Process-path intake
     Then the CloudEvent field "data.intake" is "<intake>"
 
     Examples:
-      | pathId   | intake          |
-      | PICK     | CUSTOMER_ORDER  |
-      | PACK     |                 |
-      | REBIN    |                 |
-      | SLAM     |                 |
-      | RELOCATE | SLOT_RELOCATION |
-      | DISPATCH | STOCK_TRANSFER  |
+      | pathId    | intake          |
+      | PICK      | CUSTOMER_ORDER  |
+      | PACK      |                 |
+      | REBIN     |                 |
+      | SLAM      |                 |
+      | RELOCATE  | SLOT_RELOCATION |
+      | DISPATCH  | STOCK_TRANSFER  |
+      | REPLENISH | REPLENISHMENT   |

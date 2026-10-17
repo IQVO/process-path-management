@@ -85,6 +85,15 @@ info:
     intake contains `CUSTOMER_ORDER`; `[]` means the path is reached only by
     an explicit path id (PACK, REBIN, SLAM).
 
+    ## ADR 0036: REPLENISHMENT demand source and the REPLENISH path
+
+    The closed `intake` vocabulary gained `REPLENISHMENT` (additive: no new
+    event type, no payload field). It is declared on exactly one path,
+    `REPLENISH` (`match_prefix` `replenish`, required capability
+    `replenish`), the path wes-work-planning releases pick-face top-ups on.
+    Consumers that decode `intake` as free strings need no change; a
+    consumer that validates against a fixed enum must accept the new value.
+
     ## Consumers
 
     `fulfillment-execution`, `wes-work-planning`, `workforce-management`
@@ -677,7 +686,7 @@ components:
           uniqueItems: true
           items:
             type: string
-            enum: ["CUSTOMER_ORDER", "STOCK_TRANSFER", "SLOT_RELOCATION", "INVENTORY_CONTROL"]
+            enum: ["CUSTOMER_ORDER", "STOCK_TRANSFER", "SLOT_RELOCATION", "INVENTORY_CONTROL", "REPLENISHMENT"]
           description: >-
             The set of demand sources allowed to route work onto this path
             (ADR 0034), in canonical (sorted) order. Always present on
@@ -687,7 +696,9 @@ components:
             order-management's order lines, STOCK_TRANSFER
             network-inventory-planning's transfer legs (via WES),
             SLOT_RELOCATION approved slot-plan moves (via WES),
-            INVENTORY_CONTROL internal amnesty/damage/problem-solve work.
+            INVENTORY_CONTROL internal amnesty/damage/problem-solve work,
+            REPLENISHMENT pick-face top-ups from pick-face-replenishment
+            (via WES, ADR 0036).
             A consumer that receives no `intake` (a producer older than ADR
             0034) must treat it as unknown, not as `[]`.
           example: ["CUSTOMER_ORDER"]

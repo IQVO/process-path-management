@@ -26,6 +26,8 @@ PICK = {"pathId": "PICK", "matchPrefix": "pick", "direct": True, "requiredCapabi
         "cycleTimeP95": "2h", "intake": ["CUSTOMER_ORDER"]}
 DISPATCH = {"pathId": "DISPATCH", "matchPrefix": "dispatch", "direct": True, "requiredCapabilities": ["dispatch"],
             "cycleTimeP95": "2h", "intake": ["STOCK_TRANSFER"]}
+REPLENISH = {"pathId": "REPLENISH", "matchPrefix": "replenish", "direct": True, "requiredCapabilities": ["replenish"],
+             "cycleTimeP95": "2h", "intake": ["REPLENISHMENT"]}
 
 
 def stored(desired, **over):
@@ -202,7 +204,49 @@ class SeedCatalogue(unittest.TestCase):
     def test_repository_catalogue_declares_intake_for_every_path(self):
         intake = {e["pathId"]: e["intake"] for e in seed.load(seed.DEFAULT_FILE)}
         self.assertEqual(intake, {"PICK": ["CUSTOMER_ORDER"], "PACK": [], "REBIN": [], "SLAM": [],
-                                  "RELOCATE": ["SLOT_RELOCATION"], "DISPATCH": ["STOCK_TRANSFER"]})
+                                  "RELOCATE": ["SLOT_RELOCATION"], "DISPATCH": ["STOCK_TRANSFER"],
+                                  "REPLENISH": ["REPLENISHMENT"]})
+
+    def test_repository_catalogue_declares_replenish(self):
+        # ADR 0036: REPLENISH mirrors RELOCATE and is the only path that carries REPLENISHMENT.
+        entries = seed.load(seed.DEFAULT_FILE)
+        replenish = [e for e in entries if e["pathId"] == "REPLENISH"]
+        self.assertEqual(len(replenish), 1)
+        self.assertEqual(replenish[0], REPLENISH)
+        self.assertNotIn("eligibility", replenish[0])
+        carriers = [e["pathId"] for e in entries if "REPLENISHMENT" in e["intake"]]
+        self.assertEqual(carriers, ["REPLENISH"])
+
+    def test_replenish_is_created_once_then_converges_idempotently(self):
+        # Seed the real catalogue twice against the fake API: REPLENISH is created once, the second
+        # run writes nothing at all.
+        entries = seed.load(seed.DEFAULT_FILE)
+        code, out = self.run_seed(entries)
+        self.assertEqual(code, 0, out)
+        creates = [w for w in FakeApi.writes if w[0] == "POST" and w[1] == "REPLENISH"]
+        self.assertEqual(len(creates), 1, out)
+        self.assertTrue(creates[0][2].startswith("seed-catalogue-REPLENISH-"), creates[0][2])
+        self.assertEqual(FakeApi.store["REPLENISH"]["intake"], ["REPLENISHMENT"])
+        FakeApi.writes.clear()
+        code, out = self.run_seed(entries)
+        self.assertEqual((code, FakeApi.writes), (0, []), out)
+
+    def test_replenish_alone_is_added_to_an_environment_seeded_before_it(self):
+        # An environment seeded with the six earlier paths gets exactly one POST: nothing else drifts.
+        entries = seed.load(seed.DEFAULT_FILE)
+        for e in entries:
+            if e["pathId"] != "REPLENISH":
+                FakeApi.store[e["pathId"]] = stored(e)
+        code, out = self.run_seed(entries)
+        self.assertEqual(code, 0, out)
+        self.assertEqual([(m, pid) for m, pid, _ in FakeApi.writes], [("POST", "REPLENISH")], out)
+
+    def test_replenishment_intake_drift_is_revised_with_put(self):
+        FakeApi.store["REPLENISH"] = stored(REPLENISH, intake=[])
+        code, out = self.run_seed([REPLENISH])
+        self.assertEqual(code, 0, out)
+        self.assertEqual([(m, pid) for m, pid, _ in FakeApi.writes], [("PUT", "REPLENISH")], out)
+        self.assertEqual(FakeApi.store["REPLENISH"]["intake"], ["REPLENISHMENT"])
 
     def test_dispatch_is_created_then_converges_idempotently_from_the_repository_catalogue(self):
         # Seed the real catalogue file twice against the fake API: DISPATCH is created once, and the

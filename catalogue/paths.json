@@ -47,6 +47,14 @@
       "requiredCapabilities": ["dispatch"],
       "cycleTimeP95": "2h",
       "intake": ["STOCK_TRANSFER"]
+    },
+    {
+      "pathId": "REPLENISH",
+      "matchPrefix": "replenish",
+      "direct": true,
+      "requiredCapabilities": ["replenish"],
+      "cycleTimeP95": "2h",
+      "intake": ["REPLENISHMENT"]
     }
   ]
 }

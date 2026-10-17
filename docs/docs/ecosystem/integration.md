@@ -116,14 +116,23 @@ dispatch leg under a path id such as `dispatch-transfer`, which matches the
 its task type is the path id, `DISPATCH`. It requires the capability
 `dispatch`.
 
+**REPLENISH** ([ADR 0036](../adr/0036-replenish-process-path.md)) is published
+the same way, as a `ProcessPathCreated` keyed `REPLENISH` (`match_prefix`
+`replenish`, `direct`, `required_capabilities` `[replenish]`, `intake`
+`[REPLENISHMENT]`). wes-work-planning releases pick-face top-ups on it,
+fulfillment-execution builds `REPLENISH` tasks that require `replenish`
+(fulfillment-execution ADR 0050), and workforce-management plans `replenish`
+headcount against it. `REPLENISHMENT` is the only demand source declared on
+it, and no other path accepts that source.
+
 **Intake** ([ADR 0034](../adr/0034-process-path-intake.md)).
 `ProcessPathCreated`/`ProcessPathUpdated` carry `intake`, the demand sources
 allowed to route work onto the path (`CUSTOMER_ORDER`, `STOCK_TRANSFER`,
-`SLOT_RELOCATION`, `INVENTORY_CONTROL`); always present, `[]` when only an
+`SLOT_RELOCATION`, `INVENTORY_CONTROL`, `REPLENISHMENT`); always present, `[]` when only an
 explicit path id reaches the path. order-management's path selection
 considers only paths whose intake contains `CUSTOMER_ORDER` (PICK in the
 declared catalogue) and falls back to `PICK` when none does, so it never
-picks PACK, REBIN, SLAM, RELOCATE, DISPATCH or ADR 0008's families for an order line.
+picks PACK, REBIN, SLAM, RELOCATE, DISPATCH, REPLENISH or ADR 0008's families for an order line.
 An event without `intake` comes from a producer older than ADR 0034.
 
 **Failure behaviour.**

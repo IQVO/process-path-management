@@ -74,6 +74,25 @@ func TestRevise_ClearingIntake_ReturnsChangedTrue(t *testing.T) {
 	}
 }
 
+func TestRevise_Replenishment_ChangesIntakeAndIsRevisable(t *testing.T) {
+	in := shared.MustIntake(shared.DemandSourceReplenishment)
+	p, err := Define("REPLENISH", "replenish", true, []shared.Capability{"replenish"}, shared.DestinationLocationRoleUnset, testCycleTimeP95, shared.Eligibility{}, in, time.Now())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !p.Intake().Equal(in) {
+		t.Fatalf("Intake() = %v, want [REPLENISHMENT]", p.Intake().Strings())
+	}
+	changed, err := p.Revise("replenish", []shared.Capability{"replenish"}, testCycleTimeP95, shared.Eligibility{}, in, time.Now())
+	if err != nil || changed {
+		t.Fatalf("Revise with the same intake = (changed %v, err %v), want (false, nil)", changed, err)
+	}
+	changed, err = p.Revise("replenish", []shared.Capability{"replenish"}, testCycleTimeP95, shared.Eligibility{}, shared.Intake{}, time.Now())
+	if err != nil || !changed || !p.Intake().IsEmpty() {
+		t.Fatalf("clearing REPLENISHMENT = (changed %v, err %v, intake %v), want (true, nil, empty)", changed, err, p.Intake().Strings())
+	}
+}
+
 func TestRehydrate_CarriesIntake(t *testing.T) {
 	in := shared.MustIntake(shared.DemandSourceInventoryControl)
 	now := time.Now()

@@ -68,7 +68,9 @@ identical or deactivated entry. The file declares PICK, PACK, REBIN, SLAM,
 `RELOCATE` (matchPrefix `relocate`, direct, capability `relocate`, intake
 `SLOT_RELOCATION`), which carries slot-plan moves, and `DISPATCH`
 (matchPrefix `dispatch`, direct, capability `dispatch`, intake
-`STOCK_TRANSFER`), which carries the transfer dispatch leg; every entry
+`STOCK_TRANSFER`), which carries the transfer dispatch leg, and `REPLENISH`
+(matchPrefix `replenish`, direct, capability `replenish`, intake
+`REPLENISHMENT`), which carries pick-face top-ups; every entry
 declares its intake
 ([ADR 0033](../adr/0033-relocate-process-path.md),
 [ADR 0034](../adr/0034-process-path-intake.md),

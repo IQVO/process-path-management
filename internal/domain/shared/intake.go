@@ -17,6 +17,8 @@ import (
 //     planned through wes-work-planning.
 //   - INVENTORY_CONTROL: internal inventory work (amnesty, damage,
 //     problem solve).
+//   - REPLENISHMENT: pick-face top-ups from pick-face-replenishment,
+//     planned through wes-work-planning (ADR 0036).
 type DemandSource string
 
 const (
@@ -24,12 +26,13 @@ const (
 	DemandSourceStockTransfer    DemandSource = "STOCK_TRANSFER"
 	DemandSourceSlotRelocation   DemandSource = "SLOT_RELOCATION"
 	DemandSourceInventoryControl DemandSource = "INVENTORY_CONTROL"
+	DemandSourceReplenishment    DemandSource = "REPLENISHMENT"
 )
 
 // ErrInvalidIntake is returned when an intake entry is not one of the
 // recognized demand sources, or when a source is listed twice (the intake
 // is a set).
-var ErrInvalidIntake = errors.New("shared: intake entries must be distinct values of CUSTOMER_ORDER, STOCK_TRANSFER, SLOT_RELOCATION, INVENTORY_CONTROL")
+var ErrInvalidIntake = errors.New("shared: intake entries must be distinct values of CUSTOMER_ORDER, STOCK_TRANSFER, SLOT_RELOCATION, INVENTORY_CONTROL, REPLENISHMENT")
 
 // Intake is the set of demand sources allowed to route work onto a
 // process path (ADR 0034). The zero value is the empty set and is fully
@@ -78,7 +81,8 @@ func MustIntake(sources ...DemandSource) Intake {
 
 func isDemandSource(s DemandSource) bool {
 	return s == DemandSourceCustomerOrder || s == DemandSourceStockTransfer ||
-		s == DemandSourceSlotRelocation || s == DemandSourceInventoryControl
+		s == DemandSourceSlotRelocation || s == DemandSourceInventoryControl ||
+		s == DemandSourceReplenishment
 }
 
 // Sources returns a defensive copy of the set, in canonical order.
