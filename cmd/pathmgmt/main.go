@@ -29,6 +29,7 @@ import (
 	outboundkafka "github.com/claudioed/process-path-management/internal/adapters/outbound/kafka"
 	"github.com/claudioed/process-path-management/internal/adapters/outbound/memory"
 	"github.com/claudioed/process-path-management/internal/adapters/outbound/postgres"
+	"github.com/claudioed/process-path-management/internal/adapters/outbound/system"
 	"github.com/claudioed/process-path-management/internal/adapters/outbound/telemetry"
 	"github.com/claudioed/process-path-management/internal/application/ports"
 	"github.com/claudioed/process-path-management/internal/application/usecases"
@@ -93,7 +94,7 @@ func run() error {
 
 	publisher, relay, closePublisher := buildEventPublisher(persistence, logger)
 	defer closePublisher()
-	clock := memory.SystemClock{}
+	clock := system.Clock{}
 
 	// Outbox lag gauge (ADR 0018): the age of the oldest unpublished
 	// outbox_events row, 0 when drained — the operational signal for
