@@ -137,17 +137,13 @@ An event without `intake` comes from a producer older than ADR 0034.
 
 **Failure behaviour.**
 
-- *Broker down, cluster mode (Postgres + `EVENT_PUBLISHER=kafka`).* Writes
-  keep succeeding: events are committed to `outbox_events` in the same
-  transaction as the aggregate. The relay retries every second and drains
-  the backlog in order when the broker returns. Consumers see the change
-  late, never lost. Watch `process_path_management.outbox.lag_seconds`.
-- *Broker down, no Postgres, `EVENT_PUBLISHER=kafka` (dev only).* The use
-  case saves to memory and then the direct publish fails, so the request
-  returns 500 while the in-memory change is kept. Store and topic diverge;
-  this mode has no outbox.
-- *`EVENT_PUBLISHER=log`.* Nothing reaches Kafka and nothing is queued for
-  later.
+- *Broker down.* Writes keep succeeding: events are committed to
+  `outbox_events` in the same transaction as the aggregate. The relay retries
+  every second and drains the backlog in order when the broker returns.
+  Consumers see the change late, never lost. Watch
+  `process_path_management.outbox.lag_seconds`. `/readyz` answers `503
+  dependency-unavailable` while no broker answers, so the api pods leave the
+  Service until it is back; liveness (`/healthz`) is unaffected.
 - *Duplicates.* At-least-once: the same CloudEvents `id` can arrive twice.
   Consumers key their caches by `PathId`/`SiteId`, so a duplicate is an
   overwrite with the same data.

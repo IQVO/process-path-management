@@ -113,7 +113,7 @@ so a first deployment projects the whole topic history.
 
 ## Outbox relay
 
-Cluster mode (`DATABASE_URL` set, `EVENT_PUBLISHER=kafka`): each use case
+Each use case
 inserts one `outbox_events` row per topic (two rows per domain event) inside
 the transaction that changes the aggregate, `ON CONFLICT (event_id, topic)
 DO NOTHING` (`outbox_publisher.go`). The relay (`outbox_relay.go`) runs in
@@ -299,7 +299,7 @@ The seed is idempotent. It POSTs absent entries, does nothing for identical
 ones, and PUTs revisable drift. It exits 1 on an entry it must not touch: a
 deactivated id, or a changed `direct` or `destinationLocationRole`. The full
 table is on [Process-path catalogue](../overview/process-path-catalogue.md).
-With `EVENT_PUBLISHER=kafka` and Postgres, the writes go through the outbox,
+The writes go through the outbox,
 so the consumers pick the change up live.
 
 ### Re-publish integration events

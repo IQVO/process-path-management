@@ -1,0 +1,8 @@
+# Used by `helm lint` / `ct lint` (chart-testing): the chart refuses to render
+# without a database source and Kafka brokers (ADR 0037: real Postgres and
+# real Kafka are the only runtime). Dummy values, no password; nothing is
+# ever dialled.
+database:
+  url: "postgres://u@example.invalid:5432/db"
+kafka:
+  brokers: "kafka.example.invalid:9092"

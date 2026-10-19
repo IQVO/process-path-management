@@ -6,6 +6,8 @@ metadata:
     {{- include "process-path-management.labels" . | nindent 4 }}
     app.kubernetes.io/component: api
 spec:
+  {{- /* ADR 0037: every render-time requirement of the real runtime. */}}
+  {{- include "process-path-management.requireRealRuntime" . }}
   {{- if not .Values.autoscaling.api.enabled }}
   replicas: {{ .Values.replicaCount }}
   {{- end }}
@@ -82,7 +84,8 @@ spec:
             - name: OTEL_SERVICE_NAME
               value: {{ .Values.otel.serviceName | quote }}
             {{- end }}
-            {{- if or .Values.database.url .Values.database.existingSecret }}
+            # Mandatory (ADR 0037): requireRealRuntime above refuses to render
+            # without a database source and without brokers.
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:
@@ -102,11 +105,8 @@ spec:
                   key: {{ .Values.database.migrationsExistingSecretKey }}
                   optional: true
             {{- end }}
-            {{- end }}
-            {{- if .Values.kafka.enabled }}
             - name: KAFKA_BROKERS
               value: {{ .Values.kafka.brokers | quote }}
-            {{- end }}
             {{- with .Values.config.housekeeping }}
             # Housekeeping sweeper (ADR 0018): bounds idempotency_keys and
             # published outbox_events. A zero value ("0s") disables the
