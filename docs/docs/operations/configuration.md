@@ -25,12 +25,12 @@ Source: `cmd/pathmgmt/main.go` unless noted.
 | Variable | Default | Required | Meaning |
 | --- | --- | --- | --- |
 | `HTTP_ADDR` | `:8080` | no | Listen address of the REST API (`/process-paths`, `/sites/{siteId}/cpt-schedule`, `/healthz`, `/readyz`). |
-| `DATABASE_URL` | unset | no | OLTP Postgres DSN for the runtime `pgxpool` (10 connections, `statement_timeout=5s`). Unset selects the in-memory repositories, no idempotency middleware, no outbox, no sweeper. |
+| `DATABASE_URL` | **required** | yes | OLTP Postgres DSN for the runtime `pgxpool` (10 connections, `statement_timeout=5s`). Unset stops the boot: `DATABASE_URL is required: this context runs on real Postgres` ([ADR 0037](../adr/0037-postgres-and-kafka-are-the-only-runtime.md)). |
 | `MIGRATIONS_DATABASE_URL` | value of `DATABASE_URL` | no | DSN used **only** by the golang-migrate step at boot. Set it to a direct (non-PgBouncer) connection when `DATABASE_URL` goes through PgBouncer in transaction mode, because golang-migrate takes a session-scoped advisory lock ([ADR 0015](../adr/0015-migrations-direct-postgres-connection.md)). |
 | `MIGRATIONS_PATH` | `migrations` | no | Directory of the OLTP `*.up.sql` files, opened as `file://<path>` (`internal/adapters/outbound/postgres/migrate.go`). Relative to the working directory. |
-| `EVENT_PUBLISHER` | `log` | no | `kafka` (case-insensitive) enables Kafka publishing; any other value keeps the log publisher. See the delivery-mode table on [Architecture](../overview/architecture.md#delivery-modes). |
-| `KAFKA_BROKERS` | `localhost:9092` | only with `EVENT_PUBLISHER=kafka` | Comma-separated broker list for the integration and analytics writers. Ignored when `EVENT_PUBLISHER` is not `kafka`. |
-| `OUTBOX_RELAY_INTERVAL` | `1s` | no | Idle poll interval of the outbox relay (Go duration). Only used when both `DATABASE_URL` and `EVENT_PUBLISHER=kafka` are set. Malformed, zero or negative values fall back to `1s`. |
+| `EVENT_PUBLISHER` | `kafka` | no | Kept only because the chart and warehouse-infra set it: unset or `kafka` (case-insensitive); `log` or any other value stops the boot. There is no log publisher and no direct fan-out ([ADR 0037](../adr/0037-postgres-and-kafka-are-the-only-runtime.md)). |
+| `KAFKA_BROKERS` | **required** | yes | Comma-separated broker list for the integration and analytics writers. Unset stops the boot: `KAFKA_BROKERS is required: this context runs on real Kafka`. There is no `localhost:9092` default. |
+| `OUTBOX_RELAY_INTERVAL` | `1s` | no | Idle poll interval of the (always-on) outbox relay (Go duration). Malformed, zero or negative values fall back to `1s`. |
 | `OUTBOX_MAX_ATTEMPTS` | `20` | no | Failed sends after which the outbox relay stops claiming a row ([ADR 0030](../adr/0030-outbox-relay-attempt-cap.md)). `0` = unlimited (the pre-cap behaviour); an unparseable or negative value falls back to `20` with a warning. The parked row stays in `outbox_events`; re-arm it with `UPDATE outbox_events SET attempts = 0 WHERE id = ...` ([Runbook](./runbook.md#re-arm-an-outbox-row-that-reached-the-attempt-cap)). Only used with the outbox (Postgres + Kafka). |
 | `HOUSEKEEPING_INTERVAL` | `1h` | no | How often the housekeeping sweeper runs (Go duration). Only used when `DATABASE_URL` is set. `0` (or any zero/negative duration) disables the sweeper. |
 | `IDEMPOTENCY_KEY_TTL` | `24h` | no | Age after which an `idempotency_keys` row is deleted by the sweeper. It is also how long a client retry with the same `Idempotency-Key` is still replayed. `0` keeps the rows forever. |
@@ -60,7 +60,7 @@ Source: `cmd/mcp/main.go` unless noted.
 | Variable | Default | Required | Meaning |
 | --- | --- | --- | --- |
 | `MCP_ADDR` | `:8090` | no | Listen address. MCP Streamable HTTP is mounted at `/`, `/mcp` and `/mcp/`; `GET /healthz` is the probe target. |
-| `DATABASE_URL` | unset | no | Same OLTP database as `pathmgmt`. Unset selects this process's **own** in-memory repositories (it will not see what `pathmgmt` wrote). Both repositories share one pool of 10 connections. |
+| `DATABASE_URL` | **required** | yes | Same OLTP database as `pathmgmt`. Unset stops the boot: `DATABASE_URL is required: this context runs on real Postgres` ([ADR 0037](../adr/0037-postgres-and-kafka-are-the-only-runtime.md)); there is no in-memory store. Both repositories share one pool of 10 connections. |
 | `MIGRATIONS_DATABASE_URL` | value of `DATABASE_URL` | no | Same meaning as for `pathmgmt`: `cmd/mcp` also runs `migrations/` at boot. |
 | `MIGRATIONS_PATH` | `migrations` | no | Same as `pathmgmt`. |
 | `REPORTS_BASE_URL` | unset | no | Base URL of `pathmgmt-reports` (for example `http://<release>-reports.<ns>.svc.cluster.local:80`). When set, the `get_catalogue_growth_report` tool is registered; when unset only the three OLTP read tools exist. |
@@ -81,7 +81,7 @@ Source: `cmd/pathmgmt-projector/main.go`.
 | --- | --- | --- | --- |
 | `ANALYTICS_DATABASE_URL` | none | **yes** | Read-write DSN of the analytical database. The process exits with `ANALYTICS_DATABASE_URL is required` when it is unset. Pool: 5 connections, `statement_timeout=10s` (`internal/adapters/outbound/analyticsstore/pool.go`). |
 | `ANALYTICS_MIGRATIONS_PATH` | `migrations/analytics` | no | Directory of the analytical `*.up.sql` files, applied at boot (the projector owns this schema). |
-| `KAFKA_BROKERS` | `localhost:9092` | no | Comma-separated broker list for the `warehouse.process-path-management.analytics` reader and the `.dlq` writer. |
+| `KAFKA_BROKERS` | **required** | yes | Comma-separated broker list for the `warehouse.process-path-management.analytics` reader and the `.dlq` writer. Unset stops the boot (`KAFKA_BROKERS is required: this context runs on real Kafka`); no `localhost:9092` default. |
 | `ADMIN_ADDR` | `:8091` | no | Listen address of the admin server (`/healthz`, `/readyz`). |
 | `LOG_LEVEL` | `info` | no | `debug`, `warn`/`warning`, `error`; anything else means `info`. |
 | `OTEL_SERVICE_NAME` | `pathmgmt-projector` | no | OTel `service.name`. |
@@ -137,15 +137,15 @@ Deployments set their variables inline only and do not mount the ConfigMap.
 | `config.migrationsPath` (`migrations`) | `MIGRATIONS_PATH` | pathmgmt, mcp |
 | `config.logLevel` (`info`) | `LOG_LEVEL` | all four |
 | `config.corsAllowedOrigins` | `CORS_ALLOWED_ORIGINS` | pathmgmt |
-| `config.eventPublisher` (`log`) | `EVENT_PUBLISHER` | pathmgmt |
+| `config.eventPublisher` (`kafka`, the only accepted value) | `EVENT_PUBLISHER` | pathmgmt |
 | `config.outboxMaxAttempts` (`"20"`) | `OUTBOX_MAX_ATTEMPTS` | pathmgmt |
 | `config.housekeeping.interval` / `.idempotencyKeyTtl` / `.outboxRetention` | `HOUSEKEEPING_INTERVAL` / `IDEMPOTENCY_KEY_TTL` / `OUTBOX_RETENTION` | pathmgmt |
 | `environment` (`local`) | `ENVIRONMENT` | all four (always set, independent of `otel.enabled`) |
 | `image.tag` or chart `appVersion` | `SERVICE_VERSION` | all four (always set) |
 | `otel.endpoint`, `otel.serviceName` (when `otel.enabled`) | `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_SERVICE_NAME` | all four; mcp, projector and reports get the fixed names `process-path-management-mcp`, `pathmgmt-projector`, `pathmgmt-reports` |
-| secret `database.existingSecretKey` (`DATABASE_URL`) | `DATABASE_URL` | pathmgmt, mcp (only when `database.url` or `database.existingSecret` is set) |
+| secret `database.existingSecretKey` (`DATABASE_URL`) | `DATABASE_URL` | pathmgmt, mcp (always; the render fails without `database.url` or `database.existingSecret`) |
 | secret `database.migrationsExistingSecretKey` (`MIGRATIONS_DATABASE_URL`, `optional: true`) | `MIGRATIONS_DATABASE_URL` | pathmgmt, mcp |
-| `kafka.brokers` (`kafka:9092`) | `KAFKA_BROKERS` | pathmgmt (only when `kafka.enabled`), projector (always) |
+| `kafka.brokers` (required, no default) | `KAFKA_BROKERS` | pathmgmt, projector (always; the render fails when empty) |
 | `mcp.httpAddr` (`:8090`) | `MCP_ADDR` | mcp |
 | `mcp.reportsBaseUrl`, else the in-cluster reports Service when `analytics.enabled` | `REPORTS_BASE_URL` | mcp |
 | `analytics.projector.adminAddr` (`:8091`) | `ADMIN_ADDR` | projector |
@@ -158,5 +158,10 @@ Deployments set their variables inline only and do not mount the ConfigMap.
 you set `OUTBOX_RELAY_INTERVAL` in a cluster: the chart has no dedicated
 value for it.
 
-Note that `kafka.enabled=true` alone does not make the api publish to Kafka:
-`config.eventPublisher` must also be `kafka`.
+The chart refuses to render, naming the value, without `database.url` or
+`database.existingSecret`, without `kafka.brokers`, with `kafka.enabled=false`
+(the key is still accepted as `true` because warehouse-infra sets it, but it is
+no longer a switch), with `config.eventPublisher` other than `kafka`, with an
+`EVENT_PUBLISHER` or `*_MODE` entry in `extraEnv`, and with a
+`terminationGracePeriodSeconds` under 20
+([ADR 0037](../adr/0037-postgres-and-kafka-are-the-only-runtime.md)).

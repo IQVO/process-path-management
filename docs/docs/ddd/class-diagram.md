@@ -318,7 +318,6 @@ Source: `internal/application/ports/ports.go`,
 (`internal/analytics/report` ports `ReportStore`/`ProjectionStore`,
 `analyticsstore`, the `pathmgmt-projector` Kafka consumer and the
 `pathmgmt-reports` HTTP handler); the outbox relay and sweeper, which are
-driven by `cmd/pathmgmt`, not by a port. Publisher selection:
-`OutboxPublisher` when `EVENT_PUBLISHER=kafka` and `DATABASE_URL` is set;
-`FanOutPublisher` from `kafka.NewSharedIdFanOut` (direct to both topics) when `EVENT_PUBLISHER=kafka`
-without `DATABASE_URL`; `LogPublisher` otherwise.
+driven by `cmd/pathmgmt`, not by a port. The only publisher a binary wires is
+`OutboxPublisher` (ADR 0037); `FanOutPublisher` (`kafka.NewSharedIdFanOut`)
+and `LogPublisher` remain as test doubles.
