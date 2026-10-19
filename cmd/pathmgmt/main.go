@@ -6,6 +6,29 @@
 // consumer — it is the SOURCE of the process-path published language,
 // not a consumer of anyone else's events. Its only Kafka role is the
 // outbound publisher.
+//
+// Postgres and Kafka are the ONLY runtime (ADR 0037): there is no
+// in-memory mode, no log sink, no direct-to-broker path and no optional
+// relay. A missing mandatory variable is a boot error naming it, raised
+// before any connection is opened and before the listener binds.
+//
+// Environment:
+//
+//	DATABASE_URL                  REQUIRED. Postgres DSN
+//	MIGRATIONS_DATABASE_URL       direct DSN for the boot migrations (default DATABASE_URL)
+//	KAFKA_BROKERS                 REQUIRED. Comma-separated brokers
+//	EVENT_PUBLISHER               kafka (default). log is REJECTED at boot
+//	HTTP_ADDR                     listen address (default :8080)
+//	OUTBOX_RELAY_INTERVAL         relay poll interval (default 1s)
+//	OUTBOX_MAX_ATTEMPTS           failures before the relay excludes a row (default 20, 0 = unlimited)
+//	HOUSEKEEPING_INTERVAL, IDEMPOTENCY_KEY_TTL, OUTBOX_RETENTION   sweeper knobs (ADR-0018)
+//	OTEL_EXPORTER_OTLP_ENDPOINT, LOG_LEVEL, SERVICE_VERSION
+//
+// /readyz is the drain gate AND a Postgres ping AND a Kafka metadata check
+// (a broker answers a request that names no topic: reachability only, never
+// topics), cached for a few seconds. /healthz is liveness only. The service
+// never creates topics through an admin API: the cluster broker
+// auto-creates them on first write.
 package main
 
 import (
@@ -25,9 +48,7 @@ import (
 
 	inboundhttp "github.com/claudioed/process-path-management/internal/adapters/inbound/http"
 	"github.com/claudioed/process-path-management/internal/adapters/outbound/bootretry"
-	"github.com/claudioed/process-path-management/internal/adapters/outbound/events"
 	outboundkafka "github.com/claudioed/process-path-management/internal/adapters/outbound/kafka"
-	"github.com/claudioed/process-path-management/internal/adapters/outbound/memory"
 	"github.com/claudioed/process-path-management/internal/adapters/outbound/postgres"
 	"github.com/claudioed/process-path-management/internal/adapters/outbound/system"
 	"github.com/claudioed/process-path-management/internal/adapters/outbound/telemetry"
@@ -41,17 +62,26 @@ import (
 var version = ""
 
 func main() {
-	if err := run(); err != nil {
+	if err := run(context.Background()); err != nil {
 		slog.Error("service exited with error", "error", err)
 		os.Exit(1)
 	}
 }
 
-func run() error {
+// run boots the service and serves until SIGINT/SIGTERM or until ctx is
+// cancelled (the in-process integration test stops it that way), then shuts
+// down in the fleet order. It reads the whole configuration from the
+// environment.
+func run(ctx context.Context) error {
 	logger := newLogger(getenv("LOG_LEVEL", "info"))
 	slog.SetDefault(logger)
 
-	ctx := context.Background()
+	// Fail fast, before telemetry, any connection and the listener: a
+	// missing mandatory variable is a boot error that names it.
+	cfg, err := loadBootConfig()
+	if err != nil {
+		return err
+	}
 
 	serviceName, shutdownTelemetry, err := setupTelemetry(ctx, logger)
 	if err != nil {
@@ -66,79 +96,65 @@ func run() error {
 	}()
 
 	httpAddr := getenv("HTTP_ADDR", ":8080")
-	databaseURL := os.Getenv("DATABASE_URL")
-	// MIGRATIONS_DATABASE_URL, when set, is a DIRECT (non-pooled,
-	// session-mode) Postgres connection string used ONLY for the
-	// golang-migrate startup step below — everything else (the pgxpool
-	// this process serves requests through) keeps using databaseURL
+	// cfg.migrationsDatabaseURL is MIGRATIONS_DATABASE_URL, a DIRECT
+	// (non-pooled, session-mode) Postgres connection string used ONLY for
+	// the golang-migrate startup step below — everything else (the pgxpool
+	// this process serves requests through) keeps using cfg.databaseURL
 	// unchanged. See buildPersistence's doc comment for the full "why":
 	// golang-migrate's postgres driver takes a session-scoped
 	// `SELECT pg_advisory_lock($1)` to serialize concurrent migration
 	// runs, which PgBouncer's transaction-pooling mode does not support
 	// (warehouse-infra's PgBouncer rollout, PR #43; this fallback closes
 	// the fleet-wide bug that rollout introduced — see ADR
-	// 0015-migrations-direct-postgres-connection.md). Falls back to
-	// databaseURL when unset, which is every environment that doesn't
-	// provision the split (local dev, CI integration tests, and any
-	// cluster whose Terraform predates this fix) — byte-identical to
-	// this service's behavior before this change in that case.
-	migrationsDatabaseURL := getenv("MIGRATIONS_DATABASE_URL", databaseURL)
-	migrationsPath := getenv("MIGRATIONS_PATH", "migrations")
-
-	persistence, err := buildPersistence(ctx, databaseURL, migrationsDatabaseURL, migrationsPath, logger)
+	// 0015-migrations-direct-postgres-connection.md). It falls back to
+	// DATABASE_URL when unset.
+	persistence, err := buildPersistence(ctx, cfg.databaseURL, cfg.migrationsDatabaseURL, cfg.migrationsPath, logger)
 	if err != nil {
 		return err
 	}
 	defer persistence.close()
 	repo := persistence.repo
 
-	publisher, relay, closePublisher := buildEventPublisher(persistence, logger)
+	publisher, relay, closePublisher := buildEventPublisher(persistence, cfg.kafkaBrokers, logger)
 	defer closePublisher()
 	clock := system.Clock{}
 
 	// Outbox lag gauge (ADR 0018): the age of the oldest unpublished
 	// outbox_events row, 0 when drained — the operational signal for
-	// "the relay is behind", closing ADR 0003's deferred follow-up.
-	// Only meaningful with the outbox wired (Postgres + kafka). The
+	// "the relay is behind", closing ADR 0003's deferred follow-up. The
 	// registration is unregistered before the pool closes (deferred
 	// here runs before buildPersistence's pool.Close below it).
-	var unregisterOutboxLag func() error
-	if persistence.pool != nil {
-		reg, err := postgres.RegisterOutboxLagGauge(persistence.pool)
-		if err != nil {
-			// A failed metric registration must never take the
-			// service down; the gauge is observability, not a
-			// dependency.
-			logger.Warn("outbox lag gauge registration failed", "error", err)
-		} else {
-			unregisterOutboxLag = reg.Unregister
-			defer func() { _ = unregisterOutboxLag() }()
-		}
+	reg, err := postgres.RegisterOutboxLagGauge(persistence.pool)
+	if err != nil {
+		// A failed metric registration must never take the
+		// service down; the gauge is observability, not a
+		// dependency.
+		logger.Warn("outbox lag gauge registration failed", "error", err)
+	} else {
+		defer func() { _ = reg.Unregister() }()
 	}
 
 	// Housekeeping sweeper (ADR 0018): bounds the two append-only tables
 	// (idempotency_keys, published outbox_events) so they do not grow
 	// without limit. Runs alongside the HTTP server in the same process
-	// and stops with the same signal context. Nil without Postgres
-	// (in-memory dev mode has neither table).
-	var sweeper *postgres.Sweeper
-	if persistence.pool != nil {
-		sweeper = buildSweeper(persistence.pool, logger)
-	}
+	// and stops with the same signal context.
+	sweeper := buildSweeper(persistence.pool, logger)
 
 	pathMetrics, err := telemetry.NewPathMetrics()
 	if err != nil {
 		return err
 	}
 
-	// readiness gates GET /readyz (ADR-0012 §graceful shutdown,
-	// mirroring order-management's ADR-0025). The zero value is
-	// ready; SetNotReady is called as the FIRST step of the shutdown
-	// sequence below, before the HTTP server itself stops accepting
-	// connections, so a Kubernetes readinessProbe has a chance to
-	// observe the flip and stop routing new traffic during the drain
-	// window that follows.
-	readiness := &inboundhttp.Readiness{}
+	// readiness gates GET /readyz (ADR-0012 §graceful shutdown, ADR 0037,
+	// mirroring order-management's ADR-0025): the drain gate, flipped to
+	// not-ready as the FIRST step of the shutdown sequence below, before
+	// the HTTP server itself stops accepting connections, AND a Postgres
+	// ping AND a Kafka metadata check, so a Kubernetes readinessProbe only
+	// routes traffic to a pod whose dependencies answer.
+	readiness := inboundhttp.NewReadiness(0, 0,
+		inboundhttp.Dependency{Name: "postgres", Check: persistence.pool.Ping},
+		inboundhttp.Dependency{Name: "kafka", Check: outboundkafka.NewBrokerCheck(cfg.kafkaBrokers).Check},
+	)
 
 	server := &inboundhttp.Server{
 		DefinePath:        &usecases.DefinePath{Repo: repo, Publisher: publisher, Clock: clock, UnitOfWork: persistence.uow, Metrics: pathMetrics},
@@ -148,15 +164,11 @@ func run() error {
 		ListPaths:         &usecases.ListPaths{Repo: repo},
 		DefineCPTSchedule: &usecases.DefineCPTSchedule{Repo: persistence.scheduleRepo, ProcessPathRepo: repo, Publisher: publisher, Clock: clock, UnitOfWork: persistence.uow},
 		GetCPTSchedule:    &usecases.GetCPTSchedule{Repo: persistence.scheduleRepo},
-		// IdempotencyPool reuses the SAME pool buildPersistence opened
-		// against DATABASE_URL (nil in the in-memory dev/test
-		// configuration) — see Server.IdempotencyPool's doc comment and
-		// the idempotency-key-middleware ADR.
+		// IdempotencyPool is the SAME pool buildPersistence opened against
+		// DATABASE_URL: the Idempotency-Key check on POST /process-paths is
+		// always on (see Server.IdempotencyPool and ADR 0011).
 		IdempotencyPool: persistence.pool,
-		// readiness backs GET /readyz (ADR-0012 §graceful shutdown):
-		// flipped to not-ready as the FIRST step of shutdown, below,
-		// before anything else stops.
-		Readiness: readiness,
+		Readiness:       readiness,
 	}
 
 	httpServer := &http.Server{
@@ -165,7 +177,7 @@ func run() error {
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
-	return serveHTTP(logger, httpServer, relay, sweeper, readiness)
+	return serveHTTP(ctx, logger, httpServer, relay, sweeper, readiness)
 }
 
 // setupTelemetry configures OTel traces/metrics/logs and emits the
@@ -189,13 +201,13 @@ func setupTelemetry(ctx context.Context, logger *slog.Logger) (string, func(cont
 	return serviceName, shutdown, nil
 }
 
-// serveHTTP runs the HTTP server and, when wired, the outbox relay and
-// the housekeeping sweeper until SIGINT or SIGTERM, then shuts them down:
-// the server drains in-flight requests within a 10s budget while the relay
-// is allowed to finish its in-flight pass. It returns the first
+// serveHTTP runs the HTTP server, the outbox relay and the housekeeping
+// sweeper until SIGINT or SIGTERM (or until ctx is cancelled), then shuts
+// them down: the server drains in-flight requests within a 10s budget while
+// the relay is allowed to finish its in-flight pass. It returns the first
 // listener/relay error, or the HTTP shutdown error after a
 // signal-triggered stop.
-func serveHTTP(logger *slog.Logger, httpServer *http.Server, relay *postgres.OutboxRelay, sweeper *postgres.Sweeper, readiness *inboundhttp.Readiness) error {
+func serveHTTP(ctx context.Context, logger *slog.Logger, httpServer *http.Server, relay *postgres.OutboxRelay, sweeper *postgres.Sweeper, readiness *inboundhttp.Readiness) error {
 	errCh := make(chan error, 1)
 	go func() {
 		logger.Info("http server listening", "addr", httpServer.Addr)
@@ -204,38 +216,32 @@ func serveHTTP(logger *slog.Logger, httpServer *http.Server, relay *postgres.Out
 		}
 	}()
 
-	stopCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	stopCtx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
 	// The outbox relay (ADR 0003) runs alongside the HTTP server in the
-	// same process, draining outbox_events onto Kafka. It is only wired
-	// when both Postgres and the kafka publisher are configured.
+	// same process, draining outbox_events onto Kafka. It is always on:
+	// the service has no other way to publish.
 	relayDone := make(chan struct{})
 	relayCtx, stopRelay := context.WithCancel(stopCtx)
 	defer stopRelay()
-	if relay != nil {
-		go func() {
-			defer close(relayDone)
-			logger.Info("outbox relay running", "topic", outboundkafka.Topic)
-			if err := relay.Run(relayCtx); err != nil && !errors.Is(err, context.Canceled) {
-				errCh <- err
-			}
-		}()
-	} else {
-		close(relayDone)
-	}
+	go func() {
+		defer close(relayDone)
+		logger.Info("outbox relay running", "topic", outboundkafka.Topic, "analytics_topic", outboundkafka.AnalyticsTopic)
+		if err := relay.Run(relayCtx); err != nil && !errors.Is(err, context.Canceled) {
+			errCh <- err
+		}
+	}()
 
 	// The housekeeping sweeper (ADR 0018) runs on the same signal
 	// context. Unlike the relay it never returns a non-nil error (a
 	// failed pass is logged and retried on the next tick), so it does
 	// not feed errCh; it just needs to stop touching the pool before
 	// the deferred pool.Close runs, which the shared stopCtx gives us.
-	if sweeper != nil {
-		go func() {
-			logger.Info("housekeeping sweeper running")
-			_ = sweeper.Run(stopCtx)
-		}()
-	}
+	go func() {
+		logger.Info("housekeeping sweeper running")
+		_ = sweeper.Run(stopCtx)
+	}()
 
 	select {
 	case err := <-errCh:
@@ -308,10 +314,9 @@ func serviceVersion() string {
 	return getenv("SERVICE_VERSION", "dev")
 }
 
-// persistence is what buildPersistence wires: the repo the use cases
-// read/write through, the Postgres pool (nil when running in-memory),
-// and the UnitOfWork that brackets Save + Publish (nil when in-memory,
-// which the use cases treat as "run them back to back").
+// persistence is what buildPersistence wires: the Postgres repos the use
+// cases read/write through, the pool, and the UnitOfWork that brackets
+// Save + Publish.
 type persistence struct {
 	repo         ports.ProcessPathRepo
 	scheduleRepo ports.CPTScheduleRepo
@@ -321,12 +326,8 @@ type persistence struct {
 }
 
 // buildPersistence wires the outbound ProcessPathRepo and CPTScheduleRepo
-// (ADR 0010) together, since they always share the same storage mode
-// (both in-memory, or both Postgres over the same pool) — there is no
-// scenario in this service where one is backed by Postgres and the other
-// is not. With no DATABASE_URL set, the service runs fully functional
-// against in-memory repos (no Postgres required for local dev / smoke
-// tests) — same fallback convention as every other service in this fleet.
+// (ADR 0010) together over the same Postgres pool. An empty databaseURL is
+// a boot error (errNoDatabase): there is no in-memory fallback (ADR 0037).
 //
 // migrationsDatabaseURL is used ONLY for the golang-migrate step below —
 // the pgxpool opened just after it (and used for every subsequent
@@ -351,12 +352,7 @@ type persistence struct {
 // parameter existed in that case.
 func buildPersistence(ctx context.Context, databaseURL, migrationsDatabaseURL, migrationsPath string, logger *slog.Logger) (*persistence, error) {
 	if databaseURL == "" {
-		logger.Info("DATABASE_URL not set, using in-memory ProcessPathRepo and CPTScheduleRepo")
-		return &persistence{
-			repo:         memory.NewProcessPathRepo(),
-			scheduleRepo: memory.NewCPTScheduleRepo(),
-			close:        func() {},
-		}, nil
+		return nil, errNoDatabase
 	}
 
 	// Retried, because in this fleet EVERY injected pod's first outbound
@@ -394,50 +390,22 @@ func buildPersistence(ctx context.Context, databaseURL, migrationsDatabaseURL, m
 }
 
 // buildEventPublisher wires the outbound event publisher, returning it,
-// the outbox relay to run alongside the HTTP server (nil when there is
-// none), and a close function.
+// the outbox relay to run alongside the HTTP server, and a close function.
 //
-// The default is the log publisher, so a local dev run with no Kafka is
-// still fully functional. Setting EVENT_PUBLISHER=kafka publishes onto
-// warehouse.process-path-management.events, which is what
-// fulfillment-execution, wes-work-planning, and workforce-management
-// consume to keep their own local path caches current.
-//
-// With BOTH Postgres and kafka configured the use cases publish into the
-// transactional outbox (ADR 0003) and the relay forwards rows to Kafka;
-// the store and the topic can no longer diverge. With kafka but no
-// Postgres (in-memory dev runs) events go straight to the broker as
-// before — there is no transaction to bind them to.
-func buildEventPublisher(p *persistence, logger *slog.Logger) (ports.EventPublisher, *postgres.OutboxRelay, func()) {
-	if !strings.EqualFold(getenv("EVENT_PUBLISHER", "log"), "kafka") {
-		return events.NewLogPublisher(logger), nil, func() {}
-	}
-
-	brokers := strings.Split(getenv("KAFKA_BROKERS", "localhost:9092"), ",")
+// The only publisher is the Kafka-backed transactional outbox (ADR 0003,
+// ADR 0037): the use cases publish into outbox_events in the same
+// transaction as the aggregate write and the relay forwards the rows onto
+// warehouse.process-path-management.events (which fulfillment-execution,
+// wes-work-planning and workforce-management consume to keep their own
+// local path caches current) and onto the analytics topic. The store and the
+// topics can never diverge. There is no log sink and no direct-to-broker
+// mode.
+func buildEventPublisher(p *persistence, brokers []string, logger *slog.Logger) (ports.EventPublisher, *postgres.OutboxRelay, func()) {
 	kafkaPublisher := outboundkafka.NewPublisher(brokers, uuid.NewString)
 	closeKafka := func() {
 		if err := kafkaPublisher.Close(); err != nil {
 			logger.Error("error closing kafka publisher", "error", err)
 		}
-	}
-
-	if p.pool == nil {
-		logger.Info("kafka event publishing enabled (direct, no outbox: DATABASE_URL not set)",
-			"brokers", brokers, "topic", outboundkafka.Topic, "analytics_topic", outboundkafka.AnalyticsTopic)
-		// ONE id per occurrence, shared by both topics — matching the
-		// OutboxPublisher semantics on the other branch (ADR 0016's
-		// dev-only fan-out edge: each publisher minting its own id made
-		// the two topics disagree about the same occurrence's id).
-		newId := uuid.NewString
-		analyticsPublisher := outboundkafka.NewAnalyticsDirectPublisher(brokers, newId)
-		fanOut := outboundkafka.NewSharedIdFanOut(newId, kafkaPublisher, analyticsPublisher)
-		closeBoth := func() {
-			closeKafka()
-			if err := analyticsPublisher.Close(); err != nil {
-				logger.Error("error closing analytics kafka publisher", "error", err)
-			}
-		}
-		return fanOut, nil, closeBoth
 	}
 
 	// OUTBOX_MAX_ATTEMPTS (ADR 0030, gap fix D12): after this many failed

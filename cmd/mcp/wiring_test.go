@@ -84,20 +84,22 @@ func TestBuildRepo_UsesMigrationsDatabaseURLNotDatabaseURLForMigrations(t *testi
 	}
 }
 
-// TestBuildCPTScheduleRepo_SharesBuildRepoPool pins ADR 0014's
-// connection arithmetic as code: buildCPTScheduleRepo must reuse the
-// pool buildRepo opened (the pod's ONE MaxConns=10 OLTP pool), never
-// open its own — the old two-pool wiring silently doubled every mcp
-// pod's ceiling to 20 connections. In-memory mode passes a nil pool and
-// must keep selecting the in-memory repo.
-func TestBuildCPTScheduleRepo_SharesBuildRepoPool(t *testing.T) {
-	t.Run("in-memory mode with nil pool", func(t *testing.T) {
-		repo, err := buildCPTScheduleRepo(context.Background(), "", nil, quietLogger())
-		if err != nil {
-			t.Fatalf("buildCPTScheduleRepo: %v", err)
+// TestMCPRefusesToBootWithoutDatabaseURL pins the mandatory configuration:
+// there is no in-memory store behind cmd/mcp (ADR 0037), so a missing
+// DATABASE_URL is a boot error that names the variable, both from run()
+// (before telemetry and the listener) and from buildRepo itself.
+func TestMCPRefusesToBootWithoutDatabaseURL(t *testing.T) {
+	t.Run("run", func(t *testing.T) {
+		t.Setenv("DATABASE_URL", "")
+		err := run()
+		if err == nil || !strings.Contains(err.Error(), "DATABASE_URL") {
+			t.Fatalf("run() without DATABASE_URL = %v, want a boot error naming DATABASE_URL", err)
 		}
-		if repo == nil {
-			t.Fatal("expected the in-memory CPTScheduleRepo, got nil")
+	})
+	t.Run("buildRepo", func(t *testing.T) {
+		_, _, _, err := buildRepo(context.Background(), "", "", "migrations", quietLogger())
+		if err == nil || !strings.Contains(err.Error(), "DATABASE_URL") {
+			t.Fatalf("buildRepo(\"\") = %v, want an error naming DATABASE_URL", err)
 		}
 	})
 }
