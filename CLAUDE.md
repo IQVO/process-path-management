@@ -1,5 +1,7 @@
 # Project: Process Path Management (Generic Subdomain)
 
+<!-- harness-template: v4 -->
+
 The fleet's **operator-configurable process-path catalogue** (`PathId`, `matchPrefix`,
 `Direct`, required capabilities) plus the per-site `CPTSchedule`; it replaced the static
 `sortable-fc.yaml` and is the single source of truth (ADR 0001). It owns the path catalogue
