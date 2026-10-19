@@ -11,6 +11,10 @@ description: "ADR 0011 — POST /process-paths requires a caller-supplied Idempo
 ## Status
 
 Accepted — implemented in the same change that introduced this record.
+*Amended by [ADR 0037](./0037-postgres-and-kafka-are-the-only-runtime.md):
+the middleware always runs (Postgres is mandatory) and `Idempotency-Key` is
+`required: true` in the OpenAPI contract.*
+
 Ports order-management's ADR 0023 (the fleet's reference implementation)
 to this service's one resource-creation endpoint.
 

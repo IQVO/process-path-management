@@ -7,25 +7,37 @@ paths:
   - "migrations/**"
 ---
 
-# Runtime modes, local run, and the transactional outbox
+# Runtime (Postgres + Kafka only), local run, and the transactional outbox
 
 Moved out of `CLAUDE.md` to keep it under ~12KB; still authoritative.
 
-## Persistence and event delivery mode matrix
+## Runtime: real Postgres and real Kafka, nothing else (ADR 0037)
 
-Composition root (`cmd/pathmgmt/main.go`) picks the mode at boot from
-`DATABASE_URL` and `EVENT_PUBLISHER`:
+The shipped binaries (`cmd/pathmgmt`, `cmd/mcp`, `cmd/pathmgmt-projector`,
+`cmd/pathmgmt-reports`) have no in-memory runtime path, no log sink and no
+optional relay. A missing mandatory variable is a boot error that names the
+variable, raised before any connection and before the listener binds:
 
-| `DATABASE_URL` | `EVENT_PUBLISHER` | Publisher wired          | Outbox relay |
-|----------------|--------------------|---------------------------|--------------|
-| unset          | `log` (default)     | log                       | none         |
-| unset          | `kafka`             | direct Kafka (no outbox)  | none         |
-| set            | `log`                | log                       | none         |
-| set            | `kafka`             | **transactional outbox**  | **yes**      |
+| Binary | Mandatory | Rejected at boot |
+|---|---|---|
+| `cmd/pathmgmt` | `DATABASE_URL`, `KAFKA_BROKERS` | `EVENT_PUBLISHER=log` (and any value other than `kafka`) |
+| `cmd/mcp` | `DATABASE_URL` | none (needs no Kafka) |
+| `cmd/pathmgmt-projector` | `ANALYTICS_DATABASE_URL`, `KAFKA_BROKERS` | none |
+| `cmd/pathmgmt-reports` | `ANALYTICS_DATABASE_URL` | none |
 
-The cluster runs the last row. With no `DATABASE_URL`, the service is
-fully functional over REST on the in-memory adapter (`internal/adapters/outbound/memory`)
-— no Postgres required for local dev.
+This context consumes no other context's topic, and the projector's consumer
+group is a constant. `EVENT_PUBLISHER` is kept only because the chart and
+warehouse-infra set it (unset or `kafka`).
+
+`GET /readyz` = drain gate AND a Postgres ping AND a Kafka broker answering a
+topic-less metadata request (reachability only, never topics; verdict cached
+3s, bounded 2s). `/healthz` stays liveness only. The service never creates
+topics: the cluster broker auto-creates them on first write.
+
+The in-memory adapters (`internal/adapters/outbound/memory`) are TEST DOUBLES;
+`TestRuntimeBinaryHasNoInMemoryAdapters` (with its `TestRuntimeBinarySensorBites`)
+fails the build if any non-test file under `cmd/**` imports them. The wall
+clock the binaries inject lives in `internal/adapters/outbound/system`.
 
 ## Transactional outbox (ADR 0003 — this repo is the fleet's REFERENCE implementation)
 
@@ -52,26 +64,17 @@ carries the same `id`.
 
 ## Local run
 
-Local run, no dependencies:
+Postgres and Kafka are both required:
 
 ```bash
-go run ./cmd/pathmgmt
-# DATABASE_URL not set -> in-memory ProcessPathRepo; fully functional REST on :8080
-```
-
-With Postgres:
-
-```bash
-docker compose up -d postgres          # Postgres 16 on localhost:5436
+docker compose up -d --wait postgres kafka   # Postgres 16 on localhost:5436, Kafka on localhost:9092
 export DATABASE_URL='postgres://pathmgmt:pathmgmt@localhost:5436/pathmgmt?sslmode=disable'
-go run ./cmd/pathmgmt                  # migrations run automatically at startup
-```
-
-With Kafka publishing:
-
-```bash
-export EVENT_PUBLISHER=kafka
 export KAFKA_BROKERS=localhost:9092
-go run ./cmd/pathmgmt
+go run ./cmd/pathmgmt                        # migrations run automatically at startup
 ```
+
+`make seed-catalogue` applies `catalogue/paths.json` to the RUNNING service
+over REST (a fresh database is empty). The Schemathesis `contract` job boots
+the same binary against `postgres:16` and `confluent-local` service containers
+(`scripts/contract-test.sh`, ADR 0037).
 

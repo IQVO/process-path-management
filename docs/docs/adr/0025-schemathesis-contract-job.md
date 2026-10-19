@@ -11,6 +11,8 @@ description: ADR 0025 — CI's contract job boots the real router on in-memory a
 ## Status
 
 Accepted — codifies the job that already ships, retroactively.
+*Amended by [ADR 0037](./0037-postgres-and-kafka-are-the-only-runtime.md):
+the job boots the service on real Postgres and Kafka, not in memory.*
 
 ## Context
 

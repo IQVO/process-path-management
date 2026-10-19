@@ -63,8 +63,7 @@ and CPT schedule writes have no business counter.
 `process_path_management.outbox.lag_seconds` runs one query per collection
 (every 30 s): the age of the oldest row in `outbox_events` with
 `published_at IS NULL`, or `0` when the outbox is drained. It is registered
-whenever Postgres is configured, even with `EVENT_PUBLISHER=log`; in that
-mode no rows are written, so it stays `0`.
+whenever Postgres is configured (always, ADR 0037).
 
 In Prometheus (through the Collector) these appear as
 `process_path_management_paths_defined_total`,
@@ -99,10 +98,10 @@ any record logged with a context that carries a valid span.
 | Message | Level | Fields | Emitted by |
 | --- | --- | --- | --- |
 | `http request` | INFO | `method`, `route` (pattern; raw path with CR/LF stripped on 404), `status`, `bytes`, `duration_ms`, `request_id` | `pathmgmt`, `pathmgmt-reports` (`internal/adapters/inbound/http/logging.go`) |
-| `domain event published` | INFO | `event_name`, `payload` | `pathmgmt` with `EVENT_PUBLISHER=log` |
+| `domain event published` | INFO | `event_name`, `payload` | the `LogPublisher` test double only (no binary wires it) |
 | `telemetry configured` | INFO | `service_name`, `service_version`, `environment`, `otlp_endpoint` | `pathmgmt`, projector, reports (mcp logs `service_name`, `otlp_endpoint`) |
 | `http server listening` / `mcp server listening (Streamable HTTP)` / `reports server listening` / `projector admin server listening` | INFO | `addr` | each binary |
-| `kafka event publishing enabled (transactional outbox)` or `(direct, no outbox: DATABASE_URL not set)` | INFO | `brokers`, `topic`, `analytics_topic` (outbox mode also `outbox_max_attempts`) | `pathmgmt` |
+| `kafka event publishing enabled (transactional outbox)` | INFO | `brokers`, `topic`, `analytics_topic`, `outbox_max_attempts` | `pathmgmt` |
 | `outbox relay running` | INFO | `topic` | `pathmgmt` |
 | `outbox relay pass failed` | ERROR | `error` | `pathmgmt` |
 | `outbox relay: row reached the attempt cap and is no longer claimed` | ERROR | `outbox_id`, `topic`, `event_type`, `key`, `attempts`, `max_attempts`, `error`, `rearm` | `pathmgmt`, once per row that reaches `OUTBOX_MAX_ATTEMPTS` ([ADR 0030](../adr/0030-outbox-relay-attempt-cap.md)) |

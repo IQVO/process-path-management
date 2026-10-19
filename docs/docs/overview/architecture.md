@@ -28,9 +28,10 @@ not by convention alone ([ADR 0021](../adr/0021-architecture-fitness-suite.md)).
 | `internal/adapters/inbound/mcp` | Inbound adapter | MCP server and its read-only tools, plus the REST client for `pathmgmt-reports` |
 | `internal/adapters/inbound/kafka` | Inbound adapter | The analytics consumer (this service's own analytics topic only) and its dead-letter writer |
 | `internal/adapters/outbound/postgres` | Outbound adapter | pgxpool repos, `UnitOfWork`, `OutboxPublisher`, `OutboxRelay`, `Sweeper`, outbox lag gauge, golang-migrate runner |
-| `internal/adapters/outbound/memory` | Outbound adapter | In-memory repos and the system clock, used when `DATABASE_URL` is unset and by tests |
+| `internal/adapters/outbound/memory` | Outbound adapter | In-memory repos, test doubles only (no `cmd/**` binary imports them) |
+| `internal/adapters/outbound/system` | Outbound adapter | The wall clock the binaries inject |
 | `internal/adapters/outbound/kafka` | Outbound adapter | Integration and analytics encoders/publishers, fan-out publisher, W3C trace-context headers, writer settings |
-| `internal/adapters/outbound/events` | Outbound adapter | `LogPublisher`, the default publisher (`EVENT_PUBLISHER=log`) |
+| `internal/adapters/outbound/events` | Outbound adapter | `LogPublisher`, a test double / debugging aid that no binary wires |
 | `internal/adapters/outbound/analyticsstore` | Outbound adapter | Analytics projection (writer), report reader, consumed-events gate, analytics pools |
 | `internal/adapters/outbound/telemetry` | Outbound adapter | OTel trace and metric providers, `PathMetrics` counter, trace-correlating slog handler |
 | `internal/adapters/outbound/bootretry` | Outbound adapter | Bounded retry of the first Postgres dial at boot ([ADR 0024](../adr/0024-bootretry-for-istio-native-sidecar-warmup.md)) |
@@ -114,30 +115,30 @@ Source: `cmd/pathmgmt/main.go`, `cmd/mcp/main.go`,
 `internal/adapters/inbound/http/server.go`,
 `internal/adapters/outbound/postgres/outbox_publisher.go`,
 `internal/adapters/outbound/postgres/outbox_relay.go`.
-Omits: the log-publisher and in-memory modes, OTel export, the frontend pod
+Omits: OTel export, the frontend pod
 and the five sibling consumers of the integration topic.
 
 ## Delivery modes
 
-`cmd/pathmgmt` picks its persistence and event publisher from two environment
-variables (`buildPersistence` and `buildEventPublisher` in
-`cmd/pathmgmt/main.go`):
+There is one: `cmd/pathmgmt` runs on real Postgres and real Kafka and has no
+in-memory, log-publisher or direct-publish path
+([ADR 0037](../adr/0037-postgres-and-kafka-are-the-only-runtime.md)).
+`DATABASE_URL` and `KAFKA_BROKERS` are mandatory (a missing one stops the boot
+and names the variable); `EVENT_PUBLISHER` is accepted only as unset or
+`kafka`. `buildPersistence` and `buildEventPublisher` in
+`cmd/pathmgmt/main.go` therefore always wire:
 
-| `DATABASE_URL` | `EVENT_PUBLISHER` | Repositories | Publisher | Outbox relay / sweeper |
-| --- | --- | --- | --- | --- |
-| unset | `log` (default) | in-memory | `LogPublisher` (one `domain event published` log line per event) | not started |
-| unset | `kafka` | in-memory | `FanOutPublisher` writing directly to both topics under one shared CloudEvents `id` | not started |
-| set | `log` | Postgres | `LogPublisher`, no outbox rows written | relay not started; sweeper runs |
-| set | `kafka` | Postgres | `OutboxPublisher`: one `outbox_events` row per topic, in the same transaction as the aggregate write | relay and sweeper run in-process. **This is the cluster mode.** |
+| Repositories | Publisher | Outbox relay / sweeper |
+| --- | --- | --- |
+| Postgres | `OutboxPublisher`: one `outbox_events` row per topic, in the same transaction as the aggregate write | relay and sweeper always run in-process |
 
-With Postgres configured the use cases wrap the aggregate write and the
-publish in one `UnitOfWork` transaction, so the store and the topics cannot
-diverge ([ADR 0003](../adr/0003-transactional-outbox.md)). In the
-`DATABASE_URL` set + `EVENT_PUBLISHER=log` row, events are only logged:
-nothing reaches Kafka, and nothing will be relayed later either.
+The use cases wrap the aggregate write and the publish in one `UnitOfWork`
+transaction, so the store and the topics cannot diverge
+([ADR 0003](../adr/0003-transactional-outbox.md)). `GET /readyz` is `200` only
+while Postgres answers a ping and a Kafka broker answers a metadata request.
 
-`cmd/mcp` uses the same `DATABASE_URL` selection but never publishes (it
-only wires the read use cases).
+`cmd/mcp` requires the same `DATABASE_URL` but never publishes (it only wires
+the read use cases).
 
 ## Data stores
 
