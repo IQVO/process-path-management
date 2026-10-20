@@ -2,15 +2,16 @@
 id: quickstart
 title: Quickstart
 sidebar_label: Quickstart
-description: Build, test and run process-path-management locally - in-memory, with Postgres, with the fleet Kafka broker, plus the MCP server and the analytics pair - and make the first calls.
+description: Build, test and run process-path-management locally on real Postgres and Kafka (docker compose), plus the MCP server and the analytics pair - and make the first calls.
 ---
 
 # Quickstart
 
 This page takes you from a clean checkout to a running service and your first
-API calls. Every command below was run against this repository; the sample
-responses are real output from `cmd/pathmgmt` and `cmd/mcp` running on the
-in-memory adapters.
+API calls. The binaries run only on real Postgres and real Kafka
+([ADR 0037](../adr/0037-postgres-and-kafka-are-the-only-runtime.md)): there
+is no in-memory mode, and a missing `DATABASE_URL` or `KAFKA_BROKERS` stops
+the boot with an error that names it.
 
 ## Prerequisites
 
@@ -40,23 +41,33 @@ make check-all    # check + coverage (90% gate) + arch-test + bdd
 
 The full list of targets and what CI runs is on [Testing](../development/testing.md).
 
-## 1. Run with no database and no broker
+## 1. Start Postgres and Kafka, then run the service
 
-With `DATABASE_URL` unset the service runs on in-memory repositories and the
-log publisher. It is fully functional over REST, but state is lost on exit.
+`docker-compose.yml` provides Postgres 16 (user, password and database
+`pathmgmt`, host port `5436`) and a single-node Kafka (host port `9092`; stop
+the kind cluster's broker first if it publishes the same port).
 
 ```bash
-go run ./cmd/pathmgmt
-# {"level":"INFO","msg":"DATABASE_URL not set, using in-memory ProcessPathRepo and CPTScheduleRepo"}
+docker compose up -d --wait postgres kafka
+export DATABASE_URL='postgres://pathmgmt:pathmgmt@localhost:5436/pathmgmt?sslmode=disable'
+export KAFKA_BROKERS=localhost:9092
+go run ./cmd/pathmgmt          # runs migrations/ at startup, then serves
+# {"level":"INFO","msg":"kafka event publishing enabled (transactional outbox)",...}
 # {"level":"INFO","msg":"http server listening","addr":":8080"}
 ```
 
-Each domain event appears as a `domain event published` log line with
-`event_name` and `payload`. Without an OTel Collector on `localhost:4317` you
-also get a periodic `traces export: ... connection refused` INFO line; it is
-harmless (export is non-blocking).
+Every domain event is committed to the outbox in the same transaction as the
+change and relayed to Kafka by an always-on relay. Without an OTel Collector
+on `localhost:4317` you also get a periodic `traces export: ... connection
+refused` INFO line; it is harmless (export is non-blocking).
 
 ## 2. First calls
+
+`GET /readyz` is `200` only while Postgres and a Kafka broker answer.
+`POST /process-paths` requires an `Idempotency-Key` header (missing → 400
+`idempotency-key-required`; same key and body replays the stored response;
+same key with a different body → 422 `idempotency-key-reused`, see
+[ADR 0011](../adr/0011-idempotency-key-middleware.md)).
 
 ```bash
 curl -s localhost:8080/healthz
@@ -66,6 +77,7 @@ curl -s localhost:8080/readyz
 
 curl -s -X POST localhost:8080/process-paths \
   -H 'Content-Type: application/json' \
+  -H "Idempotency-Key: $(uuidgen)" \
   -d '{"pathId":"PICK","matchPrefix":"pick","direct":true,"requiredCapabilities":["pick"],"cycleTimeP95":"2h"}'
 # 201 {"pathId":"PICK","matchPrefix":"pick","direct":true,"requiredCapabilities":["pick"],
 #      "cycleTimeP95":"2h0m0s","eligibility":{},"status":"ACTIVE","createdAt":"...","updatedAt":"..."}
@@ -94,61 +106,22 @@ Errors are RFC 7807 `application/problem+json`. A few you will meet early:
 
 The [Troubleshooting](../operations/troubleshooting.md) page lists all of them.
 
-## 3. Run with Postgres
-
-`docker-compose.yml` provides only Postgres 16 (user, password and database
-`pathmgmt`, host port `5436`).
-
-```bash
-docker compose up -d postgres
-export DATABASE_URL='postgres://pathmgmt:pathmgmt@localhost:5436/pathmgmt?sslmode=disable'
-go run ./cmd/pathmgmt          # runs migrations/ at startup, then serves
-```
-
-With Postgres configured two things change:
-
-- `POST /process-paths` **requires** an `Idempotency-Key` header (missing →
-  400 `idempotency-key-required`). Re-sending the same key and body replays
-  the stored response; the same key with a different body → 422
-  `idempotency-key-reused` ([ADR 0011](../adr/0011-idempotency-key-middleware.md)).
-- The housekeeping sweeper starts (`housekeeping sweeper running`).
-
-```bash
-curl -s -X POST localhost:8080/process-paths \
-  -H 'Content-Type: application/json' \
-  -H "Idempotency-Key: $(uuidgen)" \
-  -d '{"pathId":"PACK","matchPrefix":"pack","direct":false,"requiredCapabilities":["pack"],"cycleTimeP95":"90m"}'
-```
-
-## 4. Publish to Kafka
-
-The fleet runs **one** Kafka broker, inside the kind cluster, reachable from
-your laptop at `localhost:9092` through its external access listener. There is
-no Kafka in this repository's `docker-compose.yml`. With the cluster up:
-
-```bash
-export EVENT_PUBLISHER=kafka
-export KAFKA_BROKERS=localhost:9092
-go run ./cmd/pathmgmt
-# with DATABASE_URL set:   "kafka event publishing enabled (transactional outbox)" + "outbox relay running"
-# without DATABASE_URL:    "kafka event publishing enabled (direct, no outbox: DATABASE_URL not set)"
-```
+## 3. Where the events go
 
 Every event is written to both `warehouse.process-path-management.events`
-and `warehouse.process-path-management.analytics`. Be aware that this is the
-shared fleet broker: the five consumers of the integration topic will apply
-what you publish.
+and `warehouse.process-path-management.analytics` as CloudEvents 1.0. The
+compose broker is yours alone; on the shared fleet broker the five consumers
+of the integration topic apply what you publish.
 
-## 5. Run the MCP server
+## 4. Run the MCP server
 
 ```bash
-go run ./cmd/mcp                 # :8090, same DATABASE_URL selection as pathmgmt
+go run ./cmd/mcp                 # :8090, needs the same DATABASE_URL as pathmgmt
 curl -s localhost:8090/healthz   # {"status":"ok"}
 ```
 
-Without `DATABASE_URL`, `cmd/mcp` has its **own** in-memory repositories, so
-it does not see paths you created through `cmd/pathmgmt`. Point both at the
-same Postgres to share state. A raw Streamable HTTP handshake:
+`cmd/mcp` requires `DATABASE_URL` (no Kafka) and reads the same store as
+`cmd/pathmgmt`, so it sees paths you created through the API. A raw Streamable HTTP handshake:
 
 ```bash
 curl -si localhost:8090/mcp \
@@ -162,7 +135,7 @@ curl -si localhost:8090/mcp \
 Send the returned `Mcp-Session-Id` header on later `tools/list` and
 `tools/call` requests. Tools and their inputs: [MCP tools](../mcp/tools.md).
 
-## 6. Run the analytics pair (optional)
+## 5. Run the analytics pair
 
 `pathmgmt-projector` and `pathmgmt-reports` both refuse to start without
 `ANALYTICS_DATABASE_URL`. Use a **separate database**: the projector runs
@@ -184,12 +157,11 @@ curl -s localhost:8092/reports/catalogue-growth/freshness
 export `HTTP_ADDR` for `pathmgmt` in the same shell or both will try to bind
 the same port.
 
-## 7. Seed the catalogue
+## 6. Seed the catalogue
 
 There is no seed command in this repository. Seed through the REST API, one
-`POST /process-paths` per path, as in step 2 (add an `Idempotency-Key` header
-when Postgres is configured), then one `PUT /sites/{siteId}/cpt-schedule`
-per site.
+`POST /process-paths` per path, as in step 2 (the `Idempotency-Key` header is always required), then one `PUT /sites/{siteId}/cpt-schedule`
+per site. `make seed-catalogue` does this from `catalogue/paths.json` against the running service.
 
 The fleet's starter catalogue is the retired YAML file
 `warehouse-infra/config/process-paths/sortable-fc.yaml`, and warehouse-infra
@@ -198,10 +170,10 @@ that script before relying on it: on warehouse-infra `develop` (checked
 2026-10-09) its create body carries only `pathId`, `matchPrefix`, `direct`
 and `requiredCapabilities`, and it sends no `Idempotency-Key`. Against the
 current API a create without `cycleTimeP95` is rejected with 422
-`invalid-cycle-time-p95`, and with Postgres configured a create without the
+`invalid-cycle-time-p95`, and a create without the
 header is rejected with 400 `idempotency-key-required`.
 
-## 8. The operator remote
+## 7. The operator remote
 
 ```bash
 cd web && npm install && npm run dev     # http://localhost:5189

@@ -36,7 +36,8 @@ help:
 	@echo ""
 	@echo "  chart-test        Helm chart render + Service selector tests (helm + PyYAML)"
 	@echo "  contract          scripts/contract-test.sh — Schemathesis property-based"
-	@echo "                    contract tests vs apis/openapi.yaml (needs 'st' on PATH)"
+	@echo "                    contract tests vs apis/openapi.yaml (boots the service on Postgres + Kafka:"
+	@echo "                    export DATABASE_URL and KAFKA_BROKERS; needs 'st' on PATH)"
 	@echo ""
 	@echo "  check             FAST bundle: fmt-check vet build lint test"
 	@echo "  check-all         check + coverage + arch-test + bdd — run this before pushing"
@@ -136,7 +137,9 @@ vuln:
 
 # Property-based contract tests against apis/openapi.yaml — mirrors the
 # `contract` CI job. Not part of check/check-all (needs the Python
-# `schemathesis==4.28.0` tooling on PATH, like CI installs).
+# `schemathesis==4.28.0` tooling on PATH, like CI installs, AND a real
+# Postgres + Kafka: export DATABASE_URL and KAFKA_BROKERS, see the header of
+# scripts/contract-test.sh); CI runs it against service containers.
 contract:
 	./scripts/contract-test.sh
 

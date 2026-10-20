@@ -180,11 +180,13 @@ autoscaling:
 # exports. Set per-cluster (local / staging / production).
 environment: "local"
 
-# Falls back to in-memory adapters when database.url / database.existingSecret
-# are left empty, same as running the binary locally with no env vars set.
-# This service has no inbound Kafka consumer (see README) — it is the
-# SOURCE of the process-path published language, not a consumer — so
-# there is no consumer-group config to expose here, unlike labor-performance.
+# Postgres and Kafka are the ONLY runtime (ADR 0037): there is no in-memory
+# mode, no log sink and no relay that can be switched off. The chart refuses
+# to render without database.url / database.existingSecret (DATABASE_URL) and
+# kafka.brokers (KAFKA_BROKERS); the binaries exit at boot without them. This
+# service has no inbound Kafka consumer (see README) — it is the SOURCE of the
+# process-path published language, not a consumer — so there is no
+# consumer-group config to expose here, unlike labor-performance.
 #
 # The keys below are rendered into templates/configmap.yaml (and/or the api
 # Deployment's explicit env) and reach cmd/pathmgmt through the api
@@ -195,15 +197,19 @@ config:
   migrationsPath: "migrations"
   logLevel: "info"        # debug | info | warn (or warning) | error
   corsAllowedOrigins: "http://localhost:5173,http://localhost:5189"
-  # "log" (default) or "kafka" — gates whether ProcessPath* events are
-  # published onto warehouse.process-path-management.events at all.
-  eventPublisher: "log"
+  # EVENT_PUBLISHER (ADR 0037): the only publisher is "kafka" — every
+  # ProcessPath*/CPTScheduleChanged event goes through the transactional
+  # outbox onto warehouse.process-path-management.events and
+  # warehouse.process-path-management.analytics. "log" (the old default) is
+  # REJECTED by the binary at boot and by this chart at render. The key is
+  # kept because warehouse-infra sets it.
+  eventPublisher: "kafka"
   # Housekeeping sweeper (ADR 0018): periodically deletes idempotency_keys
   # rows older than idempotencyKeyTtl and PUBLISHED outbox_events rows
-  # older than outboxRetention (unpublished rows are never swept). Only
-  # takes effect when a database is configured; any value <= 0 ("0s")
-  # disables that half, and interval "0s" disables the whole job (gap fix
-  # D15 made the binary honour this). Go duration strings.
+  # older than outboxRetention (unpublished rows are never swept). Any
+  # value <= 0 ("0s") disables that half, and interval "0s" disables the
+  # whole job (gap fix D15 made the binary honour this). Go duration
+  # strings.
   housekeeping:
     interval: "1h"
     idempotencyKeyTtl: "24h"
@@ -216,6 +222,8 @@ config:
   outboxMaxAttempts: "20"
 
 database:
+  # REQUIRED (ADR 0037): one of url / existingSecret (DATABASE_URL). No
+  # default and no in-memory fallback: both empty fails the render.
   url: ""
   existingSecret: ""
   existingSecretKey: "DATABASE_URL"
@@ -233,16 +241,18 @@ database:
   # order-management's ADR-0029 and warehouse-infra PR #43/#44).
   migrationsExistingSecretKey: "MIGRATIONS_DATABASE_URL"
 
-# This service PUBLISHES onto warehouse.process-path-management.events when
-# config.eventPublisher is "kafka" (KAFKA_BROKERS is only set in the
-# container env in that case). fulfillment-execution, wes-work-planning,
-# and workforce-management all consume this topic (see
-# docs/docs/ecosystem/context-map.md) -- the "no consumer wired yet"
-# note this comment used to carry was true at the chart's authoring
-# (pre ADR 0002 cutover) and is long since stale.
+# This service PUBLISHES onto warehouse.process-path-management.events and
+# warehouse.process-path-management.analytics through the outbox relay, so
+# Kafka is mandatory (ADR 0037): kafka.brokers has no default and an empty
+# value fails the render (KAFKA_BROKERS; the projector reads the same value).
+# warehouse-infra supplies the platform brokers from _platform.yaml.
+# fulfillment-execution, wes-work-planning, and workforce-management all
+# consume the events topic (see docs/docs/ecosystem/context-map.md). The old
+# switch `kafka.enabled` is no longer a value of this chart: warehouse-infra
+# still passes `kafka.enabled: 'true'`, which keeps rendering, but `false`
+# fails the render because Kafka cannot be switched off.
 kafka:
-  enabled: false
-  brokers: "kafka:9092"
+  brokers: ""
 
 # OpenTelemetry traces + metrics, pushed over OTLP/gRPC to a Collector. The
 # endpoint below is the in-cluster Collector Service in the warehouse-infra
@@ -348,8 +358,8 @@ affinity: {}
 # topic, a writer (projector) and a read-only reader (reports), backed by a
 # separate analytical database. Disabled by default so existing releases are
 # unaffected; set analytics.enabled=true to deploy the two extra processes.
-# Requires config.eventPublisher / kafka.enabled=true on the main deployment
-# too, or the projector's Kafka topic never receives events to consume.
+# Requires kafka.brokers on the main deployment too (always mandatory now),
+# or the projector's Kafka topic never receives events to consume.
 analytics:
   enabled: false
   # Directory (inside the image) of the analytical *.up.sql migrations the

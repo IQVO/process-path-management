@@ -21,6 +21,4 @@ data:
   OTEL_EXPORTER_OTLP_ENDPOINT: {{ .Values.otel.endpoint | quote }}
   OTEL_SERVICE_NAME: {{ .Values.otel.serviceName | quote }}
   {{- end }}
-  {{- if .Values.kafka.enabled }}
   KAFKA_BROKERS: {{ .Values.kafka.brokers | quote }}
-  {{- end }}

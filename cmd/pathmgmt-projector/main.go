@@ -72,6 +72,13 @@ func run() error {
 	logger := newLogger(getenv("LOG_LEVEL", "info"))
 	slog.SetDefault(logger)
 
+	// Fail fast, before telemetry, any connection and the listener: a
+	// missing mandatory variable is a boot error that names it (ADR 0037).
+	cfg, err := loadBootConfig()
+	if err != nil {
+		return err
+	}
+
 	rootCtx := context.Background()
 
 	_, shutdownTelemetry, err := setupTelemetry(rootCtx, logger)
@@ -87,11 +94,8 @@ func run() error {
 	}()
 
 	adminAddr := getenv("ADMIN_ADDR", ":8091")
-	analyticsURL := os.Getenv("ANALYTICS_DATABASE_URL")
-	if analyticsURL == "" {
-		return errMissingAnalyticsURL
-	}
-	kafkaBrokers := strings.Split(getenv("KAFKA_BROKERS", "localhost:9092"), ",")
+	analyticsURL := cfg.analyticsURL
+	kafkaBrokers := cfg.kafkaBrokers
 	migrationsPath := getenv("ANALYTICS_MIGRATIONS_PATH", "migrations/analytics")
 
 	// pool.Close() is called explicitly at the END of this function's

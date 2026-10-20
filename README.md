@@ -64,17 +64,16 @@ MCP call** to any other service (enforced by
 Its only Kafka consumer is its own analytics projector, which reads this
 service's own analytics topic (ADR 0007). It publishes `ProcessPathCreated`
 / `ProcessPathUpdated` / `ProcessPathDeactivated` / `CPTScheduleChanged`
-onto `warehouse.process-path-management.events` when
-`EVENT_PUBLISHER=kafka`. `fulfillment-execution`, `wes-work-planning` and
+onto `warehouse.process-path-management.events`. `fulfillment-execution`,
+`wes-work-planning` and
 `workforce-management` each consume that topic into a local catalogue
 cache (cutover executed 2026-09-06, see ADR 0002); `order-management`
 and `network-fulfillment` consume the same topic for path capability and
 CPT schedules (ADR 0010).
-With a database
-configured, events go through a **transactional outbox** — committed in
+Events go through a **transactional outbox** — committed in
 the same transaction as the aggregate and relayed to Kafka by an
-in-process relay (ADR 0003) — so the store and the topic can never
-diverge. See
+in-process relay that is always on (ADR 0003, ADR 0037) — so the store and
+the topic can never diverge. See
 [docs/docs/ecosystem/context-map.md](docs/docs/ecosystem/context-map.md)
 for the full picture.
 
@@ -105,19 +104,20 @@ internal/
     inbound/mcp/                  MCP tools over the read use cases
     inbound/kafka/                analytics consumer (this service's OWN analytics topic only)
     outbound/postgres/            pgxpool repos, unit of work, outbox publisher + relay, golang-migrate runner
-    outbound/memory/              in-memory repos for tests/local
-    outbound/events/              log publisher (default)
-    outbound/kafka/               integration + analytics publishers (EVENT_PUBLISHER=kafka)
-    outbound/analyticsstore/      analytics projection/report store (Postgres + in-memory)
+    outbound/memory/              in-memory repos, TEST DOUBLES only (no cmd/** binary imports them: ADR 0037)
+    outbound/system/              the wall clock the binaries inject
+    outbound/events/              log publisher (test double / debugging aid; no binary wires it)
+    outbound/kafka/               integration + analytics publishers, outbox relay sink, BrokerCheck for /readyz
+    outbound/analyticsstore/      analytics projection/report store (Postgres + in-memory test double)
     outbound/telemetry/           OTel traces/metrics/logs
   architecture/                   arch-go + fitness tests
 migrations/                       golang-migrate SQL files (0001–0009); migrations/analytics/ for the report DB
-apis/openapi.yaml                 This service's OWN REST API (8 operations; /readyz is served but not in the spec)
+apis/openapi.yaml                 This service's OWN REST API (9 operations, including /healthz and /readyz)
 apis/asyncapi.yaml                What this service PUBLISHES (integration + analytics topics)
 features/                         godog/Gherkin BDD acceptance tests
 web/                              process_path_mfe Module Federation remote (operator SPA)
 charts/process-path-management/   Helm chart (API, MCP, projector, reports, frontend)
-docker-compose.yml                Local Postgres 16
+docker-compose.yml                Local Postgres 16 + Kafka (KRaft)
 docs/docs/adr/                    Architecture Decision Records
 ```
 
@@ -152,84 +152,85 @@ struct tags in the domain packages.
 
 ## Running locally
 
-### 1. Without a database or a broker (fastest, verified working)
+### 1. On Postgres and Kafka (the only runtime)
 
-With no `DATABASE_URL`, the service starts on the in-memory adapter and is
-fully functional over REST:
-
-```bash
-go run ./cmd/pathmgmt
-# {"level":"INFO","msg":"DATABASE_URL not set, using in-memory ProcessPathRepo and CPTScheduleRepo"}
-# {"level":"INFO","msg":"http server listening","addr":":8080"}
-```
-
-### 2. With Postgres
+There is no in-memory mode (ADR 0037). Without `DATABASE_URL` or
+`KAFKA_BROKERS` the process exits at once and the error names the variable;
+`EVENT_PUBLISHER=log` is rejected too.
 
 ```bash
-docker compose up -d postgres          # Postgres 16 on localhost:5436
+docker compose up -d --wait postgres kafka   # Postgres 16 on localhost:5436, Kafka on localhost:9092
 
 export DATABASE_URL='postgres://pathmgmt:pathmgmt@localhost:5436/pathmgmt?sslmode=disable'
-go run ./cmd/pathmgmt                  # migrations run automatically at startup
-```
-
-### 3. With Kafka publishing enabled
-
-By default this service logs its domain events instead of publishing them.
-**Kafka publishing requires `EVENT_PUBLISHER=kafka`:**
-
-```bash
-export EVENT_PUBLISHER=kafka
 export KAFKA_BROKERS=localhost:9092
-go run ./cmd/pathmgmt
-# {"level":"INFO","msg":"kafka event publishing enabled (direct, no outbox: DATABASE_URL not set)","brokers":["localhost:9092"],"topic":"warehouse.process-path-management.events","analytics_topic":"warehouse.process-path-management.analytics"}
+go run ./cmd/pathmgmt                  # migrations run automatically at startup
+# {"level":"INFO","msg":"kafka event publishing enabled (transactional outbox)","brokers":["localhost:9092"],"topic":"warehouse.process-path-management.events","analytics_topic":"warehouse.process-path-management.analytics","outbox_max_attempts":20}
+# {"level":"INFO","msg":"http server listening","addr":":8080"}
+# {"level":"INFO","msg":"outbox relay running","topic":"warehouse.process-path-management.events","analytics_topic":"warehouse.process-path-management.analytics"}
 ```
+
+Port `9092` is also what the kind cluster's Kafka publishes on the host: stop
+one of the two, or map the compose broker elsewhere and advertise the same
+address.
 
 Every event is published to BOTH the integration topic and the analytics
-topic (`warehouse.process-path-management.analytics`, ADR 0007). With
-`DATABASE_URL` also set, the use cases write one `outbox_events` row per
-topic inside the same transaction as the aggregate change, and a relay
-goroutine drains that table onto Kafka
-(`"kafka event publishing enabled (transactional outbox)"` /
-`"outbox relay running"` at startup). This is the mode the cluster runs.
+topic (`warehouse.process-path-management.analytics`, ADR 0007): the use cases
+write one `outbox_events` row per topic inside the same transaction as the
+aggregate change, and the always-on relay goroutine drains that table onto
+Kafka. `GET /readyz` is 200 only while Postgres answers a ping and a Kafka
+broker answers a metadata request (topics are never required: the broker
+auto-creates them on first write).
 
-### 4. With Docker
+### 2. The catalogue (`make seed-catalogue`)
+
+A fresh database is empty (the migrations insert no rows).
+`make seed-catalogue` applies the declared catalogue
+(`catalogue/paths.json`, ADR 0033) to a **running** service over REST; it is
+idempotent and unchanged by ADR 0037.
+
+### 3. With Docker
 
 ```bash
 docker build -t process-path-management:local .
 docker run --rm -p 8080:8080 \
   -e DATABASE_URL='postgres://pathmgmt:pathmgmt@host.docker.internal:5436/pathmgmt?sslmode=disable' \
+  -e KAFKA_BROKERS=host.docker.internal:9092 \
   process-path-management:local
-curl -s localhost:8080/healthz
+curl -s localhost:8080/readyz
 ```
 
-### 5. With Helm (kind / any Kubernetes cluster)
+### 4. With Helm (kind / any Kubernetes cluster)
 
 ```bash
 helm install process-path-management charts/process-path-management \
-  --set database.url='postgres://pathmgmt:pathmgmt@postgres:5432/pathmgmt?sslmode=disable'
+  --set database.url='postgres://pathmgmt:pathmgmt@postgres:5432/pathmgmt?sslmode=disable' \
+  --set kafka.brokers=kafka:9092
 kubectl port-forward svc/process-path-management 8080:80
 curl -s localhost:8080/healthz
 ```
 
 See `charts/process-path-management/values.yaml` for the full configuration
-surface (`kafka.enabled`, `config.eventPublisher`, `otel.enabled`,
+surface (`config.eventPublisher`, `otel.enabled`,
 `ingress`, the additive `gatewayApi` HTTPRoute block, autoscaling, an
 `existingSecret` pattern for `DATABASE_URL`, and the optional `mcp`,
-`analytics` and `frontend` workloads — all disabled by default).
+`analytics` and `frontend` workloads — all disabled by default). The chart
+refuses to render, naming the value, without a database source
+(`database.url` or `database.existingSecret`) and `kafka.brokers`, and with
+`kafka.enabled=false` or `config.eventPublisher` other than `kafka`.
 
 ### Configuration
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `HTTP_ADDR` | `:8080` | Listen address. |
-| `DATABASE_URL` | *(unset)* | Postgres DSN. Unset ⇒ in-memory adapter. |
+| `DATABASE_URL` | *(required)* | Postgres DSN. Unset exits at boot: there is no in-memory mode (ADR 0037). |
 | `MIGRATIONS_DATABASE_URL` | `DATABASE_URL` | Direct (non-PgBouncer) DSN used only for the startup migration step (ADR 0015). |
 | `MIGRATIONS_PATH` | `migrations` | golang-migrate source directory. |
-| `EVENT_PUBLISHER` | `log` | `log` (default) or `kafka`. Kafka publishing requires this to be set to `kafka`. |
-| `KAFKA_BROKERS` | `localhost:9092` | Comma-separated broker addresses (only read when `EVENT_PUBLISHER=kafka`). |
-| `OUTBOX_RELAY_INTERVAL` | `1s` | How long the outbox relay sleeps between empty passes (only used when both `DATABASE_URL` and `EVENT_PUBLISHER=kafka` are set). |
+| `EVENT_PUBLISHER` | `kafka` | Kept only because the chart and warehouse-infra set it: unset or `kafka`; `log` or anything else exits at boot. Every event goes through the transactional outbox. |
+| `KAFKA_BROKERS` | *(required)* | Comma-separated broker addresses. No `localhost:9092` default. |
+| `OUTBOX_RELAY_INTERVAL` | `1s` | How long the (always-on) outbox relay sleeps between empty passes. |
 | `OUTBOX_MAX_ATTEMPTS` | `20` | Failed sends after which the relay stops claiming an outbox row (ADR 0030); `0` = unlimited. Re-arm with `UPDATE outbox_events SET attempts = 0 WHERE id = ...`. |
-| `HOUSEKEEPING_INTERVAL` | `1h` | Housekeeping sweeper interval (ADR 0018; only with `DATABASE_URL`); `0` disables the sweeper. |
+| `HOUSEKEEPING_INTERVAL` | `1h` | Housekeeping sweeper interval (ADR 0018); `0` disables the sweeper. |
 | `IDEMPOTENCY_KEY_TTL` | `24h` | Age after which the sweeper deletes `idempotency_keys` rows; `0` keeps them. |
 | `OUTBOX_RETENTION` | `168h` | Age after which the sweeper deletes **published** `outbox_events` rows; `0` keeps them. |
 | `CORS_ALLOWED_ORIGINS` | `http://localhost:5173,http://localhost:5189` | Comma-separated allowed origins. |
@@ -244,21 +245,20 @@ The other binaries read:
 | Binary | Variable | Default | Purpose |
 | --- | --- | --- | --- |
 | `cmd/mcp` | `MCP_ADDR` | `:8090` | MCP Streamable HTTP listen address (`/`, `/mcp`; `/healthz`). |
-| `cmd/mcp` | `DATABASE_URL`, `MIGRATIONS_DATABASE_URL`, `MIGRATIONS_PATH` | *(unset)*, `DATABASE_URL`, `migrations` | Same store as the API; unset ⇒ in-memory. |
+| `cmd/mcp` | `DATABASE_URL`, `MIGRATIONS_DATABASE_URL`, `MIGRATIONS_PATH` | *(required)*, `DATABASE_URL`, `migrations` | Same store as the API; `DATABASE_URL` unset exits at boot (no in-memory store, ADR 0037). |
 | `cmd/mcp` | `OTEL_SERVICE_NAME` | `process-path-management-mcp` | OTel service name for MCP spans. |
 | `cmd/mcp` | `REPORTS_BASE_URL` | *(unset)* | When set, registers `get_catalogue_growth_report` (calls `pathmgmt-reports`). |
 | `cmd/pathmgmt-projector` | `ANALYTICS_DATABASE_URL` | *(required)* | Analytics Postgres DSN. |
-| `cmd/pathmgmt-projector` | `KAFKA_BROKERS` | `localhost:9092` | Broker for the analytics topic (consumer group `process-path-management-analytics`). |
+| `cmd/pathmgmt-projector` | `KAFKA_BROKERS` | *(required)* | Broker for the analytics topic (consumer group `process-path-management-analytics`, a constant). Unset exits at boot. |
 | `cmd/pathmgmt-projector` | `ADMIN_ADDR` / `ANALYTICS_MIGRATIONS_PATH` | `:8091` / `migrations/analytics` | Admin server (`/healthz`, `/readyz`); analytics migrations. |
 | `cmd/pathmgmt-reports` | `HTTP_ADDR` / `ANALYTICS_DATABASE_URL` | `:8092` / *(required)* | Read-only reports API. |
 | projector, reports | `OTEL_SERVICE_NAME`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `SERVICE_VERSION`, `ENVIRONMENT`, `LOG_LEVEL` | `pathmgmt-projector` / `pathmgmt-reports`, `localhost:4317`, `dev`, `local`, `info` | Both call `telemetry.Setup` (ADR 0029); the projector exits 1 when its consumer loop stops. |
 
 ## API
 
-Nine routes on `cmd/pathmgmt`. Eight are operations in
+Nine routes on `cmd/pathmgmt`, all nine operations in
 [`apis/openapi.yaml`](apis/openapi.yaml) (the full contract, including the
-RFC 7807 error schema); `GET /readyz` is served by the router but is not in
-the spec.
+RFC 7807 error schema).
 
 | Method | Path | Use case |
 | --- | --- | --- |
@@ -270,7 +270,7 @@ the spec.
 | `PUT` | `/sites/{siteId}/cpt-schedule` | DefineCPTSchedule (define or wholesale revise) |
 | `GET` | `/sites/{siteId}/cpt-schedule` | GetCPTSchedule |
 | `GET` | `/healthz` | Liveness probe |
-| `GET` | `/readyz` | Readiness probe — `503 {"status":"not_ready"}` once graceful shutdown starts (ADR 0012) |
+| `GET` | `/readyz` | Readiness probe — 200 only while Postgres and a Kafka broker answer; `503` `dependency-unavailable` while one does not, `503 {"status":"not_ready"}` once graceful shutdown starts (ADR 0012, ADR 0037) |
 
 The separate `pathmgmt-reports` binary serves the analytics report, specified
 in [`apis/openapi-reports.yaml`](apis/openapi-reports.yaml) (ADR 0031):
@@ -284,13 +284,14 @@ The MCP server (`cmd/mcp`) exposes read-only tools: `get_process_path`,
 Every error response is `application/problem+json` (RFC 7807), the same
 shape every other service in this fleet emits.
 
-When `DATABASE_URL` is set, `POST /process-paths` requires an
+`POST /process-paths` always requires an
 `Idempotency-Key` request header (see ADR 0011): a byte-identical retry
 (same key + same body) replays the original response verbatim instead of
 hitting a natural-key `409`; the same key with a different body gets
-`422`; a missing header gets `400`. The middleware needs the Postgres pool,
-so on the in-memory adapter (no `DATABASE_URL`) it is not applied and the
-header is ignored.
+`422`; a missing header gets `400`. The middleware runs on the Postgres pool,
+which every deployment has, so it is never skipped (ADR 0037). A NUL
+(U+0000) in the path (`404`) or in a body (`400 malformed-request-body`) is
+refused before the key is recorded: Postgres text cannot hold it.
 
 Every REST route and MCP tool is unauthenticated — there is no auth layer
 in front of either (see ADR 0005, which supersedes ADR 0004's earlier
