@@ -57,7 +57,8 @@ spec:
             - name: OTEL_SERVICE_NAME
               value: "process-path-management-mcp"
             {{- end }}
-            {{- if or .Values.database.url .Values.database.existingSecret }}
+            # cmd/mcp reads the same OLTP database as cmd/pathmgmt: DATABASE_URL
+            # is mandatory (ADR 0037) and the chart refuses to render without it.
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:
@@ -73,7 +74,6 @@ spec:
                   name: {{ include "process-path-management.databaseSecretName" . }}
                   key: {{ .Values.database.migrationsExistingSecretKey }}
                   optional: true
-            {{- end }}
             {{- end }}
             {{- if .Values.mcp.reportsBaseUrl }}
             - name: REPORTS_BASE_URL

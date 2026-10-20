@@ -24,10 +24,10 @@ outbox relay and the housekeeping sweeper) are infrastructure in
 | `DefineCPTSchedule` | REST `PUT /sites/{siteId}/cpt-schedule` | `cpt_schedules`, `cpt_schedule_cutoffs` | `CPTScheduleChanged`, only if the schedule is new or changed |
 | `GetCPTSchedule` | REST `GET /sites/{siteId}/cpt-schedule`; MCP `get_cpt_schedule` | — | — |
 
-Every write runs inside `UnitOfWork.Execute` when Postgres is configured, so
+Every write runs inside `UnitOfWork.Execute`, so
 the aggregate row and the `outbox_events` rows commit together
-([ADR 0003](../adr/0003-transactional-outbox.md)); with the in-memory
-adapters the save and the publish simply run back to back. Event payloads
+([ADR 0003](../adr/0003-transactional-outbox.md)); unit tests over the
+in-memory doubles simply run the save and the publish back to back. Event payloads
 are on [Domain events](./domain-events.md); the problem types each error
 maps to are on [Troubleshooting](../operations/troubleshooting.md).
 

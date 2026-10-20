@@ -18,25 +18,9 @@ To reach it locally:
   curl http://localhost:8080/healthz
 {{- end }}
 
-{{- if not (or .Values.database.url .Values.database.existingSecret) }}
-
-NOTE: no database.url / database.existingSecret was set — running with
-IN-MEMORY adapters (state is lost on pod restart).
-{{- end }}
-
-{{- if eq .Values.config.eventPublisher "kafka" }}
-{{- if not .Values.kafka.enabled }}
-
-NOTE: config.eventPublisher is "kafka" but kafka.enabled is false — the
-container will start with EVENT_PUBLISHER=kafka but no KAFKA_BROKERS set,
-and will default to localhost:9092, which is never correct inside a
-cluster. Set kafka.enabled=true and kafka.brokers.
-{{- end }}
-{{- else }}
-
-NOTE: config.eventPublisher is "log" (the default) — ProcessPath*
-domain events are logged, not published onto
-warehouse.process-path-management.events. fulfillment-execution,
-wes-work-planning, and workforce-management cannot learn about path
-changes from this deployment until eventPublisher is set to "kafka".
-{{- end }}
+This service runs on real Postgres and real Kafka only (ADR 0037). The pod
+exits at boot without DATABASE_URL and KAFKA_BROKERS, every ProcessPath* /
+CPTScheduleChanged event goes through the transactional outbox onto
+warehouse.process-path-management.events, and /readyz stays 503 while Postgres
+or a Kafka broker is unreachable:
+  curl http://localhost:8080/readyz

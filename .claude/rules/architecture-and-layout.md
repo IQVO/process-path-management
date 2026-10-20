@@ -49,20 +49,21 @@ internal/
     inbound/mcp/                  read-only MCP tools over the read use cases
     inbound/kafka/                analytics consumer — this service's OWN analytics topic only
     outbound/postgres/            pgxpool repos, unit of work, outbox publisher + relay, golang-migrate runner
-    outbound/memory/              in-memory repos for tests/local (also the zero-DATABASE_URL runtime path)
-    outbound/events/              log publisher (default when EVENT_PUBLISHER != kafka)
+    outbound/memory/              in-memory repos, TEST DOUBLES only (no cmd/** binary imports them: ADR 0037)
+    outbound/system/              the wall clock the binaries inject
+    outbound/events/              log publisher (test double / debugging aid; no binary wires it)
     kafka/cloudevents/            the ONLY CloudEvents 1.0 envelope code: New/Decode/ContentTypeHeader + Type* consts (ADR 0016)
-    outbound/kafka/               integration + analytics publishers (EVENT_PUBLISHER=kafka), topic constants
+    outbound/kafka/               integration + analytics publishers, outbox relay sink, BrokerCheck for /readyz, topic constants
     outbound/analyticsstore/      analytics projection/report store
     outbound/telemetry/           OTel traces/metrics/logs
   architecture/                   arch-go + fitness tests (architecture_test.go, fitness_test.go)
 migrations/                       golang-migrate SQL files (0001–0007); migrations/analytics/ for the report DB
-apis/openapi.yaml                 This service's OWN REST API (8 operations; /readyz is served but not in the spec)
+apis/openapi.yaml                 This service's OWN REST API (9 operations, including /healthz and /readyz)
 apis/asyncapi.yaml                What this service PUBLISHES (integration + analytics topics, CloudEvents 1.0)
 features/                         godog/Gherkin BDD acceptance tests
 web/                              process_path_mfe: Vite + React Module Federation remote (operator SPA)
 charts/process-path-management/   Helm chart (API, MCP, projector, reports, frontend)
-docker-compose.yml                Local Postgres 16
+docker-compose.yml                Local Postgres 16 + Kafka (KRaft)
 docs/docs/adr/                    Architecture Decision Records (Nygard format)
 ```
 
@@ -75,6 +76,6 @@ outbox transaction. `TestNoSiblingContextOutboundCalls` fails the build if
 `internal/adapters/outbound/**` imports `net/http` — no REST or MCP client
 to a sibling may ever be added.
 
-Delivery modes (`DATABASE_URL` × `EVENT_PUBLISHER`) and the transactional
-outbox (ADR 0003 — this repo is the fleet's reference implementation):
-`.claude/rules/runtime-and-outbox.md`.
+The runtime (Postgres and Kafka only, mandatory variables as boot errors,
+real `/readyz`) and the transactional outbox (ADR 0003 — this repo is the
+fleet's reference implementation): `.claude/rules/runtime-and-outbox.md`.
