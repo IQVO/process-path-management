@@ -448,7 +448,7 @@ jobs:
         with:
           python-version: "3.x"
           check-latest: true
-      - uses: helm/chart-testing-action@6ec842c01de15ebb84c8627d2744a0c2f2755c9f # v2.8.0
+      - uses: helm/chart-testing-action@720270857a28afd41e2426521a7801db09e9b510 # v2.9.0
       - name: Run chart-testing (lint)
         run: ct lint --charts charts/process-path-management --validate-maintainers=false --check-version-increment=false
 
@@ -534,7 +534,7 @@ jobs:
           severity: 'CRITICAL,HIGH,MEDIUM'
           ignore-unfixed: true
       - name: Upload Trivy SARIF to Security tab
-        uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4
+        uses: github/codeql-action/upload-sarif@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4
         if: always()
         with:
           sarif_file: 'trivy-results.sarif'
