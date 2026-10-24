@@ -55,6 +55,33 @@
       "requiredCapabilities": ["replenish"],
       "cycleTimeP95": "2h",
       "intake": ["REPLENISHMENT"]
+    },
+    {
+      "pathId": "FULL_CASE",
+      "matchPrefix": "full-case",
+      "direct": true,
+      "requiredCapabilities": ["pick"],
+      "cycleTimeP95": "1h30m",
+      "eligibility": { "requiredProductAttributes": ["fullCase"] },
+      "intake": ["CUSTOMER_ORDER"]
+    },
+    {
+      "pathId": "CROSS_DOCK",
+      "matchPrefix": "cross-dock",
+      "direct": true,
+      "requiredCapabilities": ["dispatch"],
+      "destinationLocationRole": "Shipping",
+      "cycleTimeP95": "1h",
+      "eligibility": { "requiredProductAttributes": ["crossDock"] },
+      "intake": ["CUSTOMER_ORDER", "STOCK_TRANSFER"]
+    },
+    {
+      "pathId": "BREAK_CASE",
+      "matchPrefix": "break",
+      "direct": true,
+      "requiredCapabilities": ["break"],
+      "cycleTimeP95": "2h",
+      "intake": []
     }
   ]
 }
