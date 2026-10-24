@@ -19,7 +19,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	kafkago "github.com/segmentio/kafka-go"
 
 	"github.com/claudioed/process-path-management/internal/adapters/kafka/cloudevents"
 	outboundkafka "github.com/claudioed/process-path-management/internal/adapters/outbound/kafka"
@@ -166,16 +165,8 @@ func TestDeclaredCatalogue_CaseFlowsArePersistedPublishedAndDecodable(t *testing
 
 	readCtx, readCancel := context.WithTimeout(ctx, 90*time.Second)
 	defer readCancel()
-	reader := kafkago.NewReader(kafkago.ReaderConfig{
-		Brokers: brokers, Topic: outboundkafka.Topic, StartOffset: kafkago.FirstOffset, MaxWait: 2 * time.Second,
-	})
-	defer func() { _ = reader.Close() }()
 	got := map[string]caseFlowWire{}
-	for len(got) < 3 {
-		msg, err := reader.ReadMessage(readCtx)
-		if err != nil {
-			t.Fatalf("read integration topic: %v", err)
-		}
+	for _, msg := range readFromStart(t, readCtx, brokers, outboundkafka.Topic, 3) {
 		evt, err := cloudevents.Decode(msg.Value)
 		if err != nil {
 			t.Fatalf("relayed value is not a CloudEvent: %v", err)
@@ -188,6 +179,9 @@ func TestDeclaredCatalogue_CaseFlowsArePersistedPublishedAndDecodable(t *testing
 			t.Fatalf("type/subject/key = %s/%s/%s for %s", evt.Type(), evt.Subject(), msg.Key, data.PathId)
 		}
 		got[data.PathId] = data
+	}
+	if len(got) != 3 {
+		t.Fatalf("published %d distinct paths, want 3", len(got))
 	}
 	for _, e := range entries {
 		w, ok := got[e.PathId]
