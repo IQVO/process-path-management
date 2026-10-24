@@ -94,6 +94,20 @@ info:
     Consumers that decode `intake` as free strings need no change; a
     consumer that validates against a fixed enum must accept the new value.
 
+    ## ADR 0038: the full-case and cross-dock paths
+
+    Three paths are declared as catalogue data under the unchanged v1
+    payload (additive: no new event type, no payload field, no new enum
+    value). `FULL_CASE` (`match_prefix` `full-case`, capability `pick`)
+    and `CROSS_DOCK` (`match_prefix` `cross-dock`, capability `dispatch`,
+    `destination_location_role` `Shipping`) accept `CUSTOMER_ORDER`
+    only for a line carrying their `required_product_attributes`
+    (`fullCase`, `crossDock`), so a line without them still selects `PICK`;
+    `CROSS_DOCK` also accepts `STOCK_TRANSFER`. `BREAK_CASE`
+    (`match_prefix` `break`, capability `break`) has an empty intake and is
+    reached only by an explicit path id. This service reads no pack fact:
+    the attributes are derived by the consumer from its own data.
+
     ## Consumers
 
     `fulfillment-execution`, `wes-work-planning`, `workforce-management`
@@ -260,6 +274,72 @@ components:
                 excluded_product_attributes: ["hazmat"]
                 non_sortable: true
               intake: ["CUSTOMER_ORDER"]
+        - name: fullCasePathDefined
+          summary: >-
+            The FULL_CASE path (ADR 0038): whole-case picking, selectable
+            only for a line carrying the fullCase attribute.
+          payload:
+            specversion: "1.0"
+            id: 1b7d4e92-5c68-4f03-a9d1-3e8f6a2c7b15
+            source: /warehouse/process-path-management
+            type: com.warehouse.wes.process-path-management.processpath.ProcessPathCreated
+            subject: FULL_CASE
+            time: "2026-10-24T00:00:00Z"
+            datacontenttype: application/json
+            dataschema: "urn:warehouse:process-path-management:events:ProcessPathCreated:v1"
+            data:
+              path_id: FULL_CASE
+              match_prefix: full-case
+              direct: true
+              required_capabilities: ["pick"]
+              cycle_time_p95: 1h30m0s
+              eligibility:
+                required_product_attributes: ["fullCase"]
+              intake: ["CUSTOMER_ORDER"]
+        - name: crossDockPathDefined
+          summary: >-
+            The CROSS_DOCK path (ADR 0038): receive to ship with no
+            put-away; completed work is destined for Shipping.
+          payload:
+            specversion: "1.0"
+            id: 8e3a5c71-2d94-4b60-8f17-5a9c1e4d6b38
+            source: /warehouse/process-path-management
+            type: com.warehouse.wes.process-path-management.processpath.ProcessPathCreated
+            subject: CROSS_DOCK
+            time: "2026-10-24T00:00:00Z"
+            datacontenttype: application/json
+            dataschema: "urn:warehouse:process-path-management:events:ProcessPathCreated:v1"
+            data:
+              path_id: CROSS_DOCK
+              match_prefix: cross-dock
+              direct: true
+              required_capabilities: ["dispatch"]
+              destination_location_role: Shipping
+              cycle_time_p95: 1h0m0s
+              eligibility:
+                required_product_attributes: ["crossDock"]
+              intake: ["CUSTOMER_ORDER", "STOCK_TRANSFER"]
+        - name: breakCasePathDefined
+          summary: >-
+            The BREAK_CASE path (ADR 0038): reached only by an explicit
+            path id, never selected for an order line.
+          payload:
+            specversion: "1.0"
+            id: 5d2f8b46-7a10-4c93-b2e5-9f6d3a1c8e72
+            source: /warehouse/process-path-management
+            type: com.warehouse.wes.process-path-management.processpath.ProcessPathCreated
+            subject: BREAK_CASE
+            time: "2026-10-24T00:00:00Z"
+            datacontenttype: application/json
+            dataschema: "urn:warehouse:process-path-management:events:ProcessPathCreated:v1"
+            data:
+              path_id: BREAK_CASE
+              match_prefix: break
+              direct: true
+              required_capabilities: ["break"]
+              cycle_time_p95: 2h0m0s
+              eligibility: {}
+              intake: []
 
     ProcessPathUpdated:
       name: ProcessPathUpdated

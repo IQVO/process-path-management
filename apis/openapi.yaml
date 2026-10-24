@@ -99,6 +99,39 @@ paths:
           application/json:
             schema:
               $ref: "#/components/schemas/DefineProcessPathRequest"
+            examples:
+              fullCase:
+                summary: FULL_CASE (ADR 0038) - whole-case picking, gated on the fullCase attribute
+                value:
+                  pathId: FULL_CASE
+                  matchPrefix: full-case
+                  direct: true
+                  requiredCapabilities: ["pick"]
+                  cycleTimeP95: 1h30m
+                  eligibility:
+                    requiredProductAttributes: ["fullCase"]
+                  intake: ["CUSTOMER_ORDER"]
+              crossDock:
+                summary: CROSS_DOCK (ADR 0038) - receive to ship with no put-away, ends at Shipping
+                value:
+                  pathId: CROSS_DOCK
+                  matchPrefix: cross-dock
+                  direct: true
+                  requiredCapabilities: ["dispatch"]
+                  destinationLocationRole: Shipping
+                  cycleTimeP95: 1h
+                  eligibility:
+                    requiredProductAttributes: ["crossDock"]
+                  intake: ["CUSTOMER_ORDER", "STOCK_TRANSFER"]
+              breakCase:
+                summary: BREAK_CASE (ADR 0038) - the loose remainder of a line that is not a whole number of cases
+                value:
+                  pathId: BREAK_CASE
+                  matchPrefix: break
+                  direct: true
+                  requiredCapabilities: ["break"]
+                  cycleTimeP95: 2h
+                  intake: []
       responses:
         "201":
           description: Path defined
