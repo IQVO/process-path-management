@@ -232,7 +232,7 @@ func TestDeclaredCatalogue_CycleTimesOrderTheFlows(t *testing.T) {
 	cross := definedDeclared(t, "CROSS_DOCK").CycleTimeP95()
 	full := definedDeclared(t, "FULL_CASE").CycleTimeP95()
 	pick := definedDeclared(t, "PICK").CycleTimeP95()
-	if !(cross < full && full < pick) {
+	if cross >= full || full >= pick {
 		t.Fatalf("cycle times cross-dock=%v full-case=%v pick=%v, want strictly increasing", cross, full, pick)
 	}
 }
