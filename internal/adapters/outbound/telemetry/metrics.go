@@ -30,13 +30,25 @@ const outcomeKey = attribute.Key("outcome")
 const (
 	outcomeAccepted = "accepted"
 	outcomeRejected = "rejected"
+	outcomeFailed   = "failed"
 )
+
+// catalogueRepublishCounterName counts the events the startup catalogue
+// republish (ADR 0038) enqueued, by kind (path or schedule); failed runs
+// are counted with outcome=failed. A failed run leaves freshly started
+// consumers with whatever the broker's retention kept, so any non-zero
+// failed count deserves an alert. Named <context>.<aggregate>.<verb>
+// (ADR 0019).
+const catalogueRepublishCounterName = "process_path_management.catalogue.republished"
+
+const kindKey = attribute.Key("kind")
 
 // PathMetrics implements ports.PathMetrics against the global
 // MeterProvider. Until Setup installs a real provider, the global one is a
 // no-op, so recording is cheap and safe in tests and local runs.
 type PathMetrics struct {
-	counter metric.Int64Counter
+	counter          metric.Int64Counter
+	republishCounter metric.Int64Counter
 }
 
 // NewPathMetrics registers the paths-defined counter. It only fails if the
@@ -53,7 +65,32 @@ func NewPathMetrics() (*PathMetrics, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &PathMetrics{counter: counter}, nil
+	republish, err := otel.Meter(meterName).Int64Counter(
+		catalogueRepublishCounterName,
+		metric.WithDescription("Events enqueued by the startup catalogue republish, by kind (path or schedule); a failed run counts once with outcome=failed."),
+		metric.WithUnit("{event}"),
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &PathMetrics{counter: counter, republishCounter: republish}, nil
+}
+
+// CatalogueRepublished records n events of kind enqueued by a successful
+// catalogue republish. Nil-safe like the other recorders.
+func (m *PathMetrics) CatalogueRepublished(ctx context.Context, kind string, n int) {
+	if m == nil {
+		return
+	}
+	m.republishCounter.Add(ctx, int64(n), metric.WithAttributes(kindKey.String(kind), outcomeKey.String(outcomeAccepted)))
+}
+
+// CatalogueRepublishFailed records a catalogue republish run that failed.
+func (m *PathMetrics) CatalogueRepublishFailed(ctx context.Context) {
+	if m == nil {
+		return
+	}
+	m.republishCounter.Add(ctx, 1, metric.WithAttributes(outcomeKey.String(outcomeFailed)))
 }
 
 // PathDefinitionAccepted records an accepted DefinePath call. Nil-safe:
