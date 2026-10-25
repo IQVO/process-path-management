@@ -336,3 +336,21 @@ func TestRepublishCatalogue_ScheduleOverflowIsReported(t *testing.T) {
 		t.Fatalf("result %+v, want %d schedules and 1 omitted", res, usecases.MaxRepublishedPerKind)
 	}
 }
+
+// vanishingScheduleRepo lists a site that is gone by the time it is loaded.
+type vanishingScheduleRepo struct{ *fakeCPTScheduleRepo }
+
+func (r vanishingScheduleRepo) LockAllForShare(context.Context) ([]shared.SiteId, error) {
+	return []shared.SiteId{"gone"}, nil
+}
+
+func TestRepublishCatalogue_ScheduleThatVanishedIsSkipped(t *testing.T) {
+	pub := &fakePublisher{}
+	uc := newRepublish(newFakeRepo(), newFakeCPTScheduleRepo(), pub)
+	uc.CPTSchedules = vanishingScheduleRepo{newFakeCPTScheduleRepo()}
+
+	res, err := uc.Execute(context.Background())
+	if err != nil || res.Schedules != 0 || pub.count() != 0 {
+		t.Fatalf("res %+v err %v events %d, want nothing", res, err, pub.count())
+	}
+}
