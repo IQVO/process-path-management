@@ -177,6 +177,12 @@ func run(ctx context.Context) error {
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
+	// Re-enqueue the current catalogue once (ADR 0038) so a consumer that
+	// rebuilds its cache by replaying the topic never depends on Kafka
+	// retention. The relay is not running yet; it drains these rows as
+	// soon as serveHTTP starts it. Never fatal.
+	republishCatalogueAtStartup(ctx, logger, buildRepublishCatalogue(persistence, clock, pathMetrics))
+
 	return serveHTTP(ctx, logger, httpServer, relay, sweeper, readiness)
 }
 

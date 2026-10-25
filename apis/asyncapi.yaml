@@ -159,6 +159,21 @@ channels:
         no-op deactivation (already-deactivated path) raise nothing —
         consumers never have to diff two identical payloads to notice
         nothing changed.
+
+        Additionally, once at every service start (ADR 0038), after the
+        migrations and before the listener binds, the service re-enqueues
+        its whole CURRENT catalogue through the same transactional outbox:
+        one `ProcessPathUpdated` (the path's full current state) per ACTIVE
+        path, in ascending `path_id` order, then one `CPTScheduleChanged` per
+        site, in ascending `site_id` order. Deactivated paths are not
+        republished. This keeps the topic carrying the current state of
+        every live path and schedule even after the broker's retention
+        expired their original events, so a consumer that rebuilds its
+        catalogue by replaying the topic from the earliest offset never
+        depends on retention. The events are ordinary ones: same types,
+        same `data`, same `dataschema`, no new attribute; applying one
+        for an already-known path or site is an idempotent upsert. The
+        republish is NOT written to the analytics topic.
       tags:
         - name: process-path
         - name: cpt-schedule
@@ -182,7 +197,10 @@ channels:
       summary: Publish the analytics occurrence of every domain event.
       description: >-
         Written in the same outbox transaction as the integration row,
-        sharing its CloudEvents `id`.
+        sharing its CloudEvents `id`. The startup catalogue republish
+        (ADR 0038) is the one exception: it is not a catalogue change, so
+        it is not written here and never inflates the revised-paths
+        report.
       tags:
         - name: process-path
         - name: cpt-schedule
@@ -347,7 +365,10 @@ components:
       summary: An Active path's matchPrefix, requiredCapabilities, cycleTimeP95, eligibility, or intake was revised.
       description: >-
         Raised when RevisePath actually changes something. Not raised for
-        a no-op update.
+        a no-op update. Also published once per ACTIVE path at every
+        service start (ADR 0038), carrying the path's full current state,
+        so the topic holds it regardless of broker retention; consumers
+        upsert it exactly like a revision.
       contentType: application/cloudevents+json
       tags:
         - name: process-path
@@ -416,7 +437,10 @@ components:
         consumer replaying from FirstOffset needs no prior state to build
         its read model, the same self-sufficient-event convention
         ProcessPathCreated/Updated already use. Keyed by `site_id`, not
-        `path_id` — a different aggregate sharing this topic.
+        `path_id` — a different aggregate sharing this topic. Also
+        published once per site at every service start (ADR 0038), with
+        the schedule's current cutoffs, so the topic holds it regardless
+        of broker retention; consumers upsert it as they do a revision.
       contentType: application/cloudevents+json
       tags:
         - name: cpt-schedule

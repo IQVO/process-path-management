@@ -530,7 +530,10 @@ func phaseReplay(t *testing.T, s *service, db pgView, brokers []string) {
 }
 
 // Phase 6: restart the real entry point in-process on the same database and
-// broker: nothing is lost, nothing is published twice.
+// broker: nothing is lost, no event is published twice, and the boot
+// republishes the current catalogue (ADR 0038) onto the integration topic
+// ONLY: the one ACTIVE path (PICK-1; PACK-1 is deactivated) as a
+// ProcessPathUpdated and the one CPT schedule (SP1), before the new write.
 func phaseRestart(t *testing.T, e e2eEnv, s *service, db pgView, brokers []string) *service {
 	t.Helper()
 	s.stop()
@@ -540,7 +543,7 @@ func phaseRestart(t *testing.T, e e2eEnv, s *service, db pgView, brokers []strin
 	}
 	s2.call(http.MethodPost, "/process-paths", definePathBody("REBIN-1", "rebin-a"), idemKey("e2e-rebin-1"), http.StatusCreated)
 	waitFor(t, 60*time.Second, "the relay to publish after the restart", func() bool { return db.unpublished() == 0 })
-	msgs := consume(t, brokers, integrationTopic, 6)
+	msgs := consume(t, brokers, integrationTopic, 8)
 	seen := map[string]bool{}
 	for _, m := range msgs {
 		id := decodeEnvelope(t, m).ID
@@ -549,9 +552,12 @@ func phaseRestart(t *testing.T, e e2eEnv, s *service, db pgView, brokers []strin
 		}
 		seen[id] = true
 	}
-	noMoreMessages(t, brokers, integrationTopic, 6)
+	noMoreMessages(t, brokers, integrationTopic, 8)
+	// The analytics stream counts catalogue CHANGES: the republish is not one.
 	noMoreMessages(t, brokers, analyticsTopic, 6)
-	assertEnvelope(t, msgs[5], "processpath", "ProcessPathCreated", "events", "REBIN-1")
+	assertEnvelope(t, msgs[5], "processpath", "ProcessPathUpdated", "events", "PICK-1")
+	assertEnvelope(t, msgs[6], "cptschedule", "CPTScheduleChanged", "events", "SP1")
+	assertEnvelope(t, msgs[7], "processpath", "ProcessPathCreated", "events", "REBIN-1")
 	return s2
 }
 
