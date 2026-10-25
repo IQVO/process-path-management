@@ -159,7 +159,7 @@ type deactivatingRepo struct {
 }
 
 func (r *deactivatingRepo) LockByIDsForShare(ctx context.Context, ids []shared.PathId) ([]*processpath.ProcessPath, error) {
-	if p, _ := r.fakeRepo.FindByID(ctx, r.victim); p != nil {
+	if p, _ := r.FindByID(ctx, r.victim); p != nil {
 		p.Deactivate(republishNow)
 	}
 	return r.fakeRepo.LockByIDsForShare(ctx, ids)
