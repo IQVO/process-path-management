@@ -1,13 +1,5 @@
 # Process Path Management
 
-> **⚠️ Study project.** This repository is an educational exercise in
-> Domain-Driven Design applied to warehouse management/execution systems. It
-> follows real industry-standard patterns and terminology (WMS/WES/WCS,
-> CloudEvents 1.0, RFC 7807, hexagonal architecture) but is
-> **not a production system** and is **not affiliated with, endorsed by, or
-> representative of any real-world
-> company**.
-
 The operator-configurable process-path catalogue for the `warehouse-systems`
 fleet — a Generic Subdomain bounded context (same classification as
 `facility-layout`), replacing a static YAML file
@@ -19,6 +11,13 @@ each site's **CPT schedule**, which `order-management` consumes to derive
 its promise.
 
 📚 **Full documentation site:** https://iqvo.github.io/process-path-management/
+
+## Disclaimer
+
+This project is a domain-driven design study. It is not associated with,
+endorsed by or affiliated with any company, and it uses no company's code,
+data, logos or trademarks. All names, figures and examples are illustrative
+or synthetic.
 
 ## Documentation
 
@@ -349,6 +348,43 @@ curl -s -X DELETE localhost:8080/process-paths/PICK
 # 204 No Content
 ```
 
+## Domain events (Published Language)
+
+`ProcessPathCreated`, `ProcessPathUpdated`, `ProcessPathDeactivated` and
+`CPTScheduleChanged` are published through the transactional outbox to
+`warehouse.process-path-management.events` (integration) and
+`warehouse.process-path-management.analytics`. Every message is a CloudEvents
+1.0 event in structured content mode; the type convention is
+`com.warehouse.wes.process-path-management.<entity>.<EventName>`, e.g.
+`com.warehouse.wes.process-path-management.processpath.ProcessPathCreated` and
+`com.warehouse.wes.process-path-management.cptschedule.CPTScheduleChanged`.
+`order-management` consumes the CPT schedule for promise-date computation;
+`workforce-management` replays the path catalogue from the integration topic.
+
+## Analytics data product (Catalogue Growth report)
+
+The OLTP binary fans events out to both topics; `cmd/pathmgmt-projector` is
+the only writer of the analytical database and `cmd/pathmgmt-reports` serves
+the catalogue-growth report read-only over REST
+(`/reports/catalogue-growth`).
+
+## MCP server
+
+`cmd/mcp` is the read-only MCP inbound surface (Streamable HTTP on `:8090`,
+`GET /healthz` backs the probes; no authentication — the in-cluster ClusterIP
+boundary is the access control). Tools: `list_process_paths`,
+`get_process_path`, `get_cpt_schedule` and the curated report tool
+`get_catalogue_growth_report`.
+
+## Observability
+
+Traces and metrics are exported over OTLP/gRPC to the Collector named by
+`OTEL_EXPORTER_OTLP_ENDPOINT` (never required — with nothing listening the
+service still works). One server span per HTTP request (otelchi, span name =
+the route pattern) plus the OTel HTTP server and Go runtime metrics. Business
+metrics: `process_path_management.paths.defined` and
+`process_path_management.catalogue.republished`. Logs are structured
+`log/slog` JSON on stdout.
 ## Quality gate
 
 Every `make` target mirrors a step in `.github/workflows/ci.yml`, so the
