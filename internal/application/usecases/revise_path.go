@@ -53,20 +53,27 @@ func (uc *RevisePath) Execute(ctx context.Context, id shared.PathId, matchPrefix
 		if err := uc.Repo.Save(ctx, p); err != nil {
 			return err
 		}
-		return uc.Publisher.Publish(ctx, shared.ProcessPathUpdated{
-			PathId:                  p.ID(),
-			MatchPrefix:             p.MatchPrefix(),
-			Direct:                  p.Direct(),
-			RequiredCapabilities:    p.RequiredCapabilities(),
-			DestinationLocationRole: p.DestinationLocationRole(),
-			CycleTimeP95:            p.CycleTimeP95(),
-			Eligibility:             p.Eligibility(),
-			Intake:                  p.Intake(),
-			At:                      now,
-		})
+		return uc.Publisher.Publish(ctx, processPathUpdated(p, now))
 	})
 	if err != nil {
 		return nil, err
 	}
 	return p, nil
+}
+
+// processPathUpdated folds a path's full current state into the
+// ProcessPathUpdated event. RevisePath and RepublishCatalogue share it so a
+// republished event carries byte-for-byte the payload a revision would.
+func processPathUpdated(p *processpath.ProcessPath, now time.Time) shared.ProcessPathUpdated {
+	return shared.ProcessPathUpdated{
+		PathId:                  p.ID(),
+		MatchPrefix:             p.MatchPrefix(),
+		Direct:                  p.Direct(),
+		RequiredCapabilities:    p.RequiredCapabilities(),
+		DestinationLocationRole: p.DestinationLocationRole(),
+		CycleTimeP95:            p.CycleTimeP95(),
+		Eligibility:             p.Eligibility(),
+		Intake:                  p.Intake(),
+		At:                      now,
+	}
 }

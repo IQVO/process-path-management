@@ -65,6 +65,13 @@ type CPTScheduleRepo interface {
 	// eligiblePathIds names id. DeactivatePath uses it to refuse retiring
 	// a path a schedule still depends on (ADR 0026).
 	ListSiteIDsReferencingPath(ctx context.Context, id shared.PathId) ([]shared.SiteId, error)
+	// LockAllForShare takes a share lock on every schedule row (held
+	// until the bound unit of work ends) and returns every SiteId in
+	// ascending order. RepublishCatalogue uses it so a schedule it
+	// republishes cannot be superseded by a concurrent
+	// DefineCPTSchedule whose CPTScheduleChanged would then be
+	// overtaken in the outbox by a stale snapshot.
+	LockAllForShare(ctx context.Context) ([]shared.SiteId, error)
 }
 
 // EventPublisher publishes a domain event raised by a use case. Mirrors
@@ -94,6 +101,19 @@ type UnitOfWork interface {
 // time.Now() directly — same convention used fleet-wide.
 type Clock interface {
 	Now() time.Time
+}
+
+// CatalogueMetrics records the outcome of the startup catalogue
+// republish (ADR 0038) so a skipped or failed republish is visible as a
+// metric, not only as a log line. Use cases treat a nil value as "not
+// instrumented", like PathMetrics.
+type CatalogueMetrics interface {
+	// CatalogueRepublished records n events of kind ("path" or
+	// "schedule") enqueued by a successful republish.
+	CatalogueRepublished(ctx context.Context, kind string, n int)
+	// CatalogueRepublishFailed records a republish run that enqueued
+	// nothing because it failed.
+	CatalogueRepublishFailed(ctx context.Context)
 }
 
 // PathMetrics records DefinePath outcomes (standard-metrics convention,

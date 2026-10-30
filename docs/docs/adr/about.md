@@ -95,6 +95,8 @@ Typos, broken links and formatting are of course fair game.
 | [0035](./0035-dispatch-process-path.md) | A DISPATCH process path carries the transfer dispatch leg | Accepted; companion to fulfillment-execution ADR-0036; follows 0033, uses 0034's vocabulary |
 | [0036](./0036-replenish-process-path.md) | A REPLENISH process path and a REPLENISHMENT demand source carry pick-face top-ups | Accepted; companion to wes-work-planning ADR 0042 and fulfillment-execution ADR 0050; follows 0033/0035, extends 0034's vocabulary |
 | [0037](./0037-postgres-and-kafka-are-the-only-runtime.md) | Postgres and Kafka are the only runtime | Accepted; supersedes the in-memory fallback, log publisher and optional outbox of 0001/0003/0006/0007/0011/0025 |
+| [0038](./0038-republish-catalogue-on-start.md) | Republish the whole current catalogue at startup | Accepted; extends 0003/0010; closes the replay-from-earliest vs. retention gap |
+| [0039](./0039-a2a-inbound-adapter.md) | A2A inbound adapter (third driving adapter): two curated READ-ONLY skills, `get_process_path` and `list_process_paths`, over the same use cases as REST and MCP; message-only, problems answered in-band, delegation only | Accepted; follows 0006, mirrors the MCP read-only charter |
 
 Each of these reconstructs a decision that is actually visible in this
 repository's history or code — none is a generic placeholder.
