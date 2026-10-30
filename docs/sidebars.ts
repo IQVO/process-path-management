@@ -125,6 +125,8 @@ const sidebars: SidebarsConfig = {
         'adr/0035-dispatch-process-path',
         'adr/0036-replenish-process-path',
         'adr/0037-postgres-and-kafka-are-the-only-runtime',
+        'adr/0038-republish-catalogue-on-start',
+        'adr/0039-a2a-inbound-adapter',
       ],
     },
   ],
