@@ -1,0 +1,116 @@
+{{- if .Values.a2a.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "process-path-management.a2aFullname" . }}
+  labels:
+    {{- include "process-path-management.labels" . | nindent 4 }}
+    app.kubernetes.io/component: a2a
+spec:
+  replicas: {{ .Values.a2a.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "process-path-management.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: a2a
+  template:
+    metadata:
+      labels:
+        {{- include "process-path-management.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: a2a
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "process-path-management.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: a2a
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/app/a2a"]
+          ports:
+            - name: http
+              containerPort: {{ .Values.a2a.service.targetPort }}
+              protocol: TCP
+          env:
+            - name: A2A_ADDR
+              value: {{ .Values.a2a.httpAddr | quote }}
+            # MANDATORY (ADR 0039): the absolute URL advertised on the Agent
+            # Card. Defaults to this release's in-cluster Service DNS and is
+            # overridable through a2a.agentUrl.
+            - name: A2A_AGENT_URL
+              value: {{ .Values.a2a.agentUrl | default (printf "http://%s.%s.svc.cluster.local:%v/" (include "process-path-management.a2aFullname" .) .Release.Namespace .Values.a2a.service.port) | quote }}
+            # cmd/a2a runs the same read use cases over the same OLTP
+            # database as cmd/pathmgmt, and (like it) applies migrations
+            # on start — idempotent, so all binaries may point at the
+            # same directory. It is read-only: no Kafka, no outbox.
+            - name: MIGRATIONS_PATH
+              value: {{ .Values.config.migrationsPath | quote }}
+            - name: LOG_LEVEL
+              value: {{ .Values.config.logLevel | quote }}
+            - name: ENVIRONMENT
+              value: {{ .Values.environment | quote }}
+            - name: SERVICE_VERSION
+              value: {{ .Values.image.tag | default .Chart.AppVersion | quote }}
+            {{- if .Values.otel.enabled }}
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: {{ .Values.otel.endpoint | quote }}
+            - name: OTEL_SERVICE_NAME
+              value: "process-path-management-a2a"
+            {{- end }}
+            # cmd/a2a reads the same OLTP database as cmd/pathmgmt: DATABASE_URL
+            # is mandatory (ADR 0037) and the chart refuses to render without it.
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "process-path-management.databaseSecretName" . }}
+                  key: {{ .Values.database.existingSecretKey }}
+            {{- if .Values.database.migrationsExistingSecretKey }}
+            # See values.yaml's database.migrationsExistingSecretKey comment
+            # and ADR-0015: cmd/a2a also runs migrations on start (see the
+            # comment above), so it needs the same direct-connection split.
+            - name: MIGRATIONS_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "process-path-management.databaseSecretName" . }}
+                  key: {{ .Values.database.migrationsExistingSecretKey }}
+                  optional: true
+            {{- end }}
+          # GET /healthz is served by cmd/a2a, so the probes have a cheap target.
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 2
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          resources:
+            {{- toYaml .Values.a2a.resources | nindent 12 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}
