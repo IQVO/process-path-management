@@ -1,13 +1,5 @@
 # Process Path Management
 
-> **⚠️ Study project.** This repository is an educational exercise in
-> Domain-Driven Design applied to warehouse management/execution systems. It
-> follows real industry-standard patterns and terminology (WMS/WES/WCS,
-> CloudEvents 1.0, RFC 7807, hexagonal architecture) but is
-> **not a production system** and is **not affiliated with, endorsed by, or
-> representative of any real-world
-> company**.
-
 The operator-configurable process-path catalogue for the `warehouse-systems`
 fleet — a Generic Subdomain bounded context (same classification as
 `facility-layout`), replacing a static YAML file
@@ -19,6 +11,13 @@ each site's **CPT schedule**, which `order-management` consumes to derive
 its promise.
 
 📚 **Full documentation site:** https://iqvo.github.io/process-path-management/
+
+## Disclaimer
+
+This project is a domain-driven design study. It is not associated with,
+endorsed by or affiliated with any company, and it uses no company's code,
+data, logos or trademarks. All names, figures and examples are illustrative
+or synthetic.
 
 ## Documentation
 
@@ -38,6 +37,7 @@ The site above is built from `docs/` (Docusaurus). The pages, by task:
 | Use cases: trigger, inputs, invariants, events | [Use cases](docs/docs/ddd/use-cases.md) |
 | Why Generic, neighbour classes | [Subdomain classification](docs/docs/ddd/subdomain-classification.md) |
 | MCP tools and their inputs | [MCP tools](docs/docs/mcp/tools.md), [Governance charter](docs/docs/mcp/governance-charter.md) |
+| A2A skills (read-only agent) | [A2A inbound adapter (ADR 0039)](docs/docs/adr/0039-a2a-inbound-adapter.md) |
 | Vocabulary, aggregates, the ddd-crew pack | [Ubiquitous language](docs/docs/ddd/ubiquitous-language.md), [Aggregates and invariants](docs/docs/ddd/aggregates-and-invariants.md), [DDD artifacts](docs/docs/ddd/ddd-artifacts.md) |
 | Decisions | [ADR index](docs/docs/adr/about.md) |
 | REST contract | [`apis/openapi.yaml`](apis/openapi.yaml) (rendered under API Reference on the site); reports API: [`apis/openapi-reports.yaml`](apis/openapi-reports.yaml) (Reports API Reference) |
@@ -88,6 +88,7 @@ in the fleet.
 cmd/
   pathmgmt/                       REST API + in-process outbox relay (:8080)
   mcp/                            MCP server, Streamable HTTP (:8090, ADR 0006)
+  a2a/                            read-only A2A agent, JSON-RPC over HTTP (:8093, ADR 0039)
   pathmgmt-projector/             analytics projector: consumes the analytics topic (admin :8091, ADR 0007)
   pathmgmt-reports/               read-only catalogue-growth report API (:8092, ADR 0007)
 internal/
@@ -102,6 +103,7 @@ internal/
   adapters/
     inbound/http/                 chi handlers, DTOs, RFC 7807 error mapping; reports router
     inbound/mcp/                  MCP tools over the read use cases
+    inbound/a2a/                  A2A skills over the read use cases: get_process_path, list_process_paths (ADR 0039)
     inbound/kafka/                analytics consumer (this service's OWN analytics topic only)
     outbound/postgres/            pgxpool repos, unit of work, outbox publisher + relay, golang-migrate runner
     outbound/memory/              in-memory repos, TEST DOUBLES only (no cmd/** binary imports them: ADR 0037)
@@ -116,7 +118,7 @@ apis/openapi.yaml                 This service's OWN REST API (9 operations, inc
 apis/asyncapi.yaml                What this service PUBLISHES (integration + analytics topics)
 features/                         godog/Gherkin BDD acceptance tests
 web/                              process_path_mfe Module Federation remote (operator SPA)
-charts/process-path-management/   Helm chart (API, MCP, projector, reports, frontend)
+charts/process-path-management/   Helm chart (API, MCP, A2A, projector, reports, frontend)
 docker-compose.yml                Local Postgres 16 + Kafka (KRaft)
 docs/docs/adr/                    Architecture Decision Records
 ```
@@ -212,7 +214,7 @@ curl -s localhost:8080/healthz
 See `charts/process-path-management/values.yaml` for the full configuration
 surface (`config.eventPublisher`, `otel.enabled`,
 `ingress`, the additive `gatewayApi` HTTPRoute block, autoscaling, an
-`existingSecret` pattern for `DATABASE_URL`, and the optional `mcp`,
+`existingSecret` pattern for `DATABASE_URL`, and the optional `mcp`, `a2a`,
 `analytics` and `frontend` workloads — all disabled by default). The chart
 refuses to render, naming the value, without a database source
 (`database.url` or `database.existingSecret`) and `kafka.brokers`, and with
@@ -248,6 +250,9 @@ The other binaries read:
 | `cmd/mcp` | `DATABASE_URL`, `MIGRATIONS_DATABASE_URL`, `MIGRATIONS_PATH` | *(required)*, `DATABASE_URL`, `migrations` | Same store as the API; `DATABASE_URL` unset exits at boot (no in-memory store, ADR 0037). |
 | `cmd/mcp` | `OTEL_SERVICE_NAME` | `process-path-management-mcp` | OTel service name for MCP spans. |
 | `cmd/mcp` | `REPORTS_BASE_URL` | *(unset)* | When set, registers `get_catalogue_growth_report` (calls `pathmgmt-reports`). |
+| `cmd/a2a` | `A2A_ADDR` | `:8093` | A2A JSON-RPC listen address (`/`, `/a2a`; Agent Card at `/.well-known/agent-card.json`; `/healthz`). |
+| `cmd/a2a` | `A2A_AGENT_URL` | *(required)* | Absolute `http(s)` URL advertised on the Agent Card; unset or relative exits at boot (ADR 0039). |
+| `cmd/a2a` | `DATABASE_URL`, `MIGRATIONS_DATABASE_URL`, `MIGRATIONS_PATH`, `OTEL_SERVICE_NAME` | *(required)*, `DATABASE_URL`, `migrations`, `process-path-management-a2a` | Same store as the API; read-only, needs no Kafka. |
 | `cmd/pathmgmt-projector` | `ANALYTICS_DATABASE_URL` | *(required)* | Analytics Postgres DSN. |
 | `cmd/pathmgmt-projector` | `KAFKA_BROKERS` | *(required)* | Broker for the analytics topic (consumer group `process-path-management-analytics`, a constant). Unset exits at boot. |
 | `cmd/pathmgmt-projector` | `ADMIN_ADDR` / `ANALYTICS_MIGRATIONS_PATH` | `:8091` / `migrations/analytics` | Admin server (`/healthz`, `/readyz`); analytics migrations. |
@@ -281,6 +286,32 @@ The MCP server (`cmd/mcp`) exposes read-only tools: `get_process_path`,
 `list_process_paths`, `get_cpt_schedule`, and — only when
 `REPORTS_BASE_URL` is set — `get_catalogue_growth_report`.
 
+### A2A agent (`cmd/a2a`)
+
+The A2A agent ([ADR 0039](docs/docs/adr/0039-a2a-inbound-adapter.md)) is a
+fifth binary in the same image, `/app/a2a`, and the Helm chart deploys it as a
+separate Deployment + ClusterIP Service (`<release>-a2a`, port 8093) when
+`a2a.enabled=true` (default `false`). It runs the read use cases over the same
+`DATABASE_URL` secret as the API and reads `A2A_ADDR` (default `:8093`) and the
+mandatory `A2A_AGENT_URL`, the absolute URL advertised on the Agent Card (the
+chart defaults it to the in-cluster Service DNS). `GET /healthz` serves the
+probes; the Agent Card is at `/.well-known/agent-card.json` and the JSON-RPC
+endpoint is mounted at both `/` and `/a2a`.
+
+It is **read-only**, exactly like the MCP server: it writes nothing, needs no
+Kafka, calls no other context and contains no outbound A2A client. Two skills,
+called as a `SendMessage` data part `{"skill": "<id>", "arguments": {...}}`:
+
+- `get_process_path`: `{pathId}` returns the full definition of one path
+  (deactivated paths too); an unknown id is an in-band `404` problem.
+- `list_process_paths`: `{[activeOnly]}` returns the catalogue, active paths by
+  default.
+
+Domain rejections come back as an in-band RFC 7807 `problem`, with the REST
+adapter's type namespace and status classification. A2A carries delegation
+only; changes to the catalogue still go through REST and leave as CloudEvents
+on Kafka.
+
 Every error response is `application/problem+json` (RFC 7807), the same
 shape every other service in this fleet emits.
 
@@ -293,8 +324,8 @@ which every deployment has, so it is never skipped (ADR 0037). A NUL
 (U+0000) in the path (`404`) or in a body (`400 malformed-request-body`) is
 refused before the key is recorded: Postgres text cannot hold it.
 
-Every REST route and MCP tool is unauthenticated — there is no auth layer
-in front of either (see ADR 0005, which supersedes ADR 0004's earlier
+Every REST route, MCP tool and A2A skill is unauthenticated — there is no auth layer
+in front of any of them (see ADR 0005, which supersedes ADR 0004's earlier
 bearer-key adoption).
 
 ### Curl walkthrough
@@ -349,6 +380,43 @@ curl -s -X DELETE localhost:8080/process-paths/PICK
 # 204 No Content
 ```
 
+## Domain events (Published Language)
+
+`ProcessPathCreated`, `ProcessPathUpdated`, `ProcessPathDeactivated` and
+`CPTScheduleChanged` are published through the transactional outbox to
+`warehouse.process-path-management.events` (integration) and
+`warehouse.process-path-management.analytics`. Every message is a CloudEvents
+1.0 event in structured content mode; the type convention is
+`com.warehouse.wes.process-path-management.<entity>.<EventName>`, e.g.
+`com.warehouse.wes.process-path-management.processpath.ProcessPathCreated` and
+`com.warehouse.wes.process-path-management.cptschedule.CPTScheduleChanged`.
+`order-management` consumes the CPT schedule for promise-date computation;
+`workforce-management` replays the path catalogue from the integration topic.
+
+## Analytics data product (Catalogue Growth report)
+
+The OLTP binary fans events out to both topics; `cmd/pathmgmt-projector` is
+the only writer of the analytical database and `cmd/pathmgmt-reports` serves
+the catalogue-growth report read-only over REST
+(`/reports/catalogue-growth`).
+
+## MCP server
+
+`cmd/mcp` is the read-only MCP inbound surface (Streamable HTTP on `:8090`,
+`GET /healthz` backs the probes; no authentication — the in-cluster ClusterIP
+boundary is the access control). Tools: `list_process_paths`,
+`get_process_path`, `get_cpt_schedule` and the curated report tool
+`get_catalogue_growth_report`.
+
+## Observability
+
+Traces and metrics are exported over OTLP/gRPC to the Collector named by
+`OTEL_EXPORTER_OTLP_ENDPOINT` (never required — with nothing listening the
+service still works). One server span per HTTP request (otelchi, span name =
+the route pattern) plus the OTel HTTP server and Go runtime metrics. Business
+metrics: `process_path_management.paths.defined` and
+`process_path_management.catalogue.republished`. Logs are structured
+`log/slog` JSON on stdout.
 ## Quality gate
 
 Every `make` target mirrors a step in `.github/workflows/ci.yml`, so the

@@ -76,7 +76,7 @@ func (p *recordingPublisher) countFor(name, id string) int {
 // newServer builds the production router over fresh in-memory adapters and
 // serves it from an httptest server, mirroring the wiring in
 // internal/adapters/inbound/http/server_test.go's newTestServer.
-func newServer() (*httptest.Server, *recordingPublisher, *settableClock) {
+func newServer() (*httptest.Server, *recordingPublisher, *settableClock, *republishRig) {
 	repo := memory.NewProcessPathRepo()
 	scheduleRepo := memory.NewCPTScheduleRepo()
 	// A settable clock starting at a fixed instant, so response bodies are
@@ -94,7 +94,13 @@ func newServer() (*httptest.Server, *recordingPublisher, *settableClock) {
 		GetCPTSchedule:    &usecases.GetCPTSchedule{Repo: scheduleRepo},
 	}
 
-	return httptest.NewServer(inboundhttp.NewRouter(s, nil, "")), pub, clock
+	// The startup catalogue republish (ADR 0038) over the SAME repositories,
+	// publishing into its own recorder so a scenario sees only what a restart
+	// re-enqueues.
+	rig := &republishRig{published: &recordingPublisher{}}
+	rig.uc = &usecases.RepublishCatalogue{Repo: repo, CPTSchedules: scheduleRepo, Publisher: rig.published, Clock: clock}
+
+	return httptest.NewServer(inboundhttp.NewRouter(s, nil, "")), pub, clock, rig
 }
 
 // world is the per-scenario state: one server with its own in-memory
@@ -104,6 +110,7 @@ type world struct {
 	server *httptest.Server
 	events *recordingPublisher
 	clock  *settableClock
+	rig    *republishRig
 
 	lastStatus int
 	lastBody   []byte
@@ -114,7 +121,7 @@ func (w *world) reset() {
 	if w.server != nil {
 		w.server.Close()
 	}
-	w.server, w.events, w.clock = newServer()
+	w.server, w.events, w.clock, w.rig = newServer()
 	w.lastStatus = 0
 	w.lastBody = nil
 	w.lastHeader = nil
@@ -535,6 +542,7 @@ func InitializeScenario(sc *godog.ScenarioContext) {
 	// Wave-2 vocabulary (request/response helpers, event payloads, the
 	// CloudEvents wire form, the analytics projector and its report).
 	registerWave2Steps(sc, w)
+	registerRepublishSteps(sc, w)
 }
 
 // TestFeatures runs the Gherkin acceptance suite under features/.
