@@ -37,6 +37,13 @@ type ProcessPathRepo interface {
 	// ListAll returns every path regardless of status, for the SPA's
 	// "show deactivated too" view and audit purposes.
 	ListAll(ctx context.Context) ([]*processpath.ProcessPath, error)
+	// ListPage is the keyset-paginated read behind GET /process-paths (REST
+	// API guideline section 3): at most size paths, ordered by id (the
+	// natural key, unique, so it is both the sort key and the tie-break),
+	// whose id sorts strictly after the id `after` ("" starts at the first
+	// path). activeOnly narrows to Active paths. The caller asks for
+	// limit+1 rows to learn whether another page follows.
+	ListPage(ctx context.Context, activeOnly bool, after shared.PathId, size int) ([]*processpath.ProcessPath, error)
 	// FindByIDForUpdate is FindByID that also takes the row's exclusive
 	// lock (Postgres: SELECT ... FOR UPDATE) until the surrounding unit of
 	// work ends, so a concurrent DefineCPTSchedule cannot commit a schedule

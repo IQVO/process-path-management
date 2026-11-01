@@ -214,8 +214,8 @@ paths:
         currently valid set," not everything that ever existed. Pass
         ?all=true for the audit view (Active and Deactivated paths).
         The list is keyset-paginated (REST guideline section 3): `limit`
-        (1-500, default 100) and an opaque `cursor`, ordered by
-        (createdAt, pathId); the answer is `{items, nextCursor}` and
+        (1-500, default 100) and an opaque `cursor`, in pathId order (the
+        unique key); the answer is `{items, nextCursor}` and
         `nextCursor` is absent on the last page. Filters (`all`) are
         repeated on every page request. Any query parameter other than
         `all`, `limit` and `cursor` is 400 `unknown-query-parameter` (a
@@ -536,7 +536,7 @@ components:
       required: [items]
       description: >-
         One keyset page of process paths (REST guideline section 3.3),
-        ordered by (createdAt, pathId).
+        ordered by pathId (the unique key).
       properties:
         items:
           type: array

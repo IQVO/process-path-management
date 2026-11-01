@@ -72,6 +72,28 @@ func (r *fakeRepo) ListAll(_ context.Context) ([]*processpath.ProcessPath, error
 	return out, nil
 }
 
+// ListPage mirrors the keyset contract of ports.ProcessPathRepo.ListPage:
+// at most size paths, ordered by id, strictly after `after`.
+func (r *fakeRepo) ListPage(_ context.Context, activeOnly bool, after shared.PathId, size int) ([]*processpath.ProcessPath, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var ids []shared.PathId
+	for id, p := range r.paths {
+		if id > after && (!activeOnly || p.IsActive()) {
+			ids = append(ids, id)
+		}
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	if len(ids) > size {
+		ids = ids[:size]
+	}
+	out := make([]*processpath.ProcessPath, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, r.paths[id])
+	}
+	return out, nil
+}
+
 // FindByIDForUpdate records the call (ADR 0028 lock-order assertions) and
 // otherwise behaves like FindByID.
 func (r *fakeRepo) FindByIDForUpdate(_ context.Context, id shared.PathId) (*processpath.ProcessPath, error) {
@@ -190,6 +212,13 @@ func (r *erroringRepo) ListAll(ctx context.Context) ([]*processpath.ProcessPath,
 		return nil, r.listErr
 	}
 	return r.fakeRepo.ListAll(ctx)
+}
+
+func (r *erroringRepo) ListPage(ctx context.Context, activeOnly bool, after shared.PathId, size int) ([]*processpath.ProcessPath, error) {
+	if r.listErr != nil {
+		return nil, r.listErr
+	}
+	return r.fakeRepo.ListPage(ctx, activeOnly, after, size)
 }
 
 func (r *erroringRepo) FindByIDForUpdate(ctx context.Context, id shared.PathId) (*processpath.ProcessPath, error) {

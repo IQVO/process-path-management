@@ -67,6 +67,30 @@ func (r *ProcessPathRepo) ListAll(_ context.Context) ([]*processpath.ProcessPath
 	return out, nil
 }
 
+// ListPage implements ports.ProcessPathRepo: at most size paths ordered by
+// id, strictly after the id `after` ("" starts at the first path), keyset
+// semantics identical to the Postgres adapter (WHERE id > $after ORDER BY
+// id LIMIT $size).
+func (r *ProcessPathRepo) ListPage(_ context.Context, activeOnly bool, after shared.PathId, size int) ([]*processpath.ProcessPath, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	ids := make([]shared.PathId, 0, len(r.paths))
+	for id, p := range r.paths {
+		if id > after && (!activeOnly || p.IsActive()) {
+			ids = append(ids, id)
+		}
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	if len(ids) > size {
+		ids = ids[:size]
+	}
+	out := make([]*processpath.ProcessPath, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, r.paths[id])
+	}
+	return out, nil
+}
+
 // FindByIDForUpdate implements ports.ProcessPathRepo. The in-memory adapter
 // has no transactions to hold a row lock in (its UnitOfWork is a
 // pass-through), so this is FindByID; the Postgres adapter is the one that
