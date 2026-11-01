@@ -12,6 +12,16 @@ info:
     language, never a consumer of anyone else's — every change here is
     propagated onward exclusively via Kafka (see apis/asyncapi.yaml), never
     through a synchronous callback into this service.
+
+
+    This API follows the fleet REST API guideline (ADR 0040): URLs name
+    things, `POST /process-paths` is behind the Idempotency-Key middleware (a
+    retry replays the stored answer with the response header
+    `Idempotency-Replayed: true`; the same key with a different method, path
+    or body is 409 `idempotency-key-reused`; a missing key is 400
+    `idempotency-key-required`), `PUT` and `DELETE` are idempotent by method
+    and take no key, and the collection `GET /process-paths` is
+    keyset-paginated as `{items, nextCursor}` with `limit` and `cursor`.
   version: "1.0.0"
   license:
     name: MIT
@@ -92,7 +102,7 @@ paths:
         wanting to re-use an id after deactivation must be told explicitly,
         never silently overwritten. Publishes ProcessPathCreated on success.
       parameters:
-        - $ref: "#/components/parameters/IdempotencyKeyHeader"
+        - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
         content:
@@ -135,6 +145,9 @@ paths:
       responses:
         "201":
           description: Path defined
+          headers:
+            Idempotency-Replayed:
+              $ref: "#/components/headers/IdempotencyReplayed"
           content:
             application/json:
               schema:
@@ -146,25 +159,47 @@ paths:
             range, or a null element inside requiredCapabilities,
             eligibility.requiredProductAttributes,
             eligibility.excludedProductAttributes or intake — every array element must
-            be a string), or the Idempotency-Key header is absent/empty.
+            be a string), or the Idempotency-Key header is absent
+            (`idempotency-key-required`) or not 1-128 printable ASCII
+            characters (`idempotency-key-invalid`).
           content:
             application/problem+json:
               schema:
                 $ref: "#/components/schemas/ProblemDetails"
         "409":
-          description: A process path with this id already exists (active or deactivated)
+          description: >-
+            A process path with this id already exists (active or
+            deactivated), or the Idempotency-Key header was already used
+            with a different method, path or body (`idempotency-key-reused`,
+            distinguishable from the business conflict by the problem type).
           content:
             application/problem+json:
               schema:
                 $ref: "#/components/schemas/ProblemDetails"
+              examples:
+                pathAlreadyExists:
+                  summary: A path with this id is already defined
+                  value:
+                    type: https://errors.process-path-management.warehouse-systems.dev/path-already-exists
+                    title: A process path with this id already exists (active or deactivated)
+                    status: 409
+                    detail: process path already exists
+                    instance: /process-paths
+                idempotencyKeyReused:
+                  summary: Idempotency-Key reused with a different method, path or body (REST guideline 2.3)
+                  value:
+                    type: https://errors.process-path-management.warehouse-systems.dev/idempotency-key-reused
+                    title: Idempotency-Key was already used with a different request
+                    status: 409
+                    detail: The Idempotency-Key header on this request was already used with a different method, path or body. Use a new Idempotency-Key for a genuinely different request.
+                    instance: /process-paths
         "422":
           description: >
             pathId is empty, matchPrefix is empty/not lower-case,
             requiredCapabilities is empty, cycleTimeP95 is not a positive
             Go duration string, destinationLocationRole is not one of
-            Drop/WorkCenter/Shipping, intake holds an unknown or repeated
-            demand source (invalid-intake) — or the Idempotency-Key header was
-            already used with a request body that differs from this one.
+            Drop/WorkCenter/Shipping, or intake holds an unknown or repeated
+            demand source (invalid-intake).
           content:
             application/problem+json:
               schema:
@@ -178,6 +213,14 @@ paths:
         catalogue's own posture that every consumer's normal read is "the
         currently valid set," not everything that ever existed. Pass
         ?all=true for the audit view (Active and Deactivated paths).
+        The list is keyset-paginated (REST guideline section 3): `limit`
+        (1-500, default 100) and an opaque `cursor`, ordered by
+        (createdAt, pathId); the answer is `{items, nextCursor}` and
+        `nextCursor` is absent on the last page. Filters (`all`) are
+        repeated on every page request. Any query parameter other than
+        `all`, `limit` and `cursor` is 400 `unknown-query-parameter` (a
+        retired paging parameter such as `after` or `offset` fails loudly
+        instead of reading page one forever).
       parameters:
         - name: all
           in: query
@@ -186,17 +229,23 @@ paths:
             type: boolean
             default: false
           description: When true, includes Deactivated paths too.
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
       responses:
         "200":
-          description: The requested set of process paths
+          description: One page of the requested set of process paths
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/ProcessPath"
+                $ref: "#/components/schemas/ProcessPathPage"
         "400":
-          description: The `all` query parameter is present but not a boolean (e.g. `all=null`).
+          description: >-
+            The `all` query parameter is present but not a boolean (e.g.
+            `all=null`) (`invalid-query-parameter`), `limit` is not an
+            integer from 1 to 500 (`invalid-limit`), `cursor` is not a token
+            this API issued (`invalid-cursor`), or the request carries a
+            query parameter this operation does not declare
+            (`unknown-query-parameter`).
           content:
             application/problem+json:
               schema:
@@ -325,9 +374,14 @@ paths:
     get:
       tags: [cpt-schedule]
       operationId: getCPTSchedule
+      x-pagination-exempt: view
       summary: Get one site's CPT schedule
       description: >
         Returns 404 if no schedule has been defined for this siteId yet.
+        Not a collection: one composite resource (the site's whole schedule)
+        whose representation merely contains the `cutoffs` array, so it is
+        exempt from pagination (`x-pagination-exempt: view`, REST guideline
+        3.5).
       parameters:
         - $ref: "#/components/parameters/SiteIdPathParam"
       responses:
@@ -406,6 +460,16 @@ paths:
               schema:
                 $ref: "#/components/schemas/ProblemDetails"
 components:
+  headers:
+    IdempotencyReplayed:
+      description: >-
+        Present, with the value `true`, ONLY when this response is a replay
+        of the stored answer for the request's Idempotency-Key (the handler
+        did not run again). The first execution of a key never carries it.
+      schema:
+        type: string
+        enum: ["true"]
+        example: "true"
   parameters:
     PathIdPathParam:
       name: pathId
@@ -423,23 +487,67 @@ components:
         type: string
         minLength: 1
       example: sp1
-    IdempotencyKeyHeader:
+    IdempotencyKey:
       name: Idempotency-Key
       in: header
       required: true
       schema:
         type: string
+        minLength: 1
+        maxLength: 128
+        pattern: '^[ -~]+$'
       description: >-
-        Caller-supplied idempotency key for this resource-creating request
-        (ADR 0011). Clients MUST always send a non-empty, unique-per-logical-
-        request key (e.g. a UUID minted per submit): a retried request with
-        the same key AND the same body replays the original response instead
-        of creating a second path, while the same key with a different body
-        is rejected 422 idempotency-key-reused, and an absent or empty key
-        is a 400 idempotency-key-required. Postgres is the only runtime
-        (ADR 0037), so the check is on in every deployment.
+        Caller-generated unique key (a UUID per logical submit; a retry
+        reuses it, a new user action mints a new one) that makes a retried
+        request safe (ADR 0011, REST guideline section 2): 1-128 printable
+        ASCII characters. Postgres is the only runtime (ADR 0037), so the
+        check is on in every deployment: a missing key is answered with 400
+        `idempotency-key-required`, a malformed one with 400
+        `idempotency-key-invalid`; a replay with the same key and the same
+        method, path and body returns the original response plus
+        `Idempotency-Replayed: true`, while the same key with a different
+        method, path or body is 409 `idempotency-key-reused`.
       example: 0b6b1f1e-4a5c-4c1e-9f2a-7d3c8e5f9a01
+    Limit:
+      name: limit
+      in: query
+      required: false
+      description: >-
+        Page size of a collection GET (REST guideline 3.2): an integer from 1
+        to 500, default 100. Anything else is 400 `invalid-limit`.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 500
+        default: 100
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      description: >-
+        Opaque page token: the previous page's `nextCursor`, passed back
+        unchanged together with the same filters. Absent on the first page. A
+        value this API did not issue is 400 `invalid-cursor`.
+      schema:
+        type: string
   schemas:
+    ProcessPathPage:
+      type: object
+      required: [items]
+      description: >-
+        One keyset page of process paths (REST guideline section 3.3),
+        ordered by (createdAt, pathId).
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProcessPath"
+        nextCursor:
+          type: string
+          description: >-
+            Opaque cursor of the next page, to be passed back unchanged as
+            `cursor`. Absent on the last page.
+          example: eyJzIjoiMjAyNi0xMC0wMVQxMjowMDowMFoiLCJpIjoiUElDSyJ9
     DefineProcessPathRequest:
       type: object
       required: [pathId, matchPrefix, requiredCapabilities, cycleTimeP95]
