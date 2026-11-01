@@ -97,6 +97,7 @@ Typos, broken links and formatting are of course fair game.
 | [0037](./0037-postgres-and-kafka-are-the-only-runtime.md) | Postgres and Kafka are the only runtime | Accepted; supersedes the in-memory fallback, log publisher and optional outbox of 0001/0003/0006/0007/0011/0025 |
 | [0038](./0038-republish-catalogue-on-start.md) | Republish the whole current catalogue at startup | Accepted; extends 0003/0010; closes the replay-from-earliest vs. retention gap |
 | [0039](./0039-a2a-inbound-adapter.md) | A2A inbound adapter (third driving adapter): two curated READ-ONLY skills, `get_process_path` and `list_process_paths`, over the same use cases as REST and MCP; message-only, problems answered in-band, delegation only | Accepted; follows 0006, mirrors the MCP read-only charter |
+| [0040](./0040-adopt-fleet-rest-api-guideline.md) | Adopt the fleet REST API guideline: keyset-paged `GET /process-paths`, key reuse 409, `Idempotency-Replayed` | Accepted; amends 0011 |
 
 Each of these reconstructs a decision that is actually visible in this
 repository's history or code — none is a generic placeholder.
