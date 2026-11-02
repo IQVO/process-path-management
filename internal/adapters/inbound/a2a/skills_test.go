@@ -245,6 +245,9 @@ func (failingRepo) ListActive(context.Context) ([]*processpath.ProcessPath, erro
 func (failingRepo) ListAll(context.Context) ([]*processpath.ProcessPath, error) {
 	return nil, errBoom
 }
+func (failingRepo) ListPage(context.Context, bool, shared.PathId, int) ([]*processpath.ProcessPath, error) {
+	return nil, errBoom
+}
 
 // An unexpected failure is answered as a 500 problem, never a JSON-RPC error,
 // and its raw text (which may carry infrastructure detail) is not echoed.

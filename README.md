@@ -270,7 +270,7 @@ RFC 7807 error schema).
 | Method | Path | Use case |
 | --- | --- | --- |
 | `POST` | `/process-paths` | DefinePath |
-| `GET` | `/process-paths` | ListPaths (`?all=true` for the audit view) |
+| `GET` | `/process-paths` | ListPaths (`?all=true` for the audit view; keyset-paged `{items,nextCursor}` via `limit` and `cursor`) |
 | `GET` | `/process-paths/{pathId}` | GetPath |
 | `PUT` | `/process-paths/{pathId}` | RevisePath |
 | `DELETE` | `/process-paths/{pathId}` | DeactivatePath |
@@ -320,8 +320,10 @@ shape every other service in this fleet emits.
 `POST /process-paths` always requires an
 `Idempotency-Key` request header (see ADR 0011): a byte-identical retry
 (same key + same body) replays the original response verbatim instead of
-hitting a natural-key `409`; the same key with a different body gets
-`422`; a missing header gets `400`. The middleware runs on the Postgres pool,
+hitting a natural-key `409`; the same key with a different request gets
+`409` `idempotency-key-reused` (ADR 0040; it was `422`); a replay carries
+`Idempotency-Replayed: true`; a missing header gets `400`, and a key that is not
+1-128 printable ASCII characters gets `400 idempotency-key-invalid`. The middleware runs on the Postgres pool,
 which every deployment has, so it is never skipped (ADR 0037). A NUL
 (U+0000) in the path (`404`) or in a body (`400 malformed-request-body`) is
 refused before the key is recorded: Postgres text cannot hold it.

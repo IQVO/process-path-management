@@ -1,8 +1,10 @@
 # The listing surface and the shared 404 problem shape, each scenario derived
 # from the project documentation:
-#   - apis/openapi.yaml, listPaths: 200 "type: array"; 400 "The `all` query
-#     parameter is present but not a boolean (e.g. `all=null`)"; the query
-#     parameter is `type: boolean` (so only true/false are valid spellings).
+#   - apis/openapi.yaml, listPaths: 200 ProcessPathPage {items, nextCursor}
+#     (REST API guideline 3.3); 400 "The `all` query parameter is present but
+#     not a boolean (e.g. `all=null`)", an invalid limit or cursor, or an
+#     undeclared query parameter; the `all` parameter is `type: boolean` (so
+#     only true/false are valid spellings).
 #   - apis/openapi.yaml, getPath / revisePath / deactivatePath: 404 "No process
 #     path exists with this id" with content application/problem+json and the
 #     ProblemDetails schema (type, title, status, detail required).
@@ -15,11 +17,32 @@ Feature: Listing process paths and unknown-path problems
     Given the Process Path Management service is running
 
   @bdd
-  Scenario: An empty catalogue lists as an empty JSON array
+  Scenario: An empty catalogue lists as an empty page
     When the process paths are listed
     Then the request is accepted with status 200
-    And the response body is an empty JSON array
+    And the response body is an empty page
     And the process path list reports 0 paths
+
+  @bdd
+  Scenario: A paging parameter the collection does not declare is rejected, not ignored
+    When the client sends GET "/process-paths?after=PICK"
+    Then the request is rejected with status 400
+    And the response problem reports type "unknown-query-parameter"
+    When the client sends GET "/process-paths?offset=10"
+    Then the request is rejected with status 400
+    And the response problem reports type "unknown-query-parameter"
+
+  @bdd
+  Scenario: A limit outside 1 to 500 and a cursor this API did not issue are rejected
+    When the client sends GET "/process-paths?limit=0"
+    Then the request is rejected with status 400
+    And the response problem reports type "invalid-limit"
+    When the client sends GET "/process-paths?limit=501"
+    Then the request is rejected with status 400
+    And the response problem reports type "invalid-limit"
+    When the client sends GET "/process-paths?cursor=not-a-cursor"
+    Then the request is rejected with status 400
+    And the response problem reports type "invalid-cursor"
 
   @bdd
   Scenario: An all query parameter that is not exactly true or false is rejected

@@ -66,7 +66,7 @@ refused` INFO line; it is harmless (export is non-blocking).
 `GET /readyz` is `200` only while Postgres and a Kafka broker answer.
 `POST /process-paths` requires an `Idempotency-Key` header (missing → 400
 `idempotency-key-required`; same key and body replays the stored response;
-same key with a different body → 422 `idempotency-key-reused`, see
+same key with a different body → 409 `idempotency-key-reused` (ADR 0040), see
 [ADR 0011](../adr/0011-idempotency-key-middleware.md)).
 
 ```bash
@@ -82,8 +82,9 @@ curl -s -X POST localhost:8080/process-paths \
 # 201 {"pathId":"PICK","matchPrefix":"pick","direct":true,"requiredCapabilities":["pick"],
 #      "cycleTimeP95":"2h0m0s","eligibility":{},"status":"ACTIVE","createdAt":"...","updatedAt":"..."}
 
-curl -s localhost:8080/process-paths              # active paths only
+curl -s localhost:8080/process-paths              # active paths only: {"items":[...],"nextCursor":"..."} (nextCursor absent on the last page)
 curl -s 'localhost:8080/process-paths?all=true'   # include deactivated
+curl -s 'localhost:8080/process-paths?limit=50&cursor=<nextCursor>'   # next page (limit 1-500, default 100)
 
 curl -s -X PUT localhost:8080/sites/sp1/cpt-schedule \
   -H 'Content-Type: application/json' \
