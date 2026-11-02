@@ -135,3 +135,7 @@ static YAML catalogue with this topic on 2026-09-06
 | Learn the vocabulary and invariants | [Ubiquitous language](../ddd/ubiquitous-language.md), [Aggregates and invariants](../ddd/aggregates-and-invariants.md), the [DDD artifact pack](../ddd/ddd-artifacts.md) |
 | Read the REST contract | [API Reference](/docs/api-reference/rest/process-path-management-api) (generated from `apis/openapi.yaml`) |
 | Understand a past decision | [ADRs](../adr/about.md) |
+
+:::note[Disclaimer]
+This project is a domain-driven design study. It is not associated with, endorsed by or affiliated with any company, and it uses no company's code, data, logos or trademarks. All names, figures and examples are illustrative or synthetic.
+:::

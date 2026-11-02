@@ -75,7 +75,7 @@ func TestBuildRepo_UsesMigrationsDatabaseURLNotDatabaseURLForMigrations(t *testi
 		unreachableAppURL  = "postgres://u:***@127.0.0.1:1/process_path_management?sslmode=disable&connect_timeout=1"
 	)
 
-	_, _, _, err := buildRepo(context.Background(), unreachableAppURL, bogusMigrationsURL, migrationsDirForTest(t), quietLogger())
+	_, _, err := buildRepo(context.Background(), unreachableAppURL, bogusMigrationsURL, migrationsDirForTest(t), quietLogger())
 	if err == nil {
 		t.Fatal("a malformed MIGRATIONS_DATABASE_URL must fail boot")
 	}
@@ -97,7 +97,7 @@ func TestA2ARefusesToBootWithoutDatabaseURL(t *testing.T) {
 		}
 	})
 	t.Run("buildRepo", func(t *testing.T) {
-		_, _, _, err := buildRepo(context.Background(), "", "", "migrations", quietLogger())
+		_, _, err := buildRepo(context.Background(), "", "", "migrations", quietLogger())
 		if err == nil || !strings.Contains(err.Error(), "DATABASE_URL") {
 			t.Fatalf("buildRepo(\"\") = %v, want an error naming DATABASE_URL", err)
 		}

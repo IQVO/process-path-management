@@ -39,8 +39,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
-
 	"github.com/claudioed/process-path-management/internal/adapters/outbound/bootretry"
 	"github.com/claudioed/process-path-management/internal/adapters/outbound/postgres"
 	"github.com/claudioed/process-path-management/internal/adapters/outbound/telemetry"
@@ -156,7 +154,7 @@ func run() error {
 	migrationsDatabaseURL := getenv("MIGRATIONS_DATABASE_URL", databaseURL)
 	migrationsPath := getenv("MIGRATIONS_PATH", "migrations")
 
-	repo, _, closeAdapters, err := buildRepo(ctx, databaseURL, migrationsDatabaseURL, migrationsPath, logger)
+	repo, closeAdapters, err := buildRepo(ctx, databaseURL, migrationsDatabaseURL, migrationsPath, logger)
 	if err != nil {
 		return err
 	}
@@ -201,15 +199,16 @@ func run() error {
 // needed here even though the pgxpool opened just after (databaseURL)
 // stays on PgBouncer.
 //
-// The ONE pool this function opens is also returned, so the caller can
-// share it with the CPTScheduleRepo (ADR 0014's connection arithmetic
-// counts ONE MaxConns=10 pool per pod; cmd/a2a discards it because its two
-// skills need only the ProcessPathRepo).
-func buildRepo(ctx context.Context, databaseURL, migrationsDatabaseURL, migrationsPath string, logger *slog.Logger) (ports.ProcessPathRepo, *pgxpool.Pool, func(), error) {
+// The ONE pool this function opens is closed by the returned cleanup
+// func; it is not returned for sharing (unlike cmd/pathmgmt's
+// buildPersistence, whose CPTScheduleRepo reuses it), because cmd/a2a's
+// two skills need only the ProcessPathRepo (ADR 0014's connection
+// arithmetic still counts ONE MaxConns=10 pool per pod).
+func buildRepo(ctx context.Context, databaseURL, migrationsDatabaseURL, migrationsPath string, logger *slog.Logger) (ports.ProcessPathRepo, func(), error) {
 	noop := func() {}
 
 	if databaseURL == "" {
-		return nil, nil, noop, errNoDatabase
+		return nil, noop, errNoDatabase
 	}
 
 	// Retried, because in this fleet EVERY injected pod's first outbound
@@ -222,11 +221,11 @@ func buildRepo(ctx context.Context, databaseURL, migrationsDatabaseURL, migratio
 	if err := bootretry.Do(ctx, logger, "run migrations", func() error {
 		return postgres.RunMigrations(migrationsDatabaseURL, migrationsPath)
 	}); err != nil {
-		return nil, nil, noop, err
+		return nil, noop, err
 	}
 	pool, err := postgres.NewPool(ctx, databaseURL)
 	if err != nil {
-		return nil, nil, noop, err
+		return nil, noop, err
 	}
 	// ParseConfig/NewWithConfig do not themselves establish a connection,
 	// so without this the first real failure would surface inside a
@@ -235,9 +234,9 @@ func buildRepo(ctx context.Context, databaseURL, migrationsDatabaseURL, migratio
 		return pool.Ping(ctx)
 	}); err != nil {
 		pool.Close()
-		return nil, nil, noop, err
+		return nil, noop, err
 	}
-	return postgres.NewProcessPathRepo(pool), pool, pool.Close, nil
+	return postgres.NewProcessPathRepo(pool), pool.Close, nil
 }
 
 // newLogger builds the process-wide structured logger, wrapped so any

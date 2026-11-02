@@ -80,7 +80,8 @@ info:
 
     `ProcessPathCreated`/`ProcessPathUpdated` gained an additive `intake`
     array: the demand sources (`CUSTOMER_ORDER`, `STOCK_TRANSFER`,
-    `SLOT_RELOCATION`, `INVENTORY_CONTROL`) allowed to route work onto the
+    `SLOT_RELOCATION`, `INVENTORY_CONTROL`, and since ADR 0036
+    `REPLENISHMENT`) allowed to route work onto the
     path. order-management's path selection considers only paths whose
     intake contains `CUSTOMER_ORDER`; `[]` means the path is reached only by
     an explicit path id (PACK, REBIN, SLAM).
@@ -111,8 +112,9 @@ info:
     ## Consumers
 
     `fulfillment-execution`, `wes-work-planning`, `workforce-management`
-    (ProcessPath* catalogue caches) and `order-management` (ProcessPath*
-    and CPTScheduleChanged) consume the integration topic. The analytics
+    (ProcessPath* catalogue caches), `order-management` and
+    `network-fulfillment` (ProcessPath* and CPTScheduleChanged) consume the
+    integration topic. The analytics
     topic is consumed only by this service's own projector
     (`cmd/pathmgmt-projector`). See `docs/docs/ecosystem/context-map.md`.
   contact:
@@ -147,8 +149,14 @@ channels:
       This service's own integration topic (its `kafka.Topic` constant).
       Carries all three ProcessPath* event types plus CPTScheduleChanged
       (ADR 0010) as CloudEvents 1.0 (ADR 0016), dispatched by consumers on
-      the full `type`. Only published when EVENT_PUBLISHER=kafka; the
-      default is a local log publisher (no Kafka required for local dev).
+      the full `type`. Kafka message key = the CloudEvents `subject`
+      (`path_id`, or `site_id` for CPTScheduleChanged), hash-balanced.
+      Every message carries the Kafka header `content-type:
+      application/cloudevents+json; charset=UTF-8` plus `traceparent` /
+      `tracestate` when raised inside a traced operation. Events travel
+      through the transactional outbox (Postgres is mandatory, ADR 0037);
+      there is no log or in-memory publisher in the shipped binary. The
+      topic is auto-created by the broker on first write.
     publish:
       operationId: publishProcessPathEvents
       summary: Publish ProcessPathCreated / ProcessPathUpdated / ProcessPathDeactivated / CPTScheduleChanged.
@@ -173,7 +181,9 @@ channels:
         depends on retention. The events are ordinary ones: same types,
         same `data`, same `dataschema`, no new attribute; applying one
         for an already-known path or site is an idempotent upsert. The
-        republish is NOT written to the analytics topic.
+        republish is NOT written to the analytics topic. It is bounded
+        to 1000 paths and 1000 schedules per start; beyond that the rest
+        are not republished and an ERROR is logged.
       tags:
         - name: process-path
         - name: cpt-schedule
@@ -200,7 +210,8 @@ channels:
         sharing its CloudEvents `id`. The startup catalogue republish
         (ADR 0038) is the one exception: it is not a catalogue change, so
         it is not written here and never inflates the revised-paths
-        report.
+        report. Kafka key and headers are the same as on the integration
+        topic.
       tags:
         - name: process-path
         - name: cpt-schedule
@@ -210,6 +221,29 @@ channels:
           - $ref: "#/components/messages/ProcessPathUpdatedAnalytics"
           - $ref: "#/components/messages/ProcessPathDeactivatedAnalytics"
           - $ref: "#/components/messages/CPTScheduleChangedAnalytics"
+    subscribe:
+      operationId: receiveProcessPathAnalyticsEvents
+      summary: Receive the analytics occurrence of the catalogue events (own projector).
+      description: >-
+        Read by `cmd/pathmgmt-projector` only, in consumer group
+        `process-path-management-analytics`. It decodes and validates every
+        message as a CloudEvents 1.0 event, dispatches on the FULL `type`,
+        and projects only `ProcessPathCreated`, `ProcessPathUpdated` and
+        `ProcessPathDeactivated` (counting them per UTC day by the event
+        `time`, deduplicated on the CloudEvents `id`). Any other valid
+        type, `CPTScheduleChanged` included, is ignored. A message that
+        fails CloudEvents validation, or whose handler keeps failing after
+        its retries, is copied unmodified to the dead-letter topic
+        `warehouse.process-path-management.analytics.dlq` and the offset is
+        committed; the consumer never crashes on it and never parses a
+        legacy shape.
+      tags:
+        - name: process-path
+      message:
+        oneOf:
+          - $ref: "#/components/messages/ProcessPathCreatedAnalytics"
+          - $ref: "#/components/messages/ProcessPathUpdatedAnalytics"
+          - $ref: "#/components/messages/ProcessPathDeactivatedAnalytics"
 
 components:
   messages:

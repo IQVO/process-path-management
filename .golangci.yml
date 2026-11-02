@@ -17,6 +17,19 @@ linters:
     - cyclop
     - funlen
     - nestif
+    # --- delta candidates under test (2026-11-02 best-practices brief) ---
+    - dupl
+    - goconst
+    - gochecknoinits
+    - errorlint
+    - errname
+    - unparam
+    - wastedassign
+    - noctx
+    - rowserrcheck
+    - sqlclosecheck
+    - iface
+    - nolintlint
   settings:
     cyclop:
       max-complexity: 15
@@ -30,14 +43,36 @@ linters:
       statements: 50
     nestif:
       min-complexity: 5
+    dupl:
+      threshold: 150
+    goconst:
+      min-len: 3
+      min-occurrences: 3
+    errcheck:
+      check-type-assertions: true
+    revive:
+      rules:
+        - name: file-length-limit
+          severity: error
+          arguments:
+            - max: 300
+              skip-comments: true
+              skip-blank-lines: true
   exclusions:
     rules:
+      - path: _test\.go
+        linters:
+          - revive
       - path: _test\.go
         linters:
           - errcheck
           - gosec
           - funlen
           - gocyclo
+          - dupl
+          - goconst
+          - noctx
+          - unparam
       - path: ^web/
         linters:
           - gocyclo

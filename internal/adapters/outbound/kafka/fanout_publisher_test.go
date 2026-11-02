@@ -137,9 +137,9 @@ func TestFanOutPublisher_PlainSenderRefused(t *testing.T) {
 	})
 	fanOut := FanOutPublisher{Senders: []Sender{plain}, NewId: func() string { return "x" }}
 	err := fanOut.Publish(context.Background(), shared.ProcessPathCreated{PathId: "PICK"})
-	var want errNotIdAware
+	var want notIdAwareError
 	if !errors.As(err, &want) {
-		t.Fatalf("err = %v, want errNotIdAware", err)
+		t.Fatalf("err = %v, want notIdAwareError", err)
 	}
 }
 

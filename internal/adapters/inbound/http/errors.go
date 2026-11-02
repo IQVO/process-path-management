@@ -61,6 +61,14 @@ func statusFor(err error) int {
 // per distinct error category in this service.
 const problemBaseURI = "https://errors.process-path-management.warehouse-systems.dev/"
 
+// statusKey is the JSON field name of the tiny {"status": ...} payloads the
+// health and reports endpoints serve.
+const statusKey = "status"
+
+// problemMalformedRequestBody is the RFC 7807 slug shared by every
+// request-body decode failure (unreadable body, invalid JSON, NUL byte).
+const problemMalformedRequestBody = "malformed-request-body"
+
 // problemInfo is the fixed, category-level (type, title) pair for an RFC
 // 7807 problem response. slug becomes the last path segment of "type";
 // title is a fixed human string for the category (the dynamic detail

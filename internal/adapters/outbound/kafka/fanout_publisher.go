@@ -67,7 +67,7 @@ func (f FanOutPublisher) Publish(ctx context.Context, event shared.DomainEvent) 
 	for _, p := range f.Senders {
 		s, ok := p.(IdAwareSender)
 		if !ok {
-			return errNotIdAware{}
+			return notIdAwareError{}
 		}
 		if err := s.PublishWithId(ctx, event, eventId); err != nil {
 			return err
@@ -76,11 +76,11 @@ func (f FanOutPublisher) Publish(ctx context.Context, event shared.DomainEvent) 
 	return nil
 }
 
-// errNotIdAware reports a fan-out target that cannot publish under a
+// notIdAwareError reports a fan-out target that cannot publish under a
 // caller-minted id; every target must share one id per occurrence (ADR
 // 0016).
-type errNotIdAware struct{}
+type notIdAwareError struct{}
 
-func (errNotIdAware) Error() string {
+func (notIdAwareError) Error() string {
 	return "kafka: fan-out sender does not implement PublishWithId; every target must share one id per occurrence (ADR 0016)"
 }
