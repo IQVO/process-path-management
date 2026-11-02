@@ -135,7 +135,7 @@ func writeRouteNotFound(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleHealthz(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	writeJSON(w, http.StatusOK, map[string]string{statusKey: "ok"})
 }
 
 func (s *Server) handleDefinePath(w http.ResponseWriter, r *http.Request) {
@@ -253,7 +253,7 @@ func (s *Server) handleGetCPTSchedule(w http.ResponseWriter, r *http.Request) {
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, dest any) bool {
 	if err := json.NewDecoder(r.Body).Decode(dest); err != nil {
-		writeProblem(w, http.StatusBadRequest, problemInfo{"malformed-request-body", "The request body is not valid JSON"}, err.Error(), r.URL.Path)
+		writeProblem(w, http.StatusBadRequest, problemInfo{problemMalformedRequestBody, "The request body is not valid JSON"}, err.Error(), r.URL.Path)
 		return false
 	}
 	return true

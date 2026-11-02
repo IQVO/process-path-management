@@ -1,6 +1,7 @@
 package processpath
 
 import (
+	"errors"
 	"slices"
 	"sort"
 	"strings"
@@ -377,16 +378,16 @@ func TestDeclaredCatalogue_NewEntriesSitOnTheValidityBoundary(t *testing.T) {
 		if err := def(p.MatchPrefix(), caps, time.Nanosecond); err != nil {
 			t.Errorf("%s: cycle time 1ns = %v, want accepted", id, err)
 		}
-		if err := def(p.MatchPrefix(), caps, 0); err != ErrInvalidCycleTime {
+		if err := def(p.MatchPrefix(), caps, 0); !errors.Is(err, ErrInvalidCycleTime) {
 			t.Errorf("%s: cycle time 0 = %v, want ErrInvalidCycleTime", id, err)
 		}
-		if err := def(p.MatchPrefix(), nil, p.CycleTimeP95()); err != ErrNoRequiredCapabilities {
+		if err := def(p.MatchPrefix(), nil, p.CycleTimeP95()); !errors.Is(err, ErrNoRequiredCapabilities) {
 			t.Errorf("%s: no capabilities = %v, want ErrNoRequiredCapabilities", id, err)
 		}
-		if err := def(strings.ToUpper(p.MatchPrefix()), caps, p.CycleTimeP95()); err != ErrMatchPrefixNotLowercase {
+		if err := def(strings.ToUpper(p.MatchPrefix()), caps, p.CycleTimeP95()); !errors.Is(err, ErrMatchPrefixNotLowercase) {
 			t.Errorf("%s: upper-case prefix = %v, want ErrMatchPrefixNotLowercase", id, err)
 		}
-		if err := def("", caps, p.CycleTimeP95()); err != ErrEmptyMatchPrefix {
+		if err := def("", caps, p.CycleTimeP95()); !errors.Is(err, ErrEmptyMatchPrefix) {
 			t.Errorf("%s: empty prefix = %v, want ErrEmptyMatchPrefix", id, err)
 		}
 	}

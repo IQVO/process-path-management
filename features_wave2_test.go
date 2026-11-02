@@ -707,7 +707,7 @@ func (w2 *wave2) projectorRejectedNotCloudEvent() error {
 		return err
 	}
 	if !errors.Is(p.lastErr, cloudevents.ErrNotCloudEvent) {
-		return fmt.Errorf("consumer returned %v, want an ErrNotCloudEvent rejection", p.lastErr)
+		return fmt.Errorf("consumer returned %w, want an ErrNotCloudEvent rejection", p.lastErr)
 	}
 	return nil
 }
