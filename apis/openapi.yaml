@@ -84,10 +84,19 @@ paths:
         "503":
           description: >-
             The service is draining (shutdown in progress), or Postgres or
-            Kafka is not reachable (problem type `dependency-unavailable`,
-            the detail names the failing dependencies), and must not
-            receive new traffic.
+            Kafka is not reachable, and must not receive new traffic.
+            While draining the body is `{"status":"not_ready"}`
+            (`application/json`); when a dependency check fails it is an RFC
+            7807 problem of type `dependency-unavailable` whose detail names
+            the failing dependencies (`application/problem+json`).
           content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: not_ready
             application/problem+json:
               schema:
                 $ref: "#/components/schemas/ProblemDetails"
@@ -156,12 +165,19 @@ paths:
           description: >
             The request body is missing or not valid JSON (including a JSON
             number too large for eligibility.maxUnitsPerLine's int64
-            range, or a null element inside requiredCapabilities,
+            range, a null element inside requiredCapabilities,
             eligibility.requiredProductAttributes,
             eligibility.excludedProductAttributes or intake — every array element must
-            be a string), or the Idempotency-Key header is absent
-            (`idempotency-key-required`) or not 1-128 printable ASCII
-            characters (`idempotency-key-invalid`).
+            be a string — or a NUL character U+0000 anywhere in the body),
+            all `malformed-request-body`, or the Idempotency-Key header is
+            absent (`idempotency-key-required`) or not 1-128 printable ASCII
+            characters (`idempotency-key-invalid`). A 4xx answer produced
+            after the key was accepted is stored like a success, so a retry
+            with the same key, method, path and body replays it with
+            `Idempotency-Replayed: true`.
+          headers:
+            Idempotency-Replayed:
+              $ref: "#/components/headers/IdempotencyReplayed"
           content:
             application/problem+json:
               schema:
@@ -172,6 +188,10 @@ paths:
             deactivated), or the Idempotency-Key header was already used
             with a different method, path or body (`idempotency-key-reused`,
             distinguishable from the business conflict by the problem type).
+            A replayed business conflict carries `Idempotency-Replayed: true`.
+          headers:
+            Idempotency-Replayed:
+              $ref: "#/components/headers/IdempotencyReplayed"
           content:
             application/problem+json:
               schema:
@@ -199,11 +219,17 @@ paths:
             requiredCapabilities is empty, cycleTimeP95 is not a positive
             Go duration string, destinationLocationRole is not one of
             Drop/WorkCenter/Shipping, or intake holds an unknown or repeated
-            demand source (invalid-intake).
+            demand source (invalid-intake). A replayed 422 carries
+            `Idempotency-Replayed: true`.
+          headers:
+            Idempotency-Replayed:
+              $ref: "#/components/headers/IdempotencyReplayed"
           content:
             application/problem+json:
               schema:
                 $ref: "#/components/schemas/ProblemDetails"
+        "500":
+          $ref: "#/components/responses/InternalError"
     get:
       tags: [process-paths]
       operationId: listPaths
@@ -250,6 +276,8 @@ paths:
             application/problem+json:
               schema:
                 $ref: "#/components/schemas/ProblemDetails"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /process-paths/{pathId}:
     get:
       tags: [process-paths]
@@ -271,6 +299,8 @@ paths:
             application/problem+json:
               schema:
                 $ref: "#/components/schemas/ProblemDetails"
+        "500":
+          $ref: "#/components/responses/InternalError"
     put:
       tags: [process-paths]
       operationId: revisePath
@@ -305,7 +335,8 @@ paths:
             or a null element inside requiredCapabilities,
             eligibility.requiredProductAttributes,
             eligibility.excludedProductAttributes or intake — every array element must
-            be a string).
+            be a string, or a NUL character U+0000 in the body)
+            (`malformed-request-body`).
           content:
             application/problem+json:
               schema:
@@ -332,6 +363,8 @@ paths:
             application/problem+json:
               schema:
                 $ref: "#/components/schemas/ProblemDetails"
+        "500":
+          $ref: "#/components/responses/InternalError"
     delete:
       tags: [process-paths]
       operationId: deactivatePath
@@ -370,6 +403,8 @@ paths:
             application/problem+json:
               schema:
                 $ref: "#/components/schemas/ProblemDetails"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /sites/{siteId}/cpt-schedule:
     get:
       tags: [cpt-schedule]
@@ -397,6 +432,8 @@ paths:
             application/problem+json:
               schema:
                 $ref: "#/components/schemas/ProblemDetails"
+        "500":
+          $ref: "#/components/responses/InternalError"
     put:
       tags: [cpt-schedule]
       operationId: defineCPTSchedule
@@ -426,7 +463,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/CPTSchedule"
         "400":
-          description: The request body is missing or not valid JSON.
+          description: The request body is missing, not valid JSON, or contains a NUL character U+0000 (`malformed-request-body`).
           content:
             application/problem+json:
               schema:
@@ -459,7 +496,21 @@ paths:
             application/problem+json:
               schema:
                 $ref: "#/components/schemas/ProblemDetails"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
 components:
+  responses:
+    InternalError:
+      description: >-
+        An unexpected error (problem type `internal-error`): a storage or
+        other infrastructure failure, or a recovered panic. On
+        `POST /process-paths` a 5xx is never stored under the
+        Idempotency-Key, so a retry with the same key runs again.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/ProblemDetails"
   headers:
     IdempotencyReplayed:
       description: >-
@@ -616,6 +667,7 @@ components:
             it.
     ProcessPath:
       type: object
+      required: [pathId, matchPrefix, direct, requiredCapabilities, cycleTimeP95, eligibility, intake, status, createdAt, updatedAt]
       properties:
         pathId:
           type: string
@@ -635,7 +687,7 @@ components:
         cycleTimeP95:
           $ref: "#/components/schemas/CycleTimeP95"
         eligibility:
-          $ref: "#/components/schemas/Eligibility"
+          $ref: "#/components/schemas/EligibilityResponse"
         intake:
           type: array
           uniqueItems: true
@@ -715,6 +767,30 @@ components:
           type: boolean
           nullable: true
           default: false
+    EligibilityResponse:
+      type: object
+      description: >
+        The path's eligibility as stored. Always present on a response; an
+        unconstrained path answers `{}`. `maxUnitsPerLine` is omitted when
+        unbounded, the two attribute arrays are omitted when empty and
+        `nonSortable` is omitted when false.
+      properties:
+        maxUnitsPerLine:
+          type: integer
+          format: int64
+          example: 1
+        requiredProductAttributes:
+          type: array
+          items:
+            type: string
+          example: ["giftWrap"]
+        excludedProductAttributes:
+          type: array
+          items:
+            type: string
+          example: ["hazmat"]
+        nonSortable:
+          type: boolean
     DemandSource:
       type: string
       enum: [CUSTOMER_ORDER, STOCK_TRANSFER, SLOT_RELOCATION, INVENTORY_CONTROL, REPLENISHMENT]
@@ -795,6 +871,7 @@ components:
           example: ["PICK"]
     CPTSchedule:
       type: object
+      required: [siteId, timezone, cutoffs, createdAt, updatedAt]
       properties:
         siteId:
           type: string
@@ -827,4 +904,4 @@ components:
           type: string
         instance:
           type: string
-      required: [type, title, status, detail]
+      required: [type, title, status, detail, instance]
