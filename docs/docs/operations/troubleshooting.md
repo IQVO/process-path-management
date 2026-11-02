@@ -36,14 +36,16 @@ path). Mapping: `internal/adapters/inbound/http/errors.go`,
 | 400 | `malformed-request-body` | Body is not valid JSON (or could not be read by the idempotency middleware) | Send valid JSON. |
 | 400 | `invalid-query-parameter` | `GET /process-paths?all=` is not exactly `true` or `false` | Use `true`/`false`. |
 | 400 | `idempotency-key-required` | `POST /process-paths` without `Idempotency-Key`, only when `DATABASE_URL` is set | Send a unique key per logical create. |
+| 400 | `idempotency-key-invalid` | `Idempotency-Key` is not 1-128 printable ASCII characters | Send a UUID. |
+| 400 | `unknown-query-parameter` | `GET /process-paths` with a query parameter other than `all`, `limit`, `cursor` (for example the retired `after` or `offset`) | Use `limit` and `cursor`. |
 | 400 | `invalid-report-query` | Reports API: missing or non-RFC 3339 `from`/`to`, or `granularity` other than `day` | Fix the query. |
 | 404 | `path-not-found` | `GET`/`PUT`/`DELETE /process-paths/{pathId}` for an unknown id | Check the id (case-sensitive). |
 | 404 | `cpt-schedule-not-found` | `GET /sites/{siteId}/cpt-schedule` before any `PUT` | Define the schedule first. |
 | 404 | `route-not-found` | Any path that matches no route (including an empty path segment) | Check the URL; behind Kong the prefix is `/api/process-path-management`. |
 | 409 | `path-already-exists` | `POST` with a `pathId` that exists, **active or deactivated**; also a concurrent create that lost the insert race | Pick another id. A deactivated id can never be reused. |
 | 409 | `path-referenced-by-cpt-schedule` | `DELETE` of a path still listed in some site's `eligiblePathIds`; `detail` names the sites ([ADR 0026](../adr/0026-reject-deactivation-of-paths-in-cpt-schedules.md)) | `PUT` those schedules without the path, then retry. |
+| 409 | `idempotency-key-reused` | Same `Idempotency-Key` with a different method, path or body (SHA-256 of the raw bytes, so whitespace counts; was 422 before ADR 0040) | Use a new key for a different request. |
 | 409 | `concurrent-modification` | The row's `version` changed between load and save ([ADR 0017](../adr/0017-optimistic-concurrency-version-column.md)) | Re-read and retry. |
-| 422 | `idempotency-key-reused` | Same `Idempotency-Key` with a different body (SHA-256 of the raw bytes, so whitespace counts) | Use a new key for a different request. |
 | 422 | `path-deactivated` | `PUT /process-paths/{pathId}` on a deactivated path | Deactivation is terminal; define a new path. |
 | 422 | `empty-path-id`, `empty-match-prefix`, `match-prefix-not-lowercase`, `no-required-capabilities`, `invalid-cycle-time-p95`, `invalid-destination-location-role`, `invalid-intake` | Path invariants. `invalid-cycle-time-p95` also covers a missing or unparseable `cycleTimeP95` (it must be a positive Go duration such as `2h`). `destinationLocationRole` must be `Drop`, `WorkCenter`, `Shipping` or omitted. `intake` must hold distinct values of `CUSTOMER_ORDER`, `STOCK_TRANSFER`, `SLOT_RELOCATION`, `INVENTORY_CONTROL`, `REPLENISHMENT` ([ADR 0034](../adr/0034-process-path-intake.md), [ADR 0036](../adr/0036-replenish-process-path.md)) | Fix the body. |
 | 422 | `ineligible-path-id` | A cutoff's `eligiblePathIds` names an unknown or deactivated path | Define or pick an Active path. |

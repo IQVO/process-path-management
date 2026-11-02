@@ -39,7 +39,7 @@ sequenceDiagram
     alt key already recorded
         MW->>DB: ROLLBACK, SELECT stored outcome
         alt different request body hash
-            MW-->>Client: 422 idempotency-key-reused
+            MW-->>Client: 409 idempotency-key-reused
         else same body
             MW-->>Client: replay stored status, headers and body
         end

@@ -10,6 +10,8 @@ description: "ADR 0011 — POST /process-paths requires a caller-supplied Idempo
 
 ## Status
 
+> Amended by [ADR 0040](./0040-adopt-fleet-rest-api-guideline.md): key reuse is now `409`, the replay header is `Idempotency-Replayed`, the key is validated (1-128 printable ASCII).
+
 Accepted — implemented in the same change that introduced this record.
 *Amended by [ADR 0037](./0037-postgres-and-kafka-are-the-only-runtime.md):
 the middleware always runs (Postgres is mandatory) and `Idempotency-Key` is
@@ -144,7 +146,7 @@ transaction:
   empty transaction (it never wrote anything) and fall through to a
   plain, non-transactional `SELECT` (§5 explains why this is safe
   without any additional locking or waiting):
-  - `request_hash` mismatch → `422` (`idempotency-key-reused`):
+  - `request_hash` mismatch → `409` (`idempotency-key-reused`; `422` before ADR 0040):
     "Idempotency-Key was already used with a different request."
   - `request_hash` match → this is a genuine retry: write
     `response_headers`, then `status_code`, then `response_body`

@@ -168,35 +168,6 @@ func (s *Server) handleDefinePath(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, toProcessPathResponse(p))
 }
 
-func (s *Server) handleListPaths(w http.ResponseWriter, r *http.Request) {
-	// activeOnly is the default (?all=true opts into the audit view) —
-	// matches the retired YAML catalogue's own posture that every
-	// consumer's normal read is "the currently valid set", not
-	// everything that ever existed. The value must be a real boolean
-	// when present: a query like ?all=null is a client bug and gets a
-	// 400 problem+json, never silently coerced to "false".
-	activeOnly := true
-	if vals, ok := r.URL.Query()["all"]; ok {
-		all, err := parseStrictBool(vals[0])
-		if err != nil {
-			writeProblem(w, http.StatusBadRequest, problemInfo{"invalid-query-parameter", "The 'all' query parameter must be a boolean (true or false)"}, "could not parse 'all' as a boolean: "+vals[0], r.URL.Path)
-			return
-		}
-		activeOnly = !all
-	}
-
-	paths, err := s.ListPaths.Execute(r.Context(), activeOnly)
-	if err != nil {
-		writeError(w, r, err)
-		return
-	}
-	responses := make([]processPathResponse, len(paths))
-	for i, p := range paths {
-		responses[i] = toProcessPathResponse(p)
-	}
-	writeJSON(w, http.StatusOK, responses)
-}
-
 func (s *Server) handleGetPath(w http.ResponseWriter, r *http.Request) {
 	pathId := shared.PathId(chi.URLParam(r, "pathId"))
 

@@ -166,6 +166,9 @@ func TestIdempotency_Replay_SameKeySameBody_ReturnsIdenticalResponseNoDuplicate(
 	if first.Code != http.StatusCreated {
 		t.Fatalf("first call status = %d, want 201 (body: %s)", first.Code, first.Body.String())
 	}
+	if got := first.Header().Get(inboundhttp.IdempotencyReplayedHeader); got != "" {
+		t.Fatalf("the first execution carries %s: %q, want none (REST guideline 2.3)", inboundhttp.IdempotencyReplayedHeader, got)
+	}
 	second := doPost()
 	if second.Code != first.Code {
 		t.Fatalf("replay status = %d, want %d", second.Code, first.Code)
@@ -173,13 +176,17 @@ func TestIdempotency_Replay_SameKeySameBody_ReturnsIdenticalResponseNoDuplicate(
 	if second.Body.String() != first.Body.String() {
 		t.Fatalf("replay body differs:\nfirst:  %s\nsecond: %s", first.Body.String(), second.Body.String())
 	}
+	if got := second.Header().Get("Idempotency-Replayed"); got != "true" {
+		t.Fatalf("replay Idempotency-Replayed = %q, want \"true\"", got)
+	}
 	if got := countProcessPathRows(t, pool); got != 1 {
 		t.Fatalf("process_paths rows after replay = %d, want exactly 1 (no duplicate path created)", got)
 	}
 }
 
-// TestIdempotency_SameKeyDifferentBody_Returns422 is scenario (c).
-func TestIdempotency_SameKeyDifferentBody_Returns422(t *testing.T) {
+// TestIdempotency_SameKeyDifferentBody_Returns409 is scenario (c): REST
+// guideline 2.3 answers key reuse with 409 idempotency-key-reused, never 422.
+func TestIdempotency_SameKeyDifferentBody_Returns409(t *testing.T) {
 	pool := idempotencyDB(t)
 	router := newIdempotencyRouter(t, pool)
 
@@ -199,8 +206,11 @@ func TestIdempotency_SameKeyDifferentBody_Returns422(t *testing.T) {
 	rec2 := httptest.NewRecorder()
 	router.ServeHTTP(rec2, req2)
 
-	if rec2.Code != http.StatusUnprocessableEntity {
-		t.Fatalf("status = %d, want 422 (body: %s)", rec2.Code, rec2.Body.String())
+	if rec2.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409 (body: %s)", rec2.Code, rec2.Body.String())
+	}
+	if got := rec2.Header().Get("Idempotency-Replayed"); got != "" {
+		t.Fatalf("a reuse conflict is not a replay but carries Idempotency-Replayed: %q", got)
 	}
 	var problem struct {
 		Type string `json:"type"`

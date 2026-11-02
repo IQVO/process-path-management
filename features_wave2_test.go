@@ -343,9 +343,9 @@ func (w2 *wave2) problemDetail() (string, error) {
 	return detail, nil
 }
 
-func (w2 *wave2) responseBodyIsEmptyArray() error {
-	if got := strings.TrimSpace(string(w2.lastBody)); got != "[]" {
-		return fmt.Errorf("response body is %s, want []", got)
+func (w2 *wave2) responseBodyIsEmptyPage() error {
+	if got := strings.TrimSpace(string(w2.lastBody)); got != `{"items":[]}` {
+		return fmt.Errorf(`response body is %s, want {"items":[]}`, got)
 	}
 	return nil
 }
@@ -825,7 +825,7 @@ func (w2 *wave2) registerResponseSteps(sc *godog.ScenarioContext) {
 	sc.Step(`^the response content type is "([^"]*)"$`, w2.responseContentTypeIs)
 	sc.Step(`^the response problem detail mentions "([^"]*)"$`, w2.problemDetailMentions)
 	sc.Step(`^the response problem detail does not mention "([^"]*)"$`, w2.problemDetailDoesNotMention)
-	sc.Step(`^the response body is an empty JSON array$`, w2.responseBodyIsEmptyArray)
+	sc.Step(`^the response body is an empty page$`, w2.responseBodyIsEmptyPage)
 	sc.Step(`^the process path "([^"]*)" still has matchPrefix "([^"]*)" and cycleTimeP95 "([^"]*)"$`, w2.pathStillHas)
 	sc.Step(`^the CPT schedule response lists cutoff ids "([^"]*)"$`, w2.cptScheduleListsCutoffIds)
 }

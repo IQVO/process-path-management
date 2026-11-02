@@ -503,7 +503,7 @@ func phaseReplay(t *testing.T, s *service, db pgView, brokers []string) {
 	if first == "" {
 		t.Fatal("empty replay response")
 	}
-	if body := s.call(http.MethodPost, "/process-paths", definePathBody("PICK-1", "pick-z"), idemKey("e2e-pick-1"), http.StatusUnprocessableEntity); !strings.Contains(body, "idempotency-key-reused") {
+	if body := s.call(http.MethodPost, "/process-paths", definePathBody("PICK-1", "pick-z"), idemKey("e2e-pick-1"), http.StatusConflict); !strings.Contains(body, "idempotency-key-reused") {
 		t.Fatalf("the same key with another body = %s, want idempotency-key-reused", body)
 	}
 	if body := s.call(http.MethodPost, "/process-paths", replayBody, nil, http.StatusBadRequest); !strings.Contains(body, "idempotency-key-required") {

@@ -177,12 +177,16 @@ func (w *world) decodeLastObject() (map[string]any, error) {
 	return out, nil
 }
 
-func (w *world) decodeLastArray() ([]any, error) {
-	var out []any
+// decodeLastItems decodes the {items, nextCursor} page every collection GET
+// answers (REST API guideline 3.3) and returns its items.
+func (w *world) decodeLastItems() ([]any, error) {
+	var out struct {
+		Items []any `json:"items"`
+	}
 	if err := json.Unmarshal(w.lastBody, &out); err != nil {
 		return nil, fmt.Errorf("decode response %q: %w", string(w.lastBody), err)
 	}
-	return out, nil
+	return out.Items, nil
 }
 
 func splitCapabilities(csv string) []string {
@@ -369,7 +373,7 @@ func (w *world) processPathResponseReports(pathId, matchPrefix, status string) e
 }
 
 func (w *world) processPathListReports(count int) error {
-	arr, err := w.decodeLastArray()
+	arr, err := w.decodeLastItems()
 	if err != nil {
 		return err
 	}
