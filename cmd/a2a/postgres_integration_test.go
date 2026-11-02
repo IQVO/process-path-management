@@ -24,6 +24,7 @@ import (
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
 
+	"github.com/claudioed/process-path-management/internal/adapters/outbound/postgres"
 	"github.com/claudioed/process-path-management/internal/domain/processpath"
 	"github.com/claudioed/process-path-management/internal/domain/shared"
 )
@@ -49,7 +50,7 @@ func TestA2AReadsFromRealPostgresAndWritesNothing(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	repo, pool, closeAdapters, err := buildRepo(ctx, dsn, dsn, migrationsDirForTest(t), quietLogger())
+	repo, closeAdapters, err := buildRepo(ctx, dsn, dsn, migrationsDirForTest(t), quietLogger())
 	if err != nil {
 		t.Fatalf("buildRepo: %v", err)
 	}
@@ -93,9 +94,16 @@ func TestA2AReadsFromRealPostgresAndWritesNothing(t *testing.T) {
 	}
 
 	// The seeding above went through the repository directly, not the outbox;
-	// a read-only agent adds no row.
+	// a read-only agent adds no row. buildRepo no longer hands out its pool,
+	// so the check opens one short-lived extra connection to the same
+	// throwaway testcontainer database.
+	verifyPool, err := postgres.NewPool(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer verifyPool.Close()
 	var rows int
-	if err := pool.QueryRow(ctx, "SELECT count(*) FROM outbox_events").Scan(&rows); err != nil {
+	if err := verifyPool.QueryRow(ctx, "SELECT count(*) FROM outbox_events").Scan(&rows); err != nil {
 		t.Fatal(err)
 	}
 	if rows != 0 {
