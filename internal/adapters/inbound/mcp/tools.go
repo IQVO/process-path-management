@@ -16,6 +16,27 @@ import (
 // tracerName is the OTel instrumentation scope for MCP tool spans.
 const tracerName = "github.com/claudioed/process-path-management/internal/adapters/inbound/mcp"
 
+// Authority levels (Agentic Standard v2, AS-1). Every registered tool
+// declares exactly one of these in its Meta under authorityMetaKey; the
+// fleet rule is agent-authority (warehouse-docs agents/fleet/agent-authority.md).
+const (
+	// authorityMetaKey is the tools/list _meta key carrying a tool's level.
+	authorityMetaKey = "com.warehouse/authority"
+	// authorityL1 reads facts and changes nothing.
+	authorityL1 = "L1"
+	// authorityL2 is a pure recommendation: computes a proposal, changes nothing.
+	authorityL2 = "L2"
+	// authorityL3 mutates state; the caller is accountable.
+	authorityL3 = "L3"
+	// authorityL4 acts with no human gate at all. NOT granted in this
+	// context: the MCP charter is read-only (ADR 0006), so no tool here
+	// may use it and no ADR grants it.
+	authorityL4 = "L4"
+)
+
+// authorityMeta is the Meta a tool registers to declare its authority level.
+func authorityMeta(level string) mcp.Meta { return mcp.Meta{authorityMetaKey: level} }
+
 // Deps is everything the MCP tools need, injected by the composition
 // root. It carries the SAME read use cases the HTTP adapter uses
 // (GetPath, ListPaths) — this adapter never constructs an outbound
@@ -120,12 +141,14 @@ func (d Deps) registerTools(server *mcp.Server) {
 		Name:        "get_process_path",
 		Description: "Return the full definition of one process path by its canonical id: matchPrefix, direct, requiredCapabilities, cycleTimeP95, eligibility, intake (the demand sources allowed to route work onto it: CUSTOMER_ORDER, STOCK_TRANSFER, SLOT_RELOCATION, INVENTORY_CONTROL, REPLENISHMENT; [] means only an explicit path id reaches it), status, and timestamps. Not found is returned as a tool-level error.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: readOnly},
+		Meta:        authorityMeta(authorityL1),
 	}, d.getProcessPath)
 
 	addTool(server, &mcp.Tool{
 		Name:        "list_process_paths",
 		Description: "List process paths in the catalogue. activeOnly (default true) restricts the result to ACTIVE paths; set it false to include deactivated ones too.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: readOnly},
+		Meta:        authorityMeta(authorityL1),
 	}, d.listProcessPaths)
 
 	if d.GetCPTSchedule != nil {
@@ -133,6 +156,7 @@ func (d Deps) registerTools(server *mcp.Server) {
 			Name:        "get_cpt_schedule",
 			Description: "Return one site's Critical Pull Time (CPT) schedule: timezone and the recurring daily cutoffs (cptId, localTime, daysOfWeek, shipMethod, eligiblePathIds). Not found is returned as a tool-level error. Read-only (ADR 0010) — there is no write tool for the schedule.",
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: readOnly},
+			Meta:        authorityMeta(authorityL1),
 		}, d.getCPTSchedule)
 	}
 
