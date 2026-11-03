@@ -29,12 +29,25 @@ The schemas below are the server's own `tools/list` answer, captured from
 `cmd/mcp` running in memory with `REPORTS_BASE_URL` set. Every input schema
 has `additionalProperties: false`, so unknown arguments are rejected.
 
-| Tool | Annotations | Registered when | Use case / backend |
-| --- | --- | --- | --- |
-| `get_process_path` | `readOnlyHint: true`, `idempotentHint: false` | always | `GetPath` over the OLTP store |
-| `list_process_paths` | `readOnlyHint: true`, `idempotentHint: false` | always | `ListPaths` over the OLTP store |
-| `get_cpt_schedule` | `readOnlyHint: true`, `idempotentHint: false` | whenever the schedule read port is wired, which `cmd/mcp` always does | `GetCPTSchedule` over the OLTP store |
-| `get_catalogue_growth_report` | `readOnlyHint: true`, `idempotentHint: false` | only when `REPORTS_BASE_URL` is set | HTTP `GET /reports/catalogue-growth` on `pathmgmt-reports` (10 s client timeout) |
+| Tool | Annotations | Authority | Registered when | Use case / backend |
+| --- | --- | --- | --- | --- |
+| `get_process_path` | `readOnlyHint: true`, `idempotentHint: false` | `L1` | always | `GetPath` over the OLTP store |
+| `list_process_paths` | `readOnlyHint: true`, `idempotentHint: false` | `L1` | always | `ListPaths` over the OLTP store |
+| `get_cpt_schedule` | `readOnlyHint: true`, `idempotentHint: false` | `L1` | whenever the schedule read port is wired, which `cmd/mcp` always does | `GetCPTSchedule` over the OLTP store |
+| `get_catalogue_growth_report` | `readOnlyHint: true`, `idempotentHint: false` | `L1` | only when `REPORTS_BASE_URL` is set | HTTP `GET /reports/catalogue-growth` on `pathmgmt-reports` (10 s client timeout) |
+
+Every tool declares its authority level in its `Meta` under
+`com.warehouse/authority` (returned in `tools/list` `_meta`); the A2A skills
+carry the same level as the tag `authority:L<n>`. All tools here are `L1`
+(reads; the charter is read-only — catalogue changes are REST writes by
+humans) and `L4` is not granted
+([ADR 0041](../adr/0041-agent-authority-levels-and-complete-mcp-surface.md)).
+Since that ADR the handler is **stateless**: it answers the `2026-07-28`
+`server/discover` per-request handshake while a legacy `initialize` still
+answers 200, and no `Mcp-Session-Id` is issued. The advertised registry
+(including the conditional report tool) is pinned with its authority column
+in `internal/adapters/inbound/mcp/testdata/tool_registry.golden` and checked
+for fleet-wide name uniqueness against `testdata/fleet_tool_snapshot.golden`.
 
 Each call runs inside an OTel span `mcp.tool <name>` with attribute
 `mcp.tool.name`; a failing call marks the span `Error`.
@@ -103,6 +116,33 @@ field described as optional lacks `omitempty`. Missing `from`/`to` → error
 The reports client also implements a freshness call
 (`GET /reports/catalogue-growth/freshness`), but no tool exposes it.
 
+## Resource templates
+
+| URI template | MIME type | Backing |
+| --- | --- | --- |
+| `warehouse://process-path-management/paths/{pathId}` | `application/json` | `GetPath` — the same read model as the `get_process_path` tool |
+
+Reading a concrete URI (e.g.
+`warehouse://process-path-management/paths/PICK`) returns exactly one
+bounded path definition (the tool's own output shape) as JSON text; a
+deactivated path is readable too, and an unknown `pathId` — or a URI
+outside the `warehouse://process-path-management/` namespace — is a
+resource error, never an empty success. This is a scoped read model, not
+a catalogue dump: use `list_process_paths` for the list view.
+
+## Prompts
+
+| Prompt | Arguments | Purpose |
+| --- | --- | --- |
+| `review_path_definition` | `pathId` (string, required), `siteId` (string, optional) | The operator SOP for auditing one catalogue entry |
+
+The prompt hands the model the standard procedure: read the path
+definition (resource or `get_process_path`), check `matchPrefix` /
+`requiredCapabilities` / `intake` consistency, verify the site's CPT
+cutoffs (`get_cpt_schedule`) reference existing paths, and escalate any
+correction to the REST surface — the prompt names tools but never calls
+them, and performs no writes.
+
 ## Talking to the server by hand
 
 ```bash
@@ -112,17 +152,25 @@ curl -si localhost:8090/mcp \
   -H 'Content-Type: application/json' \
   -H 'Accept: application/json, text/event-stream' \
   -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"curl","version":"0"}}}'
-# 200, text/event-stream, header Mcp-Session-Id: <id>
+# 200, text/event-stream; the handler is stateless, so NO Mcp-Session-Id
+# is issued and no session header is needed on later calls
 
 curl -s localhost:8090/mcp \
   -H 'Content-Type: application/json' \
   -H 'Accept: application/json, text/event-stream' \
-  -H 'Mcp-Session-Id: <id>' -H 'Mcp-Protocol-Version: 2025-06-18' \
+  -H 'Mcp-Protocol-Version: 2025-06-18' \
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list_process_paths","arguments":{"activeOnly":false}}}'
 ```
 
-Sessions live in the process's memory, so keep `mcp.replicaCount` at 1 (the
-chart has no HPA for MCP and the Service has no session affinity).
+A `2026-07-28` client skips `initialize` entirely: it sends headers
+`MCP-Protocol-Version: 2026-07-28` and `Mcp-Method: <method>` and carries
+`_meta: {"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}`
+in the params (`server/discover` answers the supported versions).
+
+The handler is stateless ([ADR 0041](../adr/0041-agent-authority-levels-and-complete-mcp-surface.md)):
+no session or cross-call state lives in the process, so nothing keeps the
+chart's `mcp.replicaCount` pinned to 1 any more (the chart itself is
+unchanged by that ADR).
 
 ## Who calls it
 
