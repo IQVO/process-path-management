@@ -17,6 +17,8 @@ func NewServer(deps Deps) *mcp.Server {
 	)
 
 	deps.registerTools(server)
+	deps.registerResources(server)
+	deps.registerPrompts(server)
 
 	return server
 }
