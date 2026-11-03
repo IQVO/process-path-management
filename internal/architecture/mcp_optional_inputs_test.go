@@ -17,6 +17,11 @@ import (
 // optionalWordRE matches "optional" as a word in a jsonschema description.
 var optionalWordRE = regexp.MustCompile(`(?i)\boptional\b`)
 
+// mcpAdapterDir is where the fleet keeps the MCP inbound adapter (relative
+// to this package): the authority-fitness sensor in
+// mcp_authority_fitness_test.go scans the same directory.
+const mcpAdapterDir = "../adapters/inbound/mcp"
+
 // mcpOptionalInputViolations returns every struct field in one Go source
 // file whose `jsonschema` description calls the field optional while its
 // `json` tag lacks `omitempty`. The MCP Go SDK infers a tool's input schema
@@ -85,7 +90,7 @@ func slicesContains(items []string, want string) bool {
 // TestMCPOptionalToolInputsCarryOmitempty enforces gap fix D16 on every
 // non-test file of the MCP inbound adapter.
 func TestMCPOptionalToolInputsCarryOmitempty(t *testing.T) {
-	files := goFilesUnder(t, "../adapters/inbound/mcp", false)
+	files := goFilesUnder(t, mcpAdapterDir, false)
 	if len(files) == 0 {
 		t.Fatal("no MCP adapter sources found; the sensor is looking in the wrong place")
 	}
