@@ -87,7 +87,7 @@ func Card(cfg Config) *a2a.AgentCard {
 				ID:          skillGetProcessPath,
 				Name:        "Look up one process path",
 				Description: "Read the full definition of one process path by its canonical pathId (e.g. PICK, PACK, REBIN, SLAM): matchPrefix, direct, requiredCapabilities, cycleTimeP95, eligibility, intake (the demand sources allowed to route work onto it; [] means only an explicit path id reaches it), status and timestamps. Works for deactivated paths too. Answers a 404 problem when no path has that id. Persists nothing.",
-				Tags:        []string{"process-path", "catalogue", "read"},
+				Tags:        []string{"process-path", "catalogue", "read", "authority:L1"},
 				InputModes:  []string{mediaTypeJSON},
 				Examples: []string{
 					`{"skill":"get_process_path","arguments":{"pathId":"PICK"}}`,
@@ -97,7 +97,7 @@ func Card(cfg Config) *a2a.AgentCard {
 				ID:          skillListProcessPaths,
 				Name:        "List the process-path catalogue",
 				Description: "Read the process-path catalogue: every ACTIVE path by default, or, with activeOnly=false, deactivated paths too (the audit view). Each entry carries the same fields as get_process_path. The catalogue is small and bounded. Persists nothing.",
-				Tags:        []string{"process-path", "catalogue", "read"},
+				Tags:        []string{"process-path", "catalogue", "read", "authority:L1"},
 				InputModes:  []string{mediaTypeJSON},
 				Examples: []string{
 					`{"skill":"list_process_paths","arguments":{}}`,

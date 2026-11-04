@@ -128,6 +128,7 @@ const sidebars: SidebarsConfig = {
         'adr/0038-republish-catalogue-on-start',
         'adr/0039-a2a-inbound-adapter',
         'adr/0040-adopt-fleet-rest-api-guideline',
+        'adr/0041-agent-authority-levels-and-complete-mcp-surface',
       ],
     },
   ],

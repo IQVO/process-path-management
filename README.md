@@ -38,8 +38,8 @@ The site above is built from `docs/` (Docusaurus). The pages, by task:
 | Upstreams, downstreams, event contract, failure behaviour | [Integration](docs/docs/ecosystem/integration.md), [Context Map](docs/docs/ecosystem/context-map.md) |
 | Use cases: trigger, inputs, invariants, events | [Use cases](docs/docs/ddd/use-cases.md) |
 | Why Generic, neighbour classes | [Subdomain classification](docs/docs/ddd/subdomain-classification.md) |
-| MCP tools and their inputs | [MCP tools](docs/docs/mcp/tools.md), [Governance charter](docs/docs/mcp/governance-charter.md) |
-| A2A skills (read-only agent) | [A2A inbound adapter (ADR 0039)](docs/docs/adr/0039-a2a-inbound-adapter.md) |
+| MCP tools, resource and prompt | [MCP tools](docs/docs/mcp/tools.md), [Governance charter](docs/docs/mcp/governance-charter.md) |
+| A2A skills (read-only agent) | [A2A inbound adapter (ADR 0039)](docs/docs/adr/0039-a2a-inbound-adapter.md), [Agent authority and complete MCP surface (ADR 0041)](docs/docs/adr/0041-agent-authority-levels-and-complete-mcp-surface.md) |
 | Vocabulary, aggregates, the ddd-crew pack | [Ubiquitous language](docs/docs/ddd/ubiquitous-language.md), [Aggregates and invariants](docs/docs/ddd/aggregates-and-invariants.md), [DDD artifacts](docs/docs/ddd/ddd-artifacts.md) |
 | Decisions | [ADR index](docs/docs/adr/about.md) |
 | REST contract | [`apis/openapi.yaml`](apis/openapi.yaml) (rendered under API Reference on the site); reports API: [`apis/openapi-reports.yaml`](apis/openapi-reports.yaml) (Reports API Reference) |
@@ -410,7 +410,17 @@ the catalogue-growth report read-only over REST
 `GET /healthz` backs the probes; no authentication — the in-cluster ClusterIP
 boundary is the access control). Tools: `list_process_paths`,
 `get_process_path`, `get_cpt_schedule` and the curated report tool
-`get_catalogue_growth_report`.
+`get_catalogue_growth_report`; one resource template
+(`warehouse://process-path-management/paths/{pathId}`) and one prompt
+(`review_path_definition`) complete the agent surface. The handler is
+stateless ([ADR 0041](docs/docs/adr/0041-agent-authority-levels-and-complete-mcp-surface.md)).
+
+### Agent authority
+
+Every MCP tool and A2A skill declares one authority level in its `Meta` key
+`com.warehouse/authority` / skill tag `authority:L<n>` — all `L1` here: the
+charter is read-only, catalogue changes stay on the REST API
+([ADR 0041](docs/docs/adr/0041-agent-authority-levels-and-complete-mcp-surface.md)).
 
 ## Observability
 

@@ -157,14 +157,21 @@ func TestEval_ParametersAreDescribed(t *testing.T) {
 }
 
 // TestEval_ToolRegistryMatchesGolden pins the exact advertised surface
-// (names + write-intent annotations) to testdata/tool_registry.golden. Any
-// addition, removal, or annotation change must be a conscious golden-file
-// update reviewed against the charter's curation rules. The golden pins
-// the DEFAULT-deps surface (the deps cmd/mcp always wires); the
-// conditionally registered report tool is pinned separately below.
+// (names + write-intent annotations + declared authority level, ADR 0041)
+// to testdata/tool_registry.golden as TSV: name, readOnly, destructive,
+// authority. Any addition, removal, or annotation change must be a
+// conscious golden-file update reviewed against the charter's curation
+// rules. The golden pins the FULL surface — the default deps plus a wired
+// reports client — so the conditionally registered report tool's
+// authority is pinned here too (its presence/absence behaviour is pinned
+// separately below).
 func TestEval_ToolRegistryMatchesGolden(t *testing.T) {
+	res, err := wireSession(t, evalDepsWithReports()).ListTools(t.Context(), nil)
+	if err != nil {
+		t.Fatalf("list tools: %v", err)
+	}
 	var got []string
-	for _, tool := range wireTools(t) {
+	for _, tool := range res.Tools {
 		destructive := false
 		if tool.Annotations != nil && tool.Annotations.DestructiveHint != nil {
 			destructive = *tool.Annotations.DestructiveHint
@@ -173,7 +180,8 @@ func TestEval_ToolRegistryMatchesGolden(t *testing.T) {
 		if tool.Annotations != nil {
 			readOnly = tool.Annotations.ReadOnlyHint
 		}
-		got = append(got, fmt.Sprintf("%s\t%t\t%t", tool.Name, readOnly, destructive))
+		authority, _ := tool.Meta[authorityKey].(string)
+		got = append(got, fmt.Sprintf("%s\t%t\t%t\t%s", tool.Name, readOnly, destructive, authority))
 	}
 	sort.Strings(got)
 

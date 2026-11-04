@@ -15,6 +15,7 @@ It is the Open Host Service / Published Language SOURCE for
 ### NO calls to sibling bounded contexts — NON-NEGOTIABLE
 
 - This service **never calls any other context**: no REST, no MCP, no gRPC, no live lookup —
+ Agent authority: every MCP tool and A2A skill declares a level (`com.warehouse/authority` _meta / `authority:L<n>` skill tag; L1 read, L2 recommend, L3 write - ADR 41); the MCP Streamable HTTP handler is stateless and answers the 2026-07-28 revision.
   ever, in either direction. Cross-context data must be local/declarative, never a live lookup.
 - It **never subscribes to another context's topic**. Its only Kafka consumer
   (`internal/adapters/inbound/kafka`, run by `cmd/pathmgmt-projector`) reads its OWN analytics
