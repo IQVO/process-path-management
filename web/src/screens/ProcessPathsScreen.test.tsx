@@ -9,7 +9,7 @@ describe("ProcessPathsScreen", () => {
   it("lists process paths returned by GET /process-paths", async () => {
     server.use(
       http.get(`${PROCESS_PATH_API_BASE}/process-paths`, () =>
-        HttpResponse.json([
+        HttpResponse.json({ items: [
           {
             pathId: "PICK",
             matchPrefix: "pick",
@@ -22,7 +22,7 @@ describe("ProcessPathsScreen", () => {
             createdAt: "2026-09-06T00:00:00Z",
             updatedAt: "2026-09-06T00:00:00Z",
           },
-        ]),
+        ] }),
       ),
     );
 
@@ -38,7 +38,7 @@ describe("ProcessPathsScreen", () => {
 
   it("defines a new process path and shows a success message", async () => {
     server.use(
-      http.get(`${PROCESS_PATH_API_BASE}/process-paths`, () => HttpResponse.json([])),
+      http.get(`${PROCESS_PATH_API_BASE}/process-paths`, () => HttpResponse.json({ items: [] })),
       http.post(`${PROCESS_PATH_API_BASE}/process-paths`, async ({ request }) => {
         const body = (await request.json()) as {
           pathId: string;
@@ -94,7 +94,7 @@ describe("ProcessPathsScreen", () => {
 
   it("shows the RFC 7807 problem detail on a 409 conflict", async () => {
     server.use(
-      http.get(`${PROCESS_PATH_API_BASE}/process-paths`, () => HttpResponse.json([])),
+      http.get(`${PROCESS_PATH_API_BASE}/process-paths`, () => HttpResponse.json({ items: [] })),
       http.post(`${PROCESS_PATH_API_BASE}/process-paths`, () =>
         HttpResponse.json(
           {
@@ -126,7 +126,7 @@ describe("ProcessPathsScreen", () => {
     let revised = false;
     server.use(
       http.get(`${PROCESS_PATH_API_BASE}/process-paths`, () =>
-        HttpResponse.json([
+        HttpResponse.json({ items: [
           {
             pathId: "PICK",
             matchPrefix: revised ? "pick-v2" : "pick",
@@ -137,7 +137,7 @@ describe("ProcessPathsScreen", () => {
             createdAt: "2026-09-06T00:00:00Z",
             updatedAt: "2026-09-06T00:00:00Z",
           },
-        ]),
+        ] }),
       ),
       http.put(`${PROCESS_PATH_API_BASE}/process-paths/PICK`, async ({ request }) => {
         const body = (await request.json()) as {
@@ -190,7 +190,7 @@ describe("ProcessPathsScreen", () => {
     let deactivated = false;
     server.use(
       http.get(`${PROCESS_PATH_API_BASE}/process-paths`, () =>
-        HttpResponse.json([
+        HttpResponse.json({ items: [
           {
             pathId: "SLAM",
             matchPrefix: "slam",
@@ -200,7 +200,7 @@ describe("ProcessPathsScreen", () => {
             createdAt: "2026-09-06T00:00:00Z",
             updatedAt: "2026-09-06T00:00:00Z",
           },
-        ]),
+        ] }),
       ),
       http.delete(`${PROCESS_PATH_API_BASE}/process-paths/SLAM`, () => {
         deactivated = true;
@@ -217,5 +217,69 @@ describe("ProcessPathsScreen", () => {
       expect(screen.queryByRole("button", { name: "Deactivate" })).not.toBeInTheDocument(),
     );
     expect(screen.getByText("DEACTIVATED")).toBeInTheDocument();
+  });
+});
+
+describe("ProcessPathsScreen reads GET /process-paths as {items,nextCursor}", () => {
+  const path = (pathId: string) => ({
+    pathId,
+    matchPrefix: pathId.toLowerCase(),
+    direct: true,
+    requiredCapabilities: ["x"],
+    cycleTimeP95: "2h0m0s",
+    status: "ACTIVE",
+    createdAt: "2026-09-06T00:00:00Z",
+    updatedAt: "2026-09-06T00:00:00Z",
+  });
+
+  it("follows nextCursor and lists every page, with only declared query parameters", async () => {
+    const seen: URL[] = [];
+    server.use(
+      http.get(`${PROCESS_PATH_API_BASE}/process-paths`, ({ request }) => {
+        const url = new URL(request.url);
+        seen.push(url);
+        const cursor = url.searchParams.get("cursor");
+        if (cursor === null) return HttpResponse.json({ items: [path("PACK"), path("PICK")], nextCursor: "c1" });
+        if (cursor === "c1") return HttpResponse.json({ items: [path("REBIN")], nextCursor: "c2" });
+        return HttpResponse.json({ items: [path("SLAM")] });
+      }),
+    );
+
+    render(<ProcessPathsScreen />);
+
+    for (const id of ["PACK", "PICK", "REBIN", "SLAM"]) {
+      expect(await screen.findByText(id)).toBeInTheDocument();
+    }
+    expect(seen.map((u) => u.searchParams.get("cursor"))).toEqual([null, "c1", "c2"]);
+    // The producer answers 400 unknown-query-parameter to anything but all/limit/cursor.
+    for (const u of seen) {
+      expect([...u.searchParams.keys()].filter((k) => !["all", "limit", "cursor"].includes(k))).toEqual([]);
+    }
+    // Deactivated paths stay visible on this screen, which needs the audit view.
+    expect(seen[0].searchParams.get("all")).toBe("true");
+  });
+
+  it("refuses a 200 that is not a page: error shown, no 'No process paths defined yet'", async () => {
+    server.use(
+      http.get(`${PROCESS_PATH_API_BASE}/process-paths`, () => HttpResponse.json([{ pathId: "PICK" }])),
+    );
+
+    render(<ProcessPathsScreen />);
+
+    expect(await screen.findByText(/not a \{items,nextCursor\} page/)).toBeInTheDocument();
+    expect(screen.queryByText("No process paths defined yet.")).not.toBeInTheDocument();
+  });
+
+  it("a 400 unknown-query-parameter is shown, not read as an empty list", async () => {
+    server.use(
+      http.get(`${PROCESS_PATH_API_BASE}/process-paths`, () =>
+        HttpResponse.json({ title: "Unknown query parameter", status: 400 }, { status: 400 }),
+      ),
+    );
+
+    render(<ProcessPathsScreen />);
+
+    expect(await screen.findByText(/400/)).toBeInTheDocument();
+    expect(screen.queryByText("No process paths defined yet.")).not.toBeInTheDocument();
   });
 });
