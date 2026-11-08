@@ -18,7 +18,7 @@ require (
 	github.com/riandyrn/otelchi v0.12.3
 	github.com/segmentio/kafka-go v0.4.51
 	github.com/testcontainers/testcontainers-go v0.45.0
-	github.com/testcontainers/testcontainers-go/modules/kafka v0.44.0
+	github.com/testcontainers/testcontainers-go/modules/kafka v0.45.0
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.45.0
 	go.opentelemetry.io/contrib/instrumentation/runtime v0.72.0
 	go.opentelemetry.io/otel v1.47.0
@@ -68,6 +68,7 @@ require (
 	github.com/magiconair/properties v1.18.12 // indirect
 	github.com/mattn/go-colorable v0.1.13 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
+	github.com/mdelapenya/tlscert v0.2.0 // indirect
 	github.com/moby/docker-image-spec v1.3.1 // indirect
 	github.com/moby/go-archive v0.3.3 // indirect
 	github.com/moby/moby/api v1.56.1 // indirect
@@ -112,4 +113,5 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260928230214-8a89bd6388cc // indirect
 	google.golang.org/grpc v1.83.2 // indirect
 	google.golang.org/protobuf v1.36.12 // indirect
+	software.sslmate.com/src/go-pkcs12 v0.7.3 // indirect
 )
