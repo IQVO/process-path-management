@@ -80,7 +80,8 @@ info:
 
     `ProcessPathCreated`/`ProcessPathUpdated` gained an additive `intake`
     array: the demand sources (`CUSTOMER_ORDER`, `STOCK_TRANSFER`,
-    `SLOT_RELOCATION`, `INVENTORY_CONTROL`) allowed to route work onto the
+    `SLOT_RELOCATION`, `INVENTORY_CONTROL`, and since ADR 0036
+    `REPLENISHMENT`) allowed to route work onto the
     path. order-management's path selection considers only paths whose
     intake contains `CUSTOMER_ORDER`; `[]` means the path is reached only by
     an explicit path id (PACK, REBIN, SLAM).
@@ -94,11 +95,26 @@ info:
     Consumers that decode `intake` as free strings need no change; a
     consumer that validates against a fixed enum must accept the new value.
 
+    ## ADR 0038: the full-case and cross-dock paths
+
+    Three paths are declared as catalogue data under the unchanged v1
+    payload (additive: no new event type, no payload field, no new enum
+    value). `FULL_CASE` (`match_prefix` `full-case`, capability `pick`)
+    and `CROSS_DOCK` (`match_prefix` `cross-dock`, capability `dispatch`,
+    `destination_location_role` `Shipping`) accept `CUSTOMER_ORDER`
+    only for a line carrying their `required_product_attributes`
+    (`fullCase`, `crossDock`), so a line without them still selects `PICK`;
+    `CROSS_DOCK` also accepts `STOCK_TRANSFER`. `BREAK_CASE`
+    (`match_prefix` `break`, capability `break`) has an empty intake and is
+    reached only by an explicit path id. This service reads no pack fact:
+    the attributes are derived by the consumer from its own data.
+
     ## Consumers
 
     `fulfillment-execution`, `wes-work-planning`, `workforce-management`
-    (ProcessPath* catalogue caches) and `order-management` (ProcessPath*
-    and CPTScheduleChanged) consume the integration topic. The analytics
+    (ProcessPath* catalogue caches), `order-management` and
+    `network-fulfillment` (ProcessPath* and CPTScheduleChanged) consume the
+    integration topic. The analytics
     topic is consumed only by this service's own projector
     (`cmd/pathmgmt-projector`). See `docs/docs/ecosystem/context-map.md`.
   contact:
@@ -133,8 +149,14 @@ channels:
       This service's own integration topic (its `kafka.Topic` constant).
       Carries all three ProcessPath* event types plus CPTScheduleChanged
       (ADR 0010) as CloudEvents 1.0 (ADR 0016), dispatched by consumers on
-      the full `type`. Only published when EVENT_PUBLISHER=kafka; the
-      default is a local log publisher (no Kafka required for local dev).
+      the full `type`. Kafka message key = the CloudEvents `subject`
+      (`path_id`, or `site_id` for CPTScheduleChanged), hash-balanced.
+      Every message carries the Kafka header `content-type:
+      application/cloudevents+json; charset=UTF-8` plus `traceparent` /
+      `tracestate` when raised inside a traced operation. Events travel
+      through the transactional outbox (Postgres is mandatory, ADR 0037);
+      there is no log or in-memory publisher in the shipped binary. The
+      topic is auto-created by the broker on first write.
     publish:
       operationId: publishProcessPathEvents
       summary: Publish ProcessPathCreated / ProcessPathUpdated / ProcessPathDeactivated / CPTScheduleChanged.
@@ -145,6 +167,23 @@ channels:
         no-op deactivation (already-deactivated path) raise nothing —
         consumers never have to diff two identical payloads to notice
         nothing changed.
+
+        Additionally, once at every service start (ADR 0038), after the
+        migrations and before the listener binds, the service re-enqueues
+        its whole CURRENT catalogue through the same transactional outbox:
+        one `ProcessPathUpdated` (the path's full current state) per ACTIVE
+        path, in ascending `path_id` order, then one `CPTScheduleChanged` per
+        site, in ascending `site_id` order. Deactivated paths are not
+        republished. This keeps the topic carrying the current state of
+        every live path and schedule even after the broker's retention
+        expired their original events, so a consumer that rebuilds its
+        catalogue by replaying the topic from the earliest offset never
+        depends on retention. The events are ordinary ones: same types,
+        same `data`, same `dataschema`, no new attribute; applying one
+        for an already-known path or site is an idempotent upsert. The
+        republish is NOT written to the analytics topic. It is bounded
+        to 1000 paths and 1000 schedules per start; beyond that the rest
+        are not republished and an ERROR is logged.
       tags:
         - name: process-path
         - name: cpt-schedule
@@ -168,7 +207,11 @@ channels:
       summary: Publish the analytics occurrence of every domain event.
       description: >-
         Written in the same outbox transaction as the integration row,
-        sharing its CloudEvents `id`.
+        sharing its CloudEvents `id`. The startup catalogue republish
+        (ADR 0038) is the one exception: it is not a catalogue change, so
+        it is not written here and never inflates the revised-paths
+        report. Kafka key and headers are the same as on the integration
+        topic.
       tags:
         - name: process-path
         - name: cpt-schedule
@@ -178,6 +221,29 @@ channels:
           - $ref: "#/components/messages/ProcessPathUpdatedAnalytics"
           - $ref: "#/components/messages/ProcessPathDeactivatedAnalytics"
           - $ref: "#/components/messages/CPTScheduleChangedAnalytics"
+    subscribe:
+      operationId: receiveProcessPathAnalyticsEvents
+      summary: Receive the analytics occurrence of the catalogue events (own projector).
+      description: >-
+        Read by `cmd/pathmgmt-projector` only, in consumer group
+        `process-path-management-analytics`. It decodes and validates every
+        message as a CloudEvents 1.0 event, dispatches on the FULL `type`,
+        and projects only `ProcessPathCreated`, `ProcessPathUpdated` and
+        `ProcessPathDeactivated` (counting them per UTC day by the event
+        `time`, deduplicated on the CloudEvents `id`). Any other valid
+        type, `CPTScheduleChanged` included, is ignored. A message that
+        fails CloudEvents validation, or whose handler keeps failing after
+        its retries, is copied unmodified to the dead-letter topic
+        `warehouse.process-path-management.analytics.dlq` and the offset is
+        committed; the consumer never crashes on it and never parses a
+        legacy shape.
+      tags:
+        - name: process-path
+      message:
+        oneOf:
+          - $ref: "#/components/messages/ProcessPathCreatedAnalytics"
+          - $ref: "#/components/messages/ProcessPathUpdatedAnalytics"
+          - $ref: "#/components/messages/ProcessPathDeactivatedAnalytics"
 
 components:
   messages:
@@ -260,6 +326,72 @@ components:
                 excluded_product_attributes: ["hazmat"]
                 non_sortable: true
               intake: ["CUSTOMER_ORDER"]
+        - name: fullCasePathDefined
+          summary: >-
+            The FULL_CASE path (ADR 0038): whole-case picking, selectable
+            only for a line carrying the fullCase attribute.
+          payload:
+            specversion: "1.0"
+            id: 1b7d4e92-5c68-4f03-a9d1-3e8f6a2c7b15
+            source: /warehouse/process-path-management
+            type: com.warehouse.wes.process-path-management.processpath.ProcessPathCreated
+            subject: FULL_CASE
+            time: "2026-10-24T00:00:00Z"
+            datacontenttype: application/json
+            dataschema: "urn:warehouse:process-path-management:events:ProcessPathCreated:v1"
+            data:
+              path_id: FULL_CASE
+              match_prefix: full-case
+              direct: true
+              required_capabilities: ["pick"]
+              cycle_time_p95: 1h30m0s
+              eligibility:
+                required_product_attributes: ["fullCase"]
+              intake: ["CUSTOMER_ORDER"]
+        - name: crossDockPathDefined
+          summary: >-
+            The CROSS_DOCK path (ADR 0038): receive to ship with no
+            put-away; completed work is destined for Shipping.
+          payload:
+            specversion: "1.0"
+            id: 8e3a5c71-2d94-4b60-8f17-5a9c1e4d6b38
+            source: /warehouse/process-path-management
+            type: com.warehouse.wes.process-path-management.processpath.ProcessPathCreated
+            subject: CROSS_DOCK
+            time: "2026-10-24T00:00:00Z"
+            datacontenttype: application/json
+            dataschema: "urn:warehouse:process-path-management:events:ProcessPathCreated:v1"
+            data:
+              path_id: CROSS_DOCK
+              match_prefix: cross-dock
+              direct: true
+              required_capabilities: ["dispatch"]
+              destination_location_role: Shipping
+              cycle_time_p95: 1h0m0s
+              eligibility:
+                required_product_attributes: ["crossDock"]
+              intake: ["CUSTOMER_ORDER", "STOCK_TRANSFER"]
+        - name: breakCasePathDefined
+          summary: >-
+            The BREAK_CASE path (ADR 0038): reached only by an explicit
+            path id, never selected for an order line.
+          payload:
+            specversion: "1.0"
+            id: 5d2f8b46-7a10-4c93-b2e5-9f6d3a1c8e72
+            source: /warehouse/process-path-management
+            type: com.warehouse.wes.process-path-management.processpath.ProcessPathCreated
+            subject: BREAK_CASE
+            time: "2026-10-24T00:00:00Z"
+            datacontenttype: application/json
+            dataschema: "urn:warehouse:process-path-management:events:ProcessPathCreated:v1"
+            data:
+              path_id: BREAK_CASE
+              match_prefix: break
+              direct: true
+              required_capabilities: ["break"]
+              cycle_time_p95: 2h0m0s
+              eligibility: {}
+              intake: []
 
     ProcessPathUpdated:
       name: ProcessPathUpdated
@@ -267,7 +399,10 @@ components:
       summary: An Active path's matchPrefix, requiredCapabilities, cycleTimeP95, eligibility, or intake was revised.
       description: >-
         Raised when RevisePath actually changes something. Not raised for
-        a no-op update.
+        a no-op update. Also published once per ACTIVE path at every
+        service start (ADR 0038), carrying the path's full current state,
+        so the topic holds it regardless of broker retention; consumers
+        upsert it exactly like a revision.
       contentType: application/cloudevents+json
       tags:
         - name: process-path
@@ -336,7 +471,10 @@ components:
         consumer replaying from FirstOffset needs no prior state to build
         its read model, the same self-sufficient-event convention
         ProcessPathCreated/Updated already use. Keyed by `site_id`, not
-        `path_id` — a different aggregate sharing this topic.
+        `path_id` — a different aggregate sharing this topic. Also
+        published once per site at every service start (ADR 0038), with
+        the schedule's current cutoffs, so the topic holds it regardless
+        of broker retention; consumers upsert it as they do a revision.
       contentType: application/cloudevents+json
       tags:
         - name: cpt-schedule

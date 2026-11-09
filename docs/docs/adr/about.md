@@ -95,6 +95,10 @@ Typos, broken links and formatting are of course fair game.
 | [0035](./0035-dispatch-process-path.md) | A DISPATCH process path carries the transfer dispatch leg | Accepted; companion to fulfillment-execution ADR-0036; follows 0033, uses 0034's vocabulary |
 | [0036](./0036-replenish-process-path.md) | A REPLENISH process path and a REPLENISHMENT demand source carry pick-face top-ups | Accepted; companion to wes-work-planning ADR 0042 and fulfillment-execution ADR 0050; follows 0033/0035, extends 0034's vocabulary |
 | [0037](./0037-postgres-and-kafka-are-the-only-runtime.md) | Postgres and Kafka are the only runtime | Accepted; supersedes the in-memory fallback, log publisher and optional outbox of 0001/0003/0006/0007/0011/0025 |
+| [0038](./0038-republish-catalogue-on-start.md) | Republish the whole current catalogue at startup | Accepted; extends 0003/0010; closes the replay-from-earliest vs. retention gap |
+| [0039](./0039-a2a-inbound-adapter.md) | A2A inbound adapter (third driving adapter): two curated READ-ONLY skills, `get_process_path` and `list_process_paths`, over the same use cases as REST and MCP; message-only, problems answered in-band, delegation only | Accepted; follows 0006, mirrors the MCP read-only charter |
+| [0040](./0040-adopt-fleet-rest-api-guideline.md) | Adopt the fleet REST API guideline: keyset-paged `GET /process-paths`, key reuse 409, `Idempotency-Replayed` | Accepted; amends 0011 |
+| [0041](./0041-agent-authority-levels-and-complete-mcp-surface.md) | Agent authority levels and complete MCP surface: every MCP tool and A2A skill declares one level (all `L1` here; `com.warehouse/authority` meta, `authority:L<n>` tag), the MCP server is stateless (serves the 2026-07-28 revision), and the server gains one resource template and one prompt | Accepted; follows 0006, 0039 |
 
 Each of these reconstructs a decision that is actually visible in this
 repository's history or code — none is a generic placeholder.

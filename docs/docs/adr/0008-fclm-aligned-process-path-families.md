@@ -34,7 +34,7 @@ Center Labor Management) hierarchy naming — was supplied as the basis
 for closing this gap, explicitly caveated as "common vocabulary, not a
 canonical spec" since naming drifts across building generations. Cross-
 referencing it against this platform's own reference research
-(`amazon-fulfillment-ddd.md`) and this session's prior investigation
+(`fulfillment-reference-ddd.md`) and this session's prior investigation
 (see the Domain Vision page's "real e-commerce fulfillment flow, mapped"
 section, `warehouse-docs` PR #9) surfaced a real tension: several of the
 supplied families collide with architectural decisions this fleet

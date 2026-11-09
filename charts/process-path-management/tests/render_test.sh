@@ -62,7 +62,7 @@ no_sweep="$(render --set config.housekeeping.interval=0s --show-only templates/d
 grep -A1 'name: HOUSEKEEPING_INTERVAL' <<<"$no_sweep" | grep -q 'value: "0s"' \
   || fail "config.housekeeping.interval=0s is not rendered"
 
-analytics_args=(--set analytics.enabled=true --set mcp.enabled=true --set analytics.database.projectorUrl=postgres://projector@example.invalid:5432/a)
+analytics_args=(--set analytics.enabled=true --set mcp.enabled=true --set a2a.enabled=true --set analytics.database.projectorUrl=postgres://projector@example.invalid:5432/a)
 
 # D21 (ADR 0029): the projector and reports binaries call telemetry.Setup,
 # so they always get LOG_LEVEL, ENVIRONMENT and SERVICE_VERSION, even with
@@ -77,7 +77,7 @@ done
 
 # The other workloads read their own explicit env and must NOT inherit the
 # api's HTTP_ADDR / OTEL_SERVICE_NAME from the ConfigMap.
-for template in reports-deployment.yaml projector-deployment.yaml mcp-deployment.yaml; do
+for template in reports-deployment.yaml projector-deployment.yaml mcp-deployment.yaml a2a-deployment.yaml; do
   if render "${analytics_args[@]}" --show-only "templates/$template" | grep -q 'configMapRef:'; then
     fail "$template must not mount the api ConfigMap"
   fi
@@ -119,6 +119,21 @@ grace="$(awk '/terminationGracePeriodSeconds:/ {print $2; exit}' <<<"$api_deploy
 # --- the mandatory env of every binary is rendered -----------------------------------
 mcp_dep="$(render --set mcp.enabled=true --show-only templates/mcp-deployment.yaml)"
 grep -A4 'name: DATABASE_URL$' <<<"$mcp_dep" | grep -q 'secretKeyRef:' || fail "the mcp DATABASE_URL must come from a Secret"
+# --- the A2A agent (ADR 0039): read-only, same Postgres, port 8093 ----------------------
+a2a_dep="$(render --set a2a.enabled=true --show-only templates/a2a-deployment.yaml)"
+grep -A4 'name: DATABASE_URL$' <<<"$a2a_dep" | grep -q 'secretKeyRef:' || fail "the a2a DATABASE_URL must come from a Secret"
+[[ "$(env_value "$a2a_dep" A2A_ADDR)" == ":8093" ]] || fail "the a2a agent must listen on :8093 (8090 is mcp, 8091 the projector admin, 8092 the reports API)"
+grep -q 'command: \["/app/a2a"\]' <<<"$a2a_dep" || fail "the a2a Deployment must run /app/a2a"
+# The Agent Card must advertise a dialable absolute URL: it defaults to the
+# release's in-cluster Service DNS (namespace-derived, so pattern-match) and
+# stays overridable.
+a2a_url="$(env_value "$a2a_dep" A2A_AGENT_URL || true)" # missing var must reach the fail message below, not abort under set -e
+[[ "$a2a_url" =~ ^http://[a-z0-9.-]+-a2a\.[a-z0-9-]+\.svc\.cluster\.local:8093/$ ]] || fail "A2A_AGENT_URL default is not the in-cluster Service DNS: $a2a_url"
+a2a_override="$(render --set a2a.enabled=true --set a2a.agentUrl=http://gw.example/api/a2a/process-path-management/ --show-only templates/a2a-deployment.yaml)"
+[[ "$(env_value "$a2a_override" A2A_AGENT_URL || true)" == "http://gw.example/api/a2a/process-path-management/" ]] || fail "a2a.agentUrl does not override A2A_AGENT_URL"
+# A2A is off by default: no a2a resource renders unless asked for.
+if render --show-only templates/a2a-deployment.yaml 2>/dev/null | grep -q 'kind: Deployment'; then fail "the a2a Deployment rendered with default values"; fi
+if render | grep -q -- '-a2a'; then fail "an a2a resource rendered with default values"; fi
 proj="$(render "${analytics_args[@]}" --show-only templates/projector-deployment.yaml)"
 reports="$(render "${analytics_args[@]}" --show-only templates/reports-deployment.yaml)"
 [[ "$(env_value "$proj" KAFKA_BROKERS)" == "kafka.example.invalid:9092" ]] || fail "the projector KAFKA_BROKERS is not rendered from kafka.brokers"
@@ -128,9 +143,10 @@ reports="$(render "${analytics_args[@]}" --show-only templates/reports-deploymen
 # rendered by its Deployment: a new mandatory variable fails until the chart
 # carries it.
 scan_required() { # scan_required <cmd dir name>: the VARs a binary reports as "<VAR> is required"
-  grep -ho 'errors.New("[A-Z_]* is required' "$repo_dir"/cmd/"$1"/*.go | sed -E 's/errors.New\("//; s/ is required//' | sort -u
+  # The regex allows digits: A2A_AGENT_URL would otherwise be read as A_AGENT_URL.
+  grep -hoE 'errors.New\("[A-Z][A-Z0-9_]+ is required' "$repo_dir"/cmd/"$1"/*.go | sed -E 's/errors.New\("//; s/ is required//' | sort -u
 }
-for pair in "pathmgmt:$api_deployment" "mcp:$mcp_dep" "pathmgmt-projector:$proj" "pathmgmt-reports:$reports"; do
+for pair in "pathmgmt:$api_deployment" "mcp:$mcp_dep" "a2a:$a2a_dep" "pathmgmt-projector:$proj" "pathmgmt-reports:$reports"; do
   bin="${pair%%:*}"
   rendered="${pair#*:}"
   vars="$(scan_required "$bin")"
@@ -177,8 +193,11 @@ infra_api="$(helm template "$release" "$chart_dir" "${infra[@]}" --show-only tem
 grep -q 'process-path-management-db' <<<"$infra_api" || fail "infra values: DATABASE_URL must come from the process-path-management-db secret"
 infra_proj="$(helm template "$release" "$chart_dir" "${infra[@]}" --show-only templates/projector-deployment.yaml)"
 [[ "$(env_value "$infra_proj" KAFKA_BROKERS)" == "kafka.warehouse-systems.svc.cluster.local:9092" ]] || fail "infra values: projector KAFKA_BROKERS"
-for component in api analytics-projector analytics-reports mcp frontend; do
+for component in api analytics-projector analytics-reports mcp a2a frontend; do
   grep -q "app.kubernetes.io/component: $component" <<<"$infra_all" || fail "infra values: component $component not rendered"
 done
+
+helm template "$release" "$chart_dir" "${infra[@]}" --show-only templates/a2a-deployment.yaml >/dev/null || fail "infra values: a2a"
+helm template "$release" "$chart_dir" "${infra[@]}" --show-only templates/a2a-route.yaml | grep -q "replacePrefixMatch: /$" || fail "infra values: the a2a route must rewrite to /"
 
 echo "process-path-management chart render assertions passed"

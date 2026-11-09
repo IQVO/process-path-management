@@ -205,7 +205,10 @@ class SeedCatalogue(unittest.TestCase):
         intake = {e["pathId"]: e["intake"] for e in seed.load(seed.DEFAULT_FILE)}
         self.assertEqual(intake, {"PICK": ["CUSTOMER_ORDER"], "PACK": [], "REBIN": [], "SLAM": [],
                                   "RELOCATE": ["SLOT_RELOCATION"], "DISPATCH": ["STOCK_TRANSFER"],
-                                  "REPLENISH": ["REPLENISHMENT"]})
+                                  "REPLENISH": ["REPLENISHMENT"],
+                                  # ADR 0038: the full-case and cross-dock flows
+                                  "FULL_CASE": ["CUSTOMER_ORDER"], "CROSS_DOCK": ["CUSTOMER_ORDER", "STOCK_TRANSFER"],
+                                  "BREAK_CASE": []})
 
     def test_repository_catalogue_declares_replenish(self):
         # ADR 0036: REPLENISH mirrors RELOCATE and is the only path that carries REPLENISHMENT.
@@ -216,6 +219,50 @@ class SeedCatalogue(unittest.TestCase):
         self.assertNotIn("eligibility", replenish[0])
         carriers = [e["pathId"] for e in entries if "REPLENISHMENT" in e["intake"]]
         self.assertEqual(carriers, ["REPLENISH"])
+
+    def test_repository_catalogue_declares_the_case_flows(self):
+        # ADR 0038: FULL_CASE and CROSS_DOCK are gated by a required product attribute, so no existing
+        # order line can be captured; BREAK_CASE is reached by an explicit path id only.
+        by_id = {e["pathId"]: e for e in seed.load(seed.DEFAULT_FILE)}
+        self.assertEqual(by_id["FULL_CASE"], {
+            "pathId": "FULL_CASE", "matchPrefix": "full-case", "direct": True, "requiredCapabilities": ["pick"],
+            "cycleTimeP95": "1h30m", "eligibility": {"requiredProductAttributes": ["fullCase"]},
+            "intake": ["CUSTOMER_ORDER"]})
+        self.assertEqual(by_id["CROSS_DOCK"], {
+            "pathId": "CROSS_DOCK", "matchPrefix": "cross-dock", "direct": True, "requiredCapabilities": ["dispatch"],
+            "destinationLocationRole": "Shipping", "cycleTimeP95": "1h",
+            "eligibility": {"requiredProductAttributes": ["crossDock"]}, "intake": ["CUSTOMER_ORDER", "STOCK_TRANSFER"]})
+        self.assertEqual(by_id["BREAK_CASE"], {
+            "pathId": "BREAK_CASE", "matchPrefix": "break", "direct": True, "requiredCapabilities": ["break"],
+            "cycleTimeP95": "2h", "intake": []})
+
+    def test_case_flows_are_added_alone_to_an_environment_seeded_before_them(self):
+        entries = seed.load(seed.DEFAULT_FILE)
+        new = {"FULL_CASE", "CROSS_DOCK", "BREAK_CASE"}
+        for e in entries:
+            if e["pathId"] not in new:
+                FakeApi.store[e["pathId"]] = stored(e)
+        code, out = self.run_seed(entries)
+        self.assertEqual(code, 0, out)
+        self.assertEqual({(m, pid) for m, pid, _ in FakeApi.writes}, {("POST", pid) for pid in new}, out)
+        self.assertEqual(FakeApi.store["CROSS_DOCK"]["destinationLocationRole"], "Shipping")
+        FakeApi.writes.clear()
+        code, out = self.run_seed(entries)  # re-run: the stored duration is the declared one, nothing drifts
+        self.assertEqual((code, FakeApi.writes), (0, []), out)
+
+    def test_case_flow_eligibility_drift_is_revised_with_put(self):
+        entries = {e["pathId"]: e for e in seed.load(seed.DEFAULT_FILE)}
+        FakeApi.store["FULL_CASE"] = stored(entries["FULL_CASE"], eligibility={})
+        code, out = self.run_seed([entries["FULL_CASE"]])
+        self.assertEqual(code, 0, out)
+        self.assertEqual([(m, pid) for m, pid, _ in FakeApi.writes], [("PUT", "FULL_CASE")], out)
+        self.assertEqual(FakeApi.store["FULL_CASE"]["eligibility"], {"requiredProductAttributes": ["fullCase"]})
+
+    def test_a_different_destination_role_on_cross_dock_is_refused(self):
+        cross = {e["pathId"]: e for e in seed.load(seed.DEFAULT_FILE)}["CROSS_DOCK"]
+        FakeApi.store["CROSS_DOCK"] = stored(cross, destinationLocationRole="Drop")
+        code, out = self.run_seed([cross])
+        self.assertEqual((code, FakeApi.writes), (1, []), out)
 
     def test_replenish_is_created_once_then_converges_idempotently(self):
         # Seed the real catalogue twice against the fake API: REPLENISH is created once, the second

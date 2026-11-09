@@ -78,6 +78,13 @@ Fully qualified name of the MCP server deployment/service.
 {{- end }}
 
 {{/*
+Fully qualified name of the A2A agent Deployment/Service (<release>-a2a, ADR 0039).
+*/}}
+{{- define "process-path-management.a2aFullname" -}}
+{{- include "process-path-management.fullname" . }}-a2a
+{{- end }}
+
+{{/*
 MANDATORY (ADR 0037: Postgres is the only runtime). cmd/pathmgmt and cmd/mcp exit
 at boot without DATABASE_URL; there is no in-memory mode.
 */}}

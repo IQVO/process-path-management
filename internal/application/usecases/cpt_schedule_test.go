@@ -54,6 +54,17 @@ func (r *fakeCPTScheduleRepo) ListSiteIDsReferencingPath(_ context.Context, id s
 	return sites, nil
 }
 
+func (r *fakeCPTScheduleRepo) LockAllForShare(_ context.Context) ([]shared.SiteId, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	sites := make([]shared.SiteId, 0, len(r.schedules))
+	for siteId := range r.schedules {
+		sites = append(sites, siteId)
+	}
+	sort.Slice(sites, func(i, j int) bool { return sites[i] < sites[j] })
+	return sites, nil
+}
+
 // erroringCPTScheduleRepo forces every call to fail, so error-propagation
 // branches are exercised.
 type erroringCPTScheduleRepo struct {
@@ -68,6 +79,13 @@ func (r *erroringCPTScheduleRepo) ListSiteIDsReferencingPath(ctx context.Context
 		return nil, r.listErr
 	}
 	return r.fakeCPTScheduleRepo.ListSiteIDsReferencingPath(ctx, id)
+}
+
+func (r *erroringCPTScheduleRepo) LockAllForShare(ctx context.Context) ([]shared.SiteId, error) {
+	if r.listErr != nil {
+		return nil, r.listErr
+	}
+	return r.fakeCPTScheduleRepo.LockAllForShare(ctx)
 }
 
 func (r *erroringCPTScheduleRepo) FindBySiteID(ctx context.Context, siteId shared.SiteId) (*cptschedule.CPTSchedule, error) {

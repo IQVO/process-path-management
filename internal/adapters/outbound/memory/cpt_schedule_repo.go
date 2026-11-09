@@ -50,6 +50,19 @@ func (r *CPTScheduleRepo) ListSiteIDsReferencingPath(_ context.Context, id share
 	return sites, nil
 }
 
+// LockAllForShare returns every site, sorted ascending. The in-memory repo
+// has no row locks; this is the test-double equivalent.
+func (r *CPTScheduleRepo) LockAllForShare(_ context.Context) ([]shared.SiteId, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	sites := make([]shared.SiteId, 0, len(r.schedules))
+	for siteId := range r.schedules {
+		sites = append(sites, siteId)
+	}
+	sort.Slice(sites, func(i, j int) bool { return sites[i] < sites[j] })
+	return sites, nil
+}
+
 func scheduleReferences(s *cptschedule.CPTSchedule, id shared.PathId) bool {
 	for _, c := range s.Cutoffs() {
 		for _, p := range c.EligiblePathIds() {

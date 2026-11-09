@@ -73,6 +73,21 @@ Source: `cmd/mcp/main.go` unless noted.
 `cmd/mcp` never reads `EVENT_PUBLISHER`, `KAFKA_BROKERS` or the
 housekeeping variables: it wires only the read use cases.
 
+## `a2a` (A2A agent)
+
+Source: `cmd/a2a/main.go` unless noted ([ADR 0039](../adr/0039-a2a-inbound-adapter.md)).
+
+| Variable | Default | Required | Meaning |
+| --- | --- | --- | --- |
+| `A2A_ADDR` | `:8093` | no | Listen address. The JSON-RPC endpoint is mounted at `/` and `/a2a`, the Agent Card at `/.well-known/agent-card.json`; `GET /healthz` is the probe target. |
+| `A2A_AGENT_URL` | **required** | yes | Absolute `http(s)` URL of the JSON-RPC endpoint, advertised on the Agent Card. Unset or not absolute stops the boot: `A2A_AGENT_URL is required: ...`. The chart defaults it to `http://<release>-a2a.<ns>.svc.cluster.local:8093/` (`a2a.agentUrl` overrides). |
+| `DATABASE_URL` | **required** | yes | Same OLTP database as `pathmgmt`; unset stops the boot as for `mcp` (ADR 0037). |
+| `MIGRATIONS_DATABASE_URL`, `MIGRATIONS_PATH` | `DATABASE_URL`, `migrations` | no | As for `mcp`: `cmd/a2a` also runs `migrations/` at boot. |
+| `LOG_LEVEL`, `OTEL_SERVICE_NAME`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `SERVICE_VERSION`, `ENVIRONMENT` | `info`, `process-path-management-a2a`, `localhost:4317`, `dev`, `local` | no | As for `mcp`. `SERVICE_VERSION` is also the Agent Card version. |
+
+`cmd/a2a` is read-only like `cmd/mcp`: it never reads `EVENT_PUBLISHER` or
+`KAFKA_BROKERS`, writes no outbox row and calls no other context.
+
 ## `pathmgmt-projector` (analytics writer)
 
 Source: `cmd/pathmgmt-projector/main.go`.

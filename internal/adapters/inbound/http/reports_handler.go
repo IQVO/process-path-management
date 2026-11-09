@@ -96,7 +96,7 @@ func (h *ReportsHandlers) GetCatalogueGrowthFreshness(w http.ResponseWriter, r *
 
 // GetReportsHealthz serves GET /healthz for the reports service.
 func (h *ReportsHandlers) GetReportsHealthz(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	writeJSON(w, http.StatusOK, map[string]string{statusKey: "ok"})
 }
 
 // parseRequiredTime parses an RFC3339 timestamp, writing an RFC 7807 400

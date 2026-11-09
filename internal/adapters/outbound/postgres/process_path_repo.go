@@ -160,6 +160,21 @@ func (r *ProcessPathRepo) ListAll(ctx context.Context) ([]*processpath.ProcessPa
 	`)
 }
 
+// ListPage implements ports.ProcessPathRepo: one keyset page ordered by id,
+// the natural key (unique, so it is its own tie-break). `id > $2` and
+// ORDER BY id use the same collation, so consecutive pages neither repeat
+// nor skip a row; "" sorts before every non-empty id and starts at the
+// first one. Served by the primary-key index.
+func (r *ProcessPathRepo) ListPage(ctx context.Context, activeOnly bool, after shared.PathId, size int) ([]*processpath.ProcessPath, error) {
+	return r.list(ctx, `
+		SELECT id, match_prefix, direct, required_capabilities, destination_location_role, cycle_time_p95, eligibility, intake, status, created_at, updated_at, version
+		FROM process_paths
+		WHERE id > $1 AND (NOT $2::boolean OR status = 'ACTIVE')
+		ORDER BY id
+		LIMIT $3
+	`, string(after), activeOnly, size)
+}
+
 func (r *ProcessPathRepo) list(ctx context.Context, query string, args ...any) ([]*processpath.ProcessPath, error) {
 	rows, err := querierFrom(ctx, r.pool).Query(ctx, query, args...)
 	if err != nil {

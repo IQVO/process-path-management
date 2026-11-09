@@ -16,6 +16,12 @@ import (
 	"github.com/claudioed/process-path-management/internal/domain/shared"
 )
 
+// pathsPage is the GET /process-paths answer: {items, nextCursor} (REST guideline 3.3).
+type pathsPage struct {
+	Items      []map[string]any `json:"items"`
+	NextCursor string           `json:"nextCursor"`
+}
+
 type fixedClock struct{ t time.Time }
 
 func (c fixedClock) Now() time.Time { return c.t }
@@ -157,12 +163,12 @@ func TestListPaths_AllFalse_StillActiveOnly(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/process-paths?all=false", nil)
 	rr := httptest.NewRecorder()
 	router.ServeHTTP(rr, req)
-	var paths []map[string]any
-	if err := json.Unmarshal(rr.Body.Bytes(), &paths); err != nil {
+	var pg pathsPage
+	if err := json.Unmarshal(rr.Body.Bytes(), &pg); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if len(paths) != 1 {
-		t.Fatalf("want 1 path with ?all=false, got %d", len(paths))
+	if len(pg.Items) != 1 {
+		t.Fatalf("want 1 path with ?all=false, got %d", len(pg.Items))
 	}
 }
 
@@ -232,23 +238,23 @@ func TestListPaths_ActiveOnlyByDefault_ExcludesDeactivated(t *testing.T) {
 	listReq := httptest.NewRequest(http.MethodGet, "/process-paths", nil)
 	listRR := httptest.NewRecorder()
 	router.ServeHTTP(listRR, listReq)
-	var paths []map[string]any
-	if err := json.Unmarshal(listRR.Body.Bytes(), &paths); err != nil {
+	var pg pathsPage
+	if err := json.Unmarshal(listRR.Body.Bytes(), &pg); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if len(paths) != 1 {
-		t.Fatalf("want 1 active path, got %d: %+v", len(paths), paths)
+	if len(pg.Items) != 1 {
+		t.Fatalf("want 1 active path, got %d: %+v", len(pg.Items), pg.Items)
 	}
 
 	allReq := httptest.NewRequest(http.MethodGet, "/process-paths?all=true", nil)
 	allRR := httptest.NewRecorder()
 	router.ServeHTTP(allRR, allReq)
-	var allPaths []map[string]any
-	if err := json.Unmarshal(allRR.Body.Bytes(), &allPaths); err != nil {
+	var allPage pathsPage
+	if err := json.Unmarshal(allRR.Body.Bytes(), &allPage); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if len(allPaths) != 2 {
-		t.Fatalf("want 2 total paths with ?all=true, got %d", len(allPaths))
+	if len(allPage.Items) != 2 {
+		t.Fatalf("want 2 total paths with ?all=true, got %d", len(allPage.Items))
 	}
 }
 

@@ -157,6 +157,33 @@ func (r *CPTScheduleRepo) ListSiteIDsReferencingPath(ctx context.Context, id sha
 	return sites, rows.Err()
 }
 
+// LockAllForShare implements ports.CPTScheduleRepo: SELECT ... FOR SHARE on
+// every cpt_schedules row in ascending site order (the stable lock order),
+// returning the site ids. FOR SHARE coexists with other share locks but
+// conflicts with the UPDATE that DefineCPTSchedule's Save performs, so a
+// concurrent redefinition either commits before this read (and is seen) or
+// waits until the caller's unit of work ends (and its event is enqueued
+// after the caller's). Outside a unit of work the locks release at once.
+func (r *CPTScheduleRepo) LockAllForShare(ctx context.Context) ([]shared.SiteId, error) {
+	rows, err := querierFrom(ctx, r.pool).Query(ctx, `
+		SELECT site_id FROM cpt_schedules ORDER BY site_id FOR SHARE
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var sites []shared.SiteId
+	for rows.Next() {
+		var site string
+		if err := rows.Scan(&site); err != nil {
+			return nil, err
+		}
+		sites = append(sites, shared.SiteId(site))
+	}
+	return sites, rows.Err()
+}
+
 func weekdaysToStrings(ds []cptschedule.Weekday) []string {
 	out := make([]string, len(ds))
 	for i, d := range ds {

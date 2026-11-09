@@ -285,13 +285,18 @@ func TestDeclaredCatalogue_IntakePerPath(t *testing.T) {
 func TestDeclaredCatalogue_ExactlyOneCustomerOrderEntryPoint(t *testing.T) {
 	var entryPoints []string
 	for _, entry := range loadDeclaredCatalogue(t) {
-		if declaredIntake(t, entry).Contains(shared.DemandSourceCustomerOrder) {
+		// ADR 0038: an entry point gated by a required product attribute
+		// (FULL_CASE, CROSS_DOCK) cannot tie with or capture a line that
+		// lacks the attribute, so only UNGATED entry points are counted;
+		// TestDeclaredCatalogue_GatedEntryPoints pins the gated ones.
+		if declaredIntake(t, entry).Contains(shared.DemandSourceCustomerOrder) &&
+			len(declaredEligibility(entry).RequiredProductAttributes()) == 0 {
 			id, _ := entry["pathId"].(string)
 			entryPoints = append(entryPoints, id)
 		}
 	}
 	if !slices.Equal(entryPoints, []string{"PICK"}) {
-		t.Fatalf("CUSTOMER_ORDER entry points = %v, want [PICK]", entryPoints)
+		t.Fatalf("ungated CUSTOMER_ORDER entry points = %v, want [PICK]", entryPoints)
 	}
 }
 

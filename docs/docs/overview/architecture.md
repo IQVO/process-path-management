@@ -43,13 +43,14 @@ not by convention alone ([ADR 0021](../adr/0021-architecture-fitness-suite.md)).
 
 ## Binaries
 
-All four binaries are built into one image (`Dockerfile`, entrypoint
+The binaries are built into one image (`Dockerfile`, entrypoint
 `./pathmgmt`); the chart picks the binary with `command:`.
 
 | Binary | Role | Port (default env) | Endpoints | Helm workload |
 | --- | --- | --- | --- | --- |
 | `cmd/pathmgmt` | OLTP REST API. Also runs the outbox relay and the housekeeping sweeper in-process when Postgres is configured | `:8080` (`HTTP_ADDR`) | The 7 operations in `apis/openapi.yaml`, plus `GET /healthz` and `GET /readyz` | `<release>` Deployment (component `api`), Service port 80 → 8080 |
 | `cmd/mcp` | Read-only MCP server over Streamable HTTP | `:8090` (`MCP_ADDR`) | MCP at `/`, `/mcp` and `/mcp/`; `GET /healthz` | `<release>-mcp` (only with `mcp.enabled=true`), Service port 8090 |
+| `cmd/a2a` | Read-only A2A agent (skills `get_process_path`, `list_process_paths`), JSON-RPC over HTTP ([ADR 0039](../adr/0039-a2a-inbound-adapter.md)) | `:8093` (`A2A_ADDR`) | JSON-RPC at `/` and `/a2a`; Agent Card at `/.well-known/agent-card.json`; `GET /healthz` | `<release>-a2a` (only with `a2a.enabled=true`), Service port 8093 |
 | `cmd/pathmgmt-projector` | Analytics writer: consumes `warehouse.process-path-management.analytics` into the analytical database. Owns the analytical schema | `:8091` (`ADMIN_ADDR`) | `GET /healthz`, `GET /readyz` only | `<release>-projector` (only with `analytics.enabled=true`), no Service |
 | `cmd/pathmgmt-reports` | Analytics reader: serves the catalogue-growth report over a read-only pool | `:8092` (`HTTP_ADDR`) | `GET /reports/catalogue-growth`, `GET /reports/catalogue-growth/freshness`, `GET /healthz` | `<release>-reports` (only with `analytics.enabled=true`), Service port 80 → 8092 |
 
