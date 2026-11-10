@@ -291,6 +291,38 @@ jobs:
       - name: Mutation testing (domain layer)
         run: gremlins unleash ./internal/domain --workers 1 --timeout-coefficient 30
 
+  # Weekly full-domain mutation run (fleet parity with product-master). This
+  # domain is small enough that mutation-fast already covers all of it, so the
+  # scope is the same; what this job adds is a scheduled run against develop
+  # that opens (and closes) a harness:red issue, catching a mutant that starts
+  # surviving without any PR touching the domain (dependency or toolchain bump).
+  mutation:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    timeout-minutes: 90
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Install gremlins
+        run: go install github.com/go-gremlins/gremlins/cmd/gremlins@v0.6.0
+      - name: Mutation testing (domain layer)
+        run: gremlins unleash ./internal/domain --workers 1 --timeout-coefficient 30
+      - name: Open or refresh the harness:red issue on a scheduled failure
+        if: failure() && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/harness/red_issue.py mutation "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+      - name: Close the harness:red issue when the scheduled run recovers
+        if: success() && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/harness/red_issue.py mutation --close
+
   # ============================================================
   # CLASSIFICATION: CONTINUOUS DRIFT (advisory, weekly — never blocks a PR)
   # ============================================================
