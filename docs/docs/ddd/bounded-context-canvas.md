@@ -85,7 +85,7 @@ flowchart LR
     subgraph OUT["Outbound - whom it calls or notifies"]
         direction TB
         out0["fulfillment-execution,<br/>wes-work-planning,<br/>workforce-management,<br/>order-management,<br/>network-fulfillment"]:::ctx
-        out1["order-management,<br/>network-fulfillment"]:::ctx
+        out1["order-management,<br/>network-fulfillment,<br/>dock-scheduling,<br/>outbound-shipping"]:::ctx
         out2["own pathmgmt-projector and<br/>pathmgmt-reports"]:::self
         out3["operators (manual replay)"]:::self
     end
@@ -172,7 +172,8 @@ No sibling context sends this context a command or event.
 | fulfillment-execution, wes-work-planning, workforce-management, order-management, network-fulfillment | ProcessPathCreated | Event | Kafka `warehouse.process-path-management.events`, `com.warehouse.wes.process-path-management.processpath.ProcessPathCreated` | OHS + PL → CF |
 | same five | ProcessPathUpdated | Event | same topic, `com.warehouse.wes.process-path-management.processpath.ProcessPathUpdated` | OHS + PL → CF |
 | same five | ProcessPathDeactivated | Event | same topic, `com.warehouse.wes.process-path-management.processpath.ProcessPathDeactivated` | OHS + PL → CF |
-| order-management, network-fulfillment | CPTScheduleChanged | Event | same topic, `com.warehouse.wes.process-path-management.cptschedule.CPTScheduleChanged` | OHS + PL → CF |
+| order-management, network-fulfillment, dock-scheduling, outbound-shipping | CPTScheduleChanged | Event | same topic, `com.warehouse.wes.process-path-management.cptschedule.CPTScheduleChanged` | OHS + PL → CF |
+| the consumers of each type above | ProcessPathUpdated and CPTScheduleChanged for the whole current catalogue, once per service start (`RepublishCatalogue`, ADR 0038) | Event | same topic only, not the analytics topic | OHS + PL → CF |
 | Own `pathmgmt-projector` | all four types (analytics copy) | Event | Kafka `warehouse.process-path-management.analytics` | Internal |
 | Own `pathmgmt-reports` | Catalogue growth report | Query | REST `GET /reports/catalogue-growth` from the MCP report tool | Internal |
 | Operators (manual replay) | Poison analytics message | Event | Kafka `warehouse.process-path-management.analytics.dlq` | Internal |

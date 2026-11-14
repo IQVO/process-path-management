@@ -177,11 +177,13 @@ Port `9092` is also what the kind cluster's Kafka publishes on the host: stop
 one of the two, or map the compose broker elsewhere and advertise the same
 address.
 
-Every event is published to BOTH the integration topic and the analytics
-topic (`warehouse.process-path-management.analytics`, ADR 0007): the use cases
-write one `outbox_events` row per topic inside the same transaction as the
-aggregate change, and the always-on relay goroutine drains that table onto
-Kafka. `GET /readyz` is 200 only while Postgres answers a ping and a Kafka
+Every event a use case raises is published to BOTH the integration topic and
+the analytics topic (`warehouse.process-path-management.analytics`, ADR 0007):
+the use cases write one `outbox_events` row per topic inside the same
+transaction as the aggregate change, and the always-on relay goroutine drains
+that table onto Kafka. At every start the service also re-enqueues the whole
+current catalogue (`ProcessPathUpdated` per ACTIVE path, `CPTScheduleChanged`
+per site) on the integration topic only (ADR 0038). `GET /readyz` is 200 only while Postgres answers a ping and a Kafka
 broker answers a metadata request (topics are never required: the broker
 auto-creates them on first write).
 
@@ -394,8 +396,9 @@ curl -s -X DELETE localhost:8080/process-paths/PICK
 `com.warehouse.wes.process-path-management.<entity>.<EventName>`, e.g.
 `com.warehouse.wes.process-path-management.processpath.ProcessPathCreated` and
 `com.warehouse.wes.process-path-management.cptschedule.CPTScheduleChanged`.
-`order-management` consumes the CPT schedule for promise-date computation;
-`workforce-management` replays the path catalogue from the integration topic.
+`order-management` consumes the CPT schedule for promise-date computation
+(`network-fulfillment`, `dock-scheduling` and `outbound-shipping` consume it
+too); `workforce-management` replays the path catalogue from the integration topic.
 
 ## Analytics data product (Catalogue Growth report)
 

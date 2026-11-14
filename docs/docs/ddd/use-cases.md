@@ -7,11 +7,14 @@ description: Every application use case in internal/application/usecases - its t
 
 # Use cases
 
-The application layer (`internal/application/usecases`) has seven use cases,
-one struct each. Five are triggered only by REST; the three reads are also
-exposed as MCP tools. There is no Kafka-triggered and no scheduled use case:
-this service consumes no sibling topic, and its only background jobs (the
-outbox relay and the housekeeping sweeper) are infrastructure in
+The application layer (`internal/application/usecases`) has eight use cases,
+one struct each. Four are writes triggered only by REST; the three reads are
+also exposed as MCP tools. The eighth, `RepublishCatalogue`, is triggered by
+neither: `cmd/pathmgmt` runs it once at every start
+([ADR 0038](../adr/0038-republish-catalogue-on-start.md)). There is no
+Kafka-triggered use case and nothing runs a use case on a timer: this service
+consumes no sibling topic, and its background jobs (the outbox relay and the
+housekeeping sweeper) are infrastructure in
 `internal/adapters/outbound/postgres`, not use cases.
 
 | Use case | Trigger | Writes | Event raised |
@@ -23,6 +26,7 @@ outbox relay and the housekeeping sweeper) are infrastructure in
 | `ListPaths` | REST `GET /process-paths[?all=true]`; MCP `list_process_paths` | — | — |
 | `DefineCPTSchedule` | REST `PUT /sites/{siteId}/cpt-schedule` | `cpt_schedules`, `cpt_schedule_cutoffs` | `CPTScheduleChanged`, only if the schedule is new or changed |
 | `GetCPTSchedule` | REST `GET /sites/{siteId}/cpt-schedule`; MCP `get_cpt_schedule` | — | — |
+| `RepublishCatalogue` | Start of `cmd/pathmgmt`, once per start, after the migrations and before the listener binds | `outbox_events` (integration-topic rows only) | `ProcessPathUpdated` per ACTIVE path, then `CPTScheduleChanged` per site |
 
 Every write runs inside `UnitOfWork.Execute`, so
 the aggregate row and the `outbox_events` rows commit together
@@ -157,6 +161,39 @@ returns 200 and publishes nothing.
 ## `GetCPTSchedule`
 
 Returns the site's schedule or `ErrCPTScheduleNotFound`. No events.
+
+## `RepublishCatalogue`
+
+`internal/application/usecases/republish_catalogue.go`; wired by
+`buildRepublishCatalogue` and run by `republishCatalogueAtStartup` in
+`cmd/pathmgmt/republish.go`, which `cmd/pathmgmt/main.go` calls once before
+`serveHTTP` starts the listener and the outbox relay.
+
+**Inputs:** none. It reads the store.
+
+**Steps, all in one unit of work:**
+
+1. `ListActive` paths, sorted by id, then `LockByIDsForShare`
+   ([ADR 0028](../adr/0028-close-path-cpt-schedule-race-with-row-locks.md));
+   a path deactivated since the listing is skipped. Deactivated paths are
+   never republished.
+2. `CPTScheduleRepo.LockAllForShare`, then one snapshot per site, sorted by
+   site id.
+3. At most `MaxRepublishedPerKind` (1000) paths and 1000 schedules per start.
+   What exceeds the cap is counted in `RepublishResult.Omitted` and logged at
+   ERROR.
+
+**Raises:** one `ProcessPathUpdated` per ACTIVE path (the payload
+`RevisePath` builds, `processPathUpdated`) and one `CPTScheduleChanged` per
+site (`cptschedule.ToSnapshot`), through the same transactional outbox, on
+the **integration topic only**: `buildRepublishCatalogue` gives the
+`OutboxPublisher` the integration encoder alone, so nothing reaches the
+analytics topic and `paths_revised` is not inflated by restarts.
+
+**Failure:** it never fails the boot. A run is all-or-nothing, bounded by a
+30 s timeout, logged at ERROR on failure or truncation, and counted on
+`process_path_management.catalogue.republished`
+(`kind=path|schedule`, `outcome=accepted|failed`).
 
 ## Outside the application layer: the analytics projection
 
