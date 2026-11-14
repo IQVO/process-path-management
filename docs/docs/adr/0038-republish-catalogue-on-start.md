@@ -198,3 +198,15 @@ above) rather than being tagged: the projector never sees it.
 
 - Topic configuration (compaction, retention): warehouse-infra.
 - Changing any consumer. None needs to change.
+
+## Addendum 2026-11-13: current state
+
+The Context and the Consumers table above name the consumers read on
+2026-10-25. At `origin/develop` two more services consume
+`CPTScheduleChanged` from this topic and so also receive the republished
+snapshots: dock-scheduling (`internal/adapters/inbound/kafka/cutoff_consumer.go`)
+and outbound-shipping (`internal/adapters/inbound/kafka/cpt_layout_consumers.go`,
+`internal/application/usecases/apply_cpt_schedule.go`). Both treat the event
+as the whole schedule of the site and replace their copy; they are not in the
+table above. The republish itself is unchanged: `internal/application/usecases/republish_catalogue.go`,
+`cmd/pathmgmt/republish.go`.

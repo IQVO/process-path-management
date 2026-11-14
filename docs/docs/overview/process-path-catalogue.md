@@ -12,8 +12,10 @@ store. No path is compiled into the binary. A path exists because someone
 defined it through `POST /process-paths`. The `DefinePath` use case wrote the
 row and its `ProcessPathCreated` outbox row in one transaction, and the relay
 then published the event on `warehouse.process-path-management.events`.
-Five consumers read that topic: wes-work-planning, fulfillment-execution,
-workforce-management, order-management and network-fulfillment. The
+Seven consumers read that topic: wes-work-planning, fulfillment-execution,
+workforce-management, order-management and network-fulfillment read the path
+events, and dock-scheduling and outbound-shipping read only the CPT schedules.
+The
 catalogue consumers replay it from the earliest offset into an in-memory
 cache and apply new events live. A new path reaches running pods without a
 restart.

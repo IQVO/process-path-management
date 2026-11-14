@@ -159,3 +159,14 @@ id on every topic it was enqueued for"). Fixed by
 publishes under it on both topics (`Publisher.PublishWithId` /
 `AnalyticsPublisher.PublishWithId`). In-cluster behaviour (Postgres
 configured) was never affected — the outbox path already shared the id.
+
+## Addendum 2026-11-13: current state
+
+The consumer counts in Context and in the type table above are as of this
+ADR. At `origin/develop` `ProcessPathCreated/Updated/Deactivated` are read by
+five services (the four named plus network-fulfillment,
+`internal/adapters/outbound/processpathcache/consumer.go`) and
+`CPTScheduleChanged` by four: order-management, network-fulfillment,
+dock-scheduling (`internal/adapters/inbound/kafka/cutoff_consumer.go`) and
+outbound-shipping (`internal/adapters/inbound/kafka/cpt_layout_consumers.go`).
+The current list is `docs/docs/ecosystem/context-map.md`.

@@ -77,14 +77,14 @@ the origins in `CORS_ALLOWED_ORIGINS`.
 
 ### `warehouse.process-path-management.events`
 
-The integration topic, a Published Language consumed by five siblings.
+The integration topic, a Published Language consumed by seven siblings (see the Consumers column).
 
 | Event `type` | Raised by | `data` | Consumers |
 | --- | --- | --- | --- |
 | `com.warehouse.wes.process-path-management.processpath.ProcessPathCreated` | `DefinePath` | `path_id`, `match_prefix`, `direct`, `required_capabilities`, `destination_location_role` (omitted when unset), `cycle_time_p95` (Go duration string), `eligibility` | fulfillment-execution, wes-work-planning, workforce-management, order-management, network-fulfillment |
 | `com.warehouse.wes.process-path-management.processpath.ProcessPathUpdated` | `RevisePath`, only when something changed | same full snapshot | same five |
 | `com.warehouse.wes.process-path-management.processpath.ProcessPathDeactivated` | `DeactivatePath`, only on the first deactivation | `path_id` only | same five |
-| `com.warehouse.wes.process-path-management.cptschedule.CPTScheduleChanged` | `DefineCPTSchedule`, only when the schedule changed | `site_id`, `timezone`, `cutoffs[]` (`cpt_id`, `local_time`, `days_of_week`, `ship_method`, `eligible_path_ids`) | order-management, network-fulfillment |
+| `com.warehouse.wes.process-path-management.cptschedule.CPTScheduleChanged` | `DefineCPTSchedule`, only when the schedule changed | `site_id`, `timezone`, `cutoffs[]` (`cpt_id`, `local_time`, `days_of_week`, `ship_method`, `eligible_path_ids`) | order-management, network-fulfillment, dock-scheduling, outbound-shipping |
 
 Envelope: CloudEvents 1.0, structured mode, `source`
 `/warehouse/process-path-management`, `subject` and Kafka key = `PathId`
@@ -97,7 +97,11 @@ Envelope: CloudEvents 1.0, structured mode, `source`
 
 Every event is a **full snapshot** of the aggregate (except the
 deactivation), so a consumer that replays the topic from offset 0 rebuilds
-the whole catalogue. The three WES consumers do exactly that on boot.
+the whole catalogue. The three WES consumers do exactly that on boot. At
+every start this service also re-enqueues the current catalogue on this
+topic only (`ProcessPathUpdated` per ACTIVE path, `CPTScheduleChanged` per
+site, [ADR 0038](../adr/0038-republish-catalogue-on-start.md)), so a replay
+does not depend on broker retention.
 
 **RELOCATE** ([ADR 0033](../adr/0033-relocate-process-path.md)) is published
 like every other path, as a `ProcessPathCreated` keyed `RELOCATE`

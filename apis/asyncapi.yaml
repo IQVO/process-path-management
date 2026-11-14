@@ -114,7 +114,8 @@ info:
     `fulfillment-execution`, `wes-work-planning`, `workforce-management`
     (ProcessPath* catalogue caches), `order-management` and
     `network-fulfillment` (ProcessPath* and CPTScheduleChanged) consume the
-    integration topic. The analytics
+    integration topic; `dock-scheduling` and `outbound-shipping` consume
+    only CPTScheduleChanged from it. The analytics
     topic is consumed only by this service's own projector
     (`cmd/pathmgmt-projector`). See `docs/docs/ecosystem/context-map.md`.
   contact:

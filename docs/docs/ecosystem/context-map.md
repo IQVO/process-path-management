@@ -2,7 +2,7 @@
 id: context-map
 title: Context Map
 sidebar_label: Context Map
-description: "ddd-crew Context Mapping for process-path-management: an upstream Open Host Service / Published Language over Kafka for five Conformist consumers, an MCP surface wired (not yet used) by warehouse-ops-agent, and a micro-frontend plus report API used by warehouse-console. It never calls any sibling context."
+description: "ddd-crew Context Mapping for process-path-management: an upstream Open Host Service / Published Language over Kafka for seven Conformist consumers, an MCP surface wired (not yet used) by warehouse-ops-agent, and a micro-frontend plus report API used by warehouse-console. It never calls any sibling context."
 ---
 
 # Context Map
@@ -42,6 +42,8 @@ flowchart LR
     WFM["workforce-management<br/>Supporting"]
     OM["order-management<br/>Generic/Supporting"]
     NF["network-fulfillment"]
+    DS["dock-scheduling"]
+    OS["outbound-shipping"]
     AGENT["warehouse-ops-agent"]
     CONSOLE["warehouse-console<br/>MFE shell"]
     FL["facility-layout<br/>Generic"]
@@ -51,6 +53,8 @@ flowchart LR
     P -->|"U to D: OHS+PL to CF<br/>Kafka ProcessPathCreated/Updated/Deactivated"| WFM
     P -->|"U to D: OHS+PL to CF<br/>Kafka ProcessPath* + CPTScheduleChanged"| OM
     P -->|"U to D: OHS+PL to CF<br/>Kafka ProcessPath* + CPTScheduleChanged"| NF
+    P -->|"U to D: OHS+PL to CF<br/>Kafka CPTScheduleChanged"| DS
+    P -->|"U to D: OHS+PL to CF<br/>Kafka CPTScheduleChanged"| OS
     P -.->|"U to D: OHS<br/>MCP get_process_path, list_process_paths<br/>wired, not used"| AGENT
     P -->|"U to D: OHS<br/>REST via process_path_mfe remote"| CONSOLE
     REP -->|"U to D: OHS<br/>REST /reports/catalogue-growth"| CONSOLE
@@ -90,12 +94,14 @@ Open Host Service, PL = Published Language, CF = Conformist.
 | 3 | process-path-management → workforce-management | OHS + PL → CF | Same topic, same three `processpath.*` types | Live | workforce-management `internal/adapters/outbound/kafkacatalog/consumer.go` |
 | 4 | process-path-management → order-management | OHS + PL → CF | Same topic: three `processpath.*` types (decoding `cycle_time_p95`, `eligibility`) plus `com.warehouse.wes.process-path-management.cptschedule.CPTScheduleChanged` | Live | order-management `internal/adapters/outbound/kafkacatalog/consumer.go` and `internal/adapters/outbound/kafkacptschedule/consumer.go` |
 | 5 | process-path-management → network-fulfillment | OHS + PL → CF | Same topic: three `processpath.*` types (decoding `cycle_time_p95`) plus `cptschedule.CPTScheduleChanged` | Live | network-fulfillment `internal/adapters/outbound/processpathcache/consumer.go`, started from `cmd/netfulfil/main.go` |
-| 6 | process-path-management → warehouse-ops-agent | OHS (MCP) → Customer | MCP Streamable HTTP, tools `get_process_path`, `list_process_paths` | Wired but unused | warehouse-ops-agent `internal/adapters/outbound/mcpclient/process_path_management.go`; `cmd/agent/main.go` assigns it to `_` ("kept wired for a future use case") |
-| 7 | process-path-management → warehouse-console | OHS (REST) → Customer | `web/` remote `process_path_mfe` calling `POST/PUT/DELETE /process-paths*` through Kong `/api/process-path-management` | Live | this repo's `web/src/api.ts`; warehouse-console `src/App.tsx` (`process_path_mfe/App`) |
-| 8 | process-path-management (pathmgmt-reports) → warehouse-console | OHS (REST) → Customer | `GET /reports/catalogue-growth`, `GET /reports/catalogue-growth/freshness` | Live | warehouse-console `src/features/context-reports/processPathManagement.config.tsx` |
-| 9 | facility-layout ↔ process-path-management | Separate Ways | none — `DestinationLocationRole` (`Drop`/`WorkCenter`/`Shipping`) and `SiteId` are local copies of facility-layout vocabulary, kept in sync by convention | Deliberately absent | `internal/domain/shared/shared.go` |
-| 10 | any sibling → process-path-management (inbound Kafka) | — | none — the only consumer in this repo reads its own analytics topic | Deliberately absent | `internal/adapters/inbound/kafka/analytics_consumer.go` |
-| 11 | process-path-management → any sibling (REST/MCP client) | — | none — banned | Deliberately absent | `TestNoSiblingContextOutboundCalls` in `internal/architecture/fitness_test.go` |
+| 6 | process-path-management → dock-scheduling | OHS + PL → CF | Same topic: only `com.warehouse.wes.process-path-management.cptschedule.CPTScheduleChanged` | Live | dock-scheduling `internal/adapters/inbound/kafka/cutoff_consumer.go` |
+| 7 | process-path-management → outbound-shipping | OHS + PL → CF | Same topic: only `cptschedule.CPTScheduleChanged` | Live | outbound-shipping `internal/adapters/inbound/kafka/cpt_layout_consumers.go` and `internal/application/usecases/apply_cpt_schedule.go` |
+| 8 | process-path-management → warehouse-ops-agent | OHS (MCP) → Customer | MCP Streamable HTTP, tools `get_process_path`, `list_process_paths` | Wired but unused | warehouse-ops-agent `internal/adapters/outbound/mcpclient/process_path_management.go`; `cmd/agent/main.go` assigns it to `_` ("kept wired for a future use case") |
+| 9 | process-path-management → warehouse-console | OHS (REST) → Customer | `web/` remote `process_path_mfe` calling `POST/PUT/DELETE /process-paths*` through Kong `/api/process-path-management` | Live | this repo's `web/src/api.ts`; warehouse-console `src/App.tsx` (`process_path_mfe/App`) |
+| 10 | process-path-management (pathmgmt-reports) → warehouse-console | OHS (REST) → Customer | `GET /reports/catalogue-growth`, `GET /reports/catalogue-growth/freshness` | Live | warehouse-console `src/features/context-reports/processPathManagement.config.tsx` |
+| 11 | facility-layout ↔ process-path-management | Separate Ways | none — `DestinationLocationRole` (`Drop`/`WorkCenter`/`Shipping`) and `SiteId` are local copies of facility-layout vocabulary, kept in sync by convention | Deliberately absent | `internal/domain/shared/shared.go` |
+| 12 | any sibling → process-path-management (inbound Kafka) | — | none — the only consumer in this repo reads its own analytics topic | Deliberately absent | `internal/adapters/inbound/kafka/analytics_consumer.go` |
+| 13 | process-path-management → any sibling (REST/MCP client) | — | none — banned | Deliberately absent | `TestNoSiblingContextOutboundCalls` in `internal/architecture/fitness_test.go` |
 
 The `get_cpt_schedule` and `get_catalogue_growth_report` MCP tools have
 no known sibling caller today.
@@ -117,16 +123,25 @@ no known sibling caller today.
 - `network-fulfillment` keeps one combined read model of path
   `cycle_time_p95` and site CPT schedules (`processpathcache`), with a
   per-process-unique consumer group replaying from the earliest offset.
+- `dock-scheduling` and `outbound-shipping` consume only
+  `CPTScheduleChanged` and ignore every other type on the topic
+  (`cutoff_consumer.go`: "the one process-path-management type the consumer
+  acts on"; `cpt_layout_consumers.go`: "the only process-path-management
+  type this service acts on"). Each treats the event as the whole schedule of
+  the site and replaces its copy (`apply_cpt_schedule.go`: "replace the site's
+  whole schedule copy (last writer wins per site)").
 
 Evidence was read with `git grep` against each sibling's locally fetched
 `origin/develop`; re-check before relying on a sibling detail.
 
 ## Own analytics topic (not a sibling integration)
 
-Every domain event is also published onto
+Every domain event a use case raises is also published onto
 `warehouse.process-path-management.analytics`
 ([ADR 0007](../adr/0007-analytical-data-product.md)) in the same outbox
-transaction. The only consumer is this service's own
+transaction. The start-up catalogue republish
+([ADR 0038](../adr/0038-republish-catalogue-on-start.md)) is the exception:
+it goes to the integration topic only. The only consumer is this service's own
 `pathmgmt-projector` (consumer group `process-path-management-analytics`),
 which projects the "Process Path Catalogue Growth & Change" report served
 by `pathmgmt-reports`. It projects the three `ProcessPath*` types and
@@ -166,7 +181,7 @@ Exact `type` strings consumers dispatch on (cross-service contract):
 | `com.warehouse.wes.process-path-management.processpath.ProcessPathCreated` | fulfillment-execution, wes-work-planning, workforce-management, order-management, network-fulfillment |
 | `com.warehouse.wes.process-path-management.processpath.ProcessPathUpdated` | same five |
 | `com.warehouse.wes.process-path-management.processpath.ProcessPathDeactivated` | same five |
-| `com.warehouse.wes.process-path-management.cptschedule.CPTScheduleChanged` | order-management, network-fulfillment |
+| `com.warehouse.wes.process-path-management.cptschedule.CPTScheduleChanged` | order-management, network-fulfillment, dock-scheduling, outbound-shipping |
 
 The analytics occurrence carries the same `type`/`id`/`subject`/`time`/`data`
 with `dataschema` `urn:warehouse:process-path-management:analytics:<EventName>:v1`.

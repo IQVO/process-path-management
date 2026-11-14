@@ -109,10 +109,12 @@ The [Troubleshooting](../operations/troubleshooting.md) page lists all of them.
 
 ## 3. Where the events go
 
-Every event is written to both `warehouse.process-path-management.events`
-and `warehouse.process-path-management.analytics` as CloudEvents 1.0. The
-compose broker is yours alone; on the shared fleet broker the five consumers
-of the integration topic apply what you publish.
+Every event a use case raises is written to both
+`warehouse.process-path-management.events` and
+`warehouse.process-path-management.analytics` as CloudEvents 1.0 (the
+start-up catalogue republish goes to the integration topic only, ADR 0038).
+The compose broker is yours alone; on the shared fleet broker the seven
+consumers of the integration topic apply what you publish.
 
 ## 4. Run the MCP server
 

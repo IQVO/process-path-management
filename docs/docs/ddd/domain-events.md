@@ -31,8 +31,11 @@ Every message is a CloudEvents 1.0 event in **structured content mode**
 
 Topics: `warehouse.process-path-management.events` (integration) and
 `warehouse.process-path-management.analytics` (analytics, ADR 0007). Every
-event is written to **both** — in one outbox transaction when
-`DATABASE_URL` is set, or by the `FanOutPublisher` from `NewSharedIdFanOut` direct to Kafka otherwise.
+event a use case raises through `DefinePath`, `RevisePath`, `DeactivatePath` or
+`DefineCPTSchedule` is written to **both**, in one outbox transaction (Postgres
+is mandatory, [ADR 0037](../adr/0037-postgres-and-kafka-are-the-only-runtime.md)).
+The start-up catalogue republish (`usecases.RepublishCatalogue`, ADR 0038) is
+the exception: it writes to the integration topic only.
 Writers use the `kafkago.Hash` balancer (ADR 0013), so all events with the
 same key land on the same partition.
 
@@ -41,9 +44,14 @@ same key land on the same partition.
 | Event | Full CloudEvents `type` | Partition key / `subject` | Producer use case | Known consumers |
 | --- | --- | --- | --- | --- |
 | ProcessPathCreated | `com.warehouse.wes.process-path-management.processpath.ProcessPathCreated` | `path_id` | `usecases.DefinePath` | fulfillment-execution, wes-work-planning, workforce-management, order-management, network-fulfillment; own `pathmgmt-projector` (analytics) |
-| ProcessPathUpdated | `com.warehouse.wes.process-path-management.processpath.ProcessPathUpdated` | `path_id` | `usecases.RevisePath` (only when `Revise` returns `changed=true`) | same five; own projector |
+| ProcessPathUpdated | `com.warehouse.wes.process-path-management.processpath.ProcessPathUpdated` | `path_id` | `usecases.RevisePath` (only when `Revise` returns `changed=true`); also `usecases.RepublishCatalogue`, one per ACTIVE path at every start, integration topic only | same five; own projector (not for the republished ones) |
 | ProcessPathDeactivated | `com.warehouse.wes.process-path-management.processpath.ProcessPathDeactivated` | `path_id` | `usecases.DeactivatePath` (only on an Active path) | same five; own projector |
-| CPTScheduleChanged | `com.warehouse.wes.process-path-management.cptschedule.CPTScheduleChanged` | `site_id` | `usecases.DefineCPTSchedule` (first define, or a revise with `changed=true`) | order-management, network-fulfillment; own projector skips it |
+| CPTScheduleChanged | `com.warehouse.wes.process-path-management.cptschedule.CPTScheduleChanged` | `site_id` | `usecases.DefineCPTSchedule` (first define, or a revise with `changed=true`); also `usecases.RepublishCatalogue`, one per site at every start, integration topic only | order-management, network-fulfillment, dock-scheduling, outbound-shipping; own projector skips it |
+
+A `ProcessPathUpdated` or `CPTScheduleChanged` on the integration topic can
+therefore be a republish of an unchanged path or schedule (new CloudEvents
+`id`, same `type` and `data`); consumers upsert it, and nothing should count
+it as a revision. See [Use cases](./use-cases.md#republishcatalogue).
 
 ### ProcessPathCreated / ProcessPathUpdated — `data`
 
