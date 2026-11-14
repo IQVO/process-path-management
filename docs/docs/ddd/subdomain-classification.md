@@ -40,7 +40,7 @@ ADR and a re-classification in warehouse-docs.
 
 Classifications copied from warehouse-docs
 `docs/strategic-design/subdomain-classification.md` (branch `main`, read
-2026-10-09). Do not edit them here; change them there.
+2026-10-09; the `dock-scheduling` and `outbound-shipping` rows read 2026-11-14). Do not edit them here; change them there.
 
 | Context | Relationship to this service | Classification | CloudEvents tier |
 | --- | --- | --- | --- |
@@ -50,6 +50,8 @@ Classifications copied from warehouse-docs
 | `order-management` | Consumes the events topic, including `CPTScheduleChanged` | Generic/Supporting | `wes` |
 | `network-fulfillment` | Consumes the events topic, including `CPTScheduleChanged` | Supporting | `wes` |
 | `warehouse-ops-agent` | Has an MCP client for this service, unused | Supporting | `wes` (publishes no events) |
+| `dock-scheduling` | Consumes only `CPTScheduleChanged`, to keep its copy of each site's cutoff times | Supporting | `wms` |
+| `outbound-shipping` | Consumes only `CPTScheduleChanged`, to keep its copy of each site's cutoff times | Supporting | `wms` |
 | `facility-layout` | Separate Ways: `DestinationLocationRole` and `SiteId` are copied by convention | Generic | `wms` |
 | `product-master` | Owns the handling vocabulary behind eligibility product attributes; not consumed | Supporting | `wms` |
 
