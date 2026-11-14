@@ -1,0 +1,11 @@
+{
+  "_doc": "Every contract copy this repo pins from a producer, and the producer branch it must equal. scripts/harness/pinned_contract_gate.py fails when a copy differs from the producer's develop. Refresh = copy the file, never edit it. NOTE: this repo is BANNED from sibling REST/MCP calls by design — the only REST pin allowed is this intra-repo self-pin of its own reports surface.",
+  "pins": [
+    {
+      "local": "internal/adapters/inbound/mcp/testdata/process-path-management.openapi-reports.yaml",
+      "repo": "IQVO/process-path-management",
+      "path": "apis/openapi-reports.yaml",
+      "ref": "develop"
+    }
+  ]
+}
