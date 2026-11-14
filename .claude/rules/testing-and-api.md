@@ -55,10 +55,12 @@ here, including this file.
 - **Unit tests are colocated** (`process_path_test.go`, `events_test.go`,
   `usecases_test.go`, `unit_of_work_test.go`, `fakes_test.go`,
   `server_test.go`).
-- **BDD**: `features/*.feature` (godog/Gherkin) — `define_and_read.feature`,
-  `define_validation.feature`, `revise.feature`, `revise_and_events.feature`,
-  `deactivate.feature`, `cpt_schedule.feature` (30 scenarios), driven
-  through `features_test.go`. Run via `make bdd`.
+- **BDD**: `features/*.feature` (godog/Gherkin) covering path
+  definition, revision, deactivation, the CPT schedule, the catalogue
+  growth report, the published events and the intake, relocate and
+  replenish paths (list them with `ls features/`; do not copy the list
+  here, it goes stale), driven through `features_test.go`. Run via
+  `make bdd`.
 - **Architecture fitness**: `internal/architecture/architecture_test.go`
   (arch-go) enforces the hexagonal dependency rule described above —
   every PR that reshapes package imports must keep this green, not just

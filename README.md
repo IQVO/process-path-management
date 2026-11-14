@@ -465,7 +465,7 @@ make check-all   # check + coverage (90% gate) + arch-test + bdd
 Additional verification surfaces, each with its own CI job:
 
 ```bash
-go test ./... -run TestFeatures -v                  # BDD (godog/Gherkin) — 32 scenarios in 6 feature files
+go test ./... -run TestFeatures -v                  # BDD (godog/Gherkin) — 93 Scenario/Scenario Outline definitions in 17 feature files
 go test ./internal/architecture/... -v               # arch-fitness (arch-go)
 go test -tags=integration ./... -race -count=1       # Postgres + Kafka integration (testcontainers)
 gremlins unleash ./internal/domain --workers 1 --timeout-coefficient 30   # mutation testing
