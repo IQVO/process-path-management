@@ -132,5 +132,6 @@ On the wire every event is a CloudEvents 1.0 event (ADR 0016) with
 and `subject` = `path_id` / `site_id` (the Kafka key). These four full type
 strings are consumed byte-for-byte by five sibling services
 (fulfillment-execution, wes-work-planning, workforce-management,
-order-management, network-fulfillment) — see
+order-management, network-fulfillment) and, for `CPTScheduleChanged` only, by
+dock-scheduling and outbound-shipping — see
 `internal/adapters/kafka/cloudevents/types.go`.

@@ -34,7 +34,8 @@ Full standard and the fleet's cross-service type catalogue: ADR-0016
 
 This service's published types (consumed byte-for-byte by
 fulfillment-execution, wes-work-planning, workforce-management,
-order-management, network-fulfillment): `...processpath.ProcessPathCreated`,
+order-management, network-fulfillment; dock-scheduling and outbound-shipping
+consume only `CPTScheduleChanged`): `...processpath.ProcessPathCreated`,
 `...processpath.ProcessPathUpdated`, `...processpath.ProcessPathDeactivated`
 (subject = `path_id`) and `...cptschedule.CPTScheduleChanged` (subject =
 `site_id`), all under `com.warehouse.wes.process-path-management`. Its own
