@@ -253,8 +253,8 @@ var errDatabaseDown = errors.New("connection refused: the database is unreachabl
 type faultRig struct {
 	mu               sync.Mutex
 	dbDown           bool
-	failPathSave     error              // one shot
-	failScheduleSave error              // one shot
+	failPathSave     error                    // one shot
+	failScheduleSave error                    // one shot
 	raceWinner       *processpath.ProcessPath // committed by "another operator" during the next Create
 }
 
