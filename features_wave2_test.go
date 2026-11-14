@@ -789,7 +789,7 @@ func (w2 *wave2) freshnessLagIs(want float64) error {
 
 // --- registration ------------------------------------------------------------------------
 
-func registerWave2Steps(sc *godog.ScenarioContext, w *world) {
+func registerWave2Steps(sc *godog.ScenarioContext, w *world) *wave2 {
 	w2 := &wave2{world: w}
 
 	sc.Before(func(ctx context.Context, _ *godog.Scenario) (context.Context, error) {
@@ -806,6 +806,7 @@ func registerWave2Steps(sc *godog.ScenarioContext, w *world) {
 	w2.registerEventSteps(sc)
 	w2.registerWireSteps(sc)
 	w2.registerProjectorSteps(sc)
+	return w2
 }
 
 func (w2 *wave2) registerRequestSteps(sc *godog.ScenarioContext) {

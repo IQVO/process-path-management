@@ -545,8 +545,10 @@ func InitializeScenario(sc *godog.ScenarioContext) {
 
 	// Wave-2 vocabulary (request/response helpers, event payloads, the
 	// CloudEvents wire form, the analytics projector and its report).
-	registerWave2Steps(sc, w)
+	w2 := registerWave2Steps(sc, w)
 	registerRepublishSteps(sc, w)
+	// Documentation-derived rules (features/*_rules.feature).
+	registerRulesSteps(sc, w2)
 }
 
 // TestFeatures runs the Gherkin acceptance suite under features/.
