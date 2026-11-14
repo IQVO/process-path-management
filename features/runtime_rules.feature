@@ -30,15 +30,11 @@ Feature: Runtime failure modes and the analytics projection
   # --- readiness (SIGTERM drain, dependency checks) ---------------------------------
 
   @bdd
-  Scenario: A service whose dependencies are reachable reports ready
+  Scenario: SIGTERM flips a ready service to not_ready while liveness stays 200
     Given a service whose Postgres and Kafka dependencies are reachable
     When the readiness probe is queried
     Then the request is accepted with status 200
     And the response field "status" is "ready"
-
-  @bdd
-  Scenario: SIGTERM flips readiness to not_ready while liveness stays 200
-    Given a service whose Postgres and Kafka dependencies are reachable
     When the service receives SIGTERM
     And the readiness probe is queried
     Then the request is rejected with status 503

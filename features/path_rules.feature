@@ -310,6 +310,10 @@ Feature: Process path rules from the aggregate design
       | required attributes   | {"matchPrefix":"pick","requiredCapabilities":["pick"],"cycleTimeP95":"2h","eligibility":{"maxUnitsPerLine":1,"requiredProductAttributes":["giftWrap","fragile"],"excludedProductAttributes":["hazmat"]},"intake":["CUSTOMER_ORDER"]} | eligibility.requiredProductAttributes | giftWrap,fragile              |
       | excluded attributes   | {"matchPrefix":"pick","requiredCapabilities":["pick"],"cycleTimeP95":"2h","eligibility":{"maxUnitsPerLine":1,"requiredProductAttributes":["giftWrap"],"excludedProductAttributes":["hazmat","fragile"]},"intake":["CUSTOMER_ORDER"]} | eligibility.excludedProductAttributes | hazmat,fragile                |
       | non-sortable          | {"matchPrefix":"pick","requiredCapabilities":["pick"],"cycleTimeP95":"2h","eligibility":{"maxUnitsPerLine":1,"requiredProductAttributes":["giftWrap"],"excludedProductAttributes":["hazmat"],"nonSortable":true},"intake":["CUSTOMER_ORDER"]} | eligibility.nonSortable              | true                          |
+      | swapped required attribute | {"matchPrefix":"pick","requiredCapabilities":["pick"],"cycleTimeP95":"2h","eligibility":{"maxUnitsPerLine":1,"requiredProductAttributes":["fragile"],"excludedProductAttributes":["hazmat"]},"intake":["CUSTOMER_ORDER"]} | eligibility.requiredProductAttributes | fragile                       |
+      | swapped excluded attribute | {"matchPrefix":"pick","requiredCapabilities":["pick"],"cycleTimeP95":"2h","eligibility":{"maxUnitsPerLine":1,"requiredProductAttributes":["giftWrap"],"excludedProductAttributes":["fragile"]},"intake":["CUSTOMER_ORDER"]} | eligibility.excludedProductAttributes | fragile                       |
+      | swapped capability    | {"matchPrefix":"pick","requiredCapabilities":["hazmat"],"cycleTimeP95":"2h","eligibility":{"maxUnitsPerLine":1,"requiredProductAttributes":["giftWrap"],"excludedProductAttributes":["hazmat"]},"intake":["CUSTOMER_ORDER"]} | requiredCapabilities                 | hazmat                        |
+      | swapped demand source | {"matchPrefix":"pick","requiredCapabilities":["pick"],"cycleTimeP95":"2h","eligibility":{"maxUnitsPerLine":1,"requiredProductAttributes":["giftWrap"],"excludedProductAttributes":["hazmat"]},"intake":["STOCK_TRANSFER"]} | intake                               | STOCK_TRANSFER                |
       | intake                | {"matchPrefix":"pick","requiredCapabilities":["pick"],"cycleTimeP95":"2h","eligibility":{"maxUnitsPerLine":1,"requiredProductAttributes":["giftWrap"],"excludedProductAttributes":["hazmat"]},"intake":["CUSTOMER_ORDER","STOCK_TRANSFER"]} | intake                               | CUSTOMER_ORDER,STOCK_TRANSFER |
 
   @bdd
@@ -494,6 +498,20 @@ Feature: Process path rules from the aggregate design
     And the page has no next cursor
 
   @bdd
+  Scenario Outline: A limit that is not exactly one integer from 1 to 500 is refused as invalid-limit
+    When the process path list is requested with "<query>"
+    Then the request is rejected with status 400
+    And the response problem reports type "invalid-limit"
+
+    Examples:
+      | query         |
+      | limit=        |
+      | limit=ten     |
+      | limit=1.5     |
+      | limit=-1      |
+      | limit=1&limit=2 |
+
+  @bdd
   Scenario Outline: A cursor this API did not issue is refused, however well-formed it looks
     When the process path list is requested with the cursor "<cursor>"
     Then the request is rejected with status 400
@@ -504,11 +522,12 @@ Feature: Process path rules from the aggregate design
       | bm90LWpzb24                      |
       | eyJzIjoiQSIsImkiOiJCIn0          |
       | eyJzIjoiUElDSyIsImkiOiIifQ       |
+      | eyJzIjoiIiwiaSI6IiJ9             |
 
   # --- the API surface: bodies and routes -------------------------------------------------------
 
   @bdd
-  Scenario Outline: A body that is not valid JSON, has a null array element or carries a NUL is a 400 and changes nothing
+  Scenario Outline: A body that is empty, not valid JSON, has a null array element or carries a NUL is a 400 and changes nothing
     When the client sends <method> "<path>" with body:
       """
       <body>
@@ -525,6 +544,7 @@ Feature: Process path rules from the aggregate design
       | POST   | /process-paths      | {"pathId":"PI\u0000CK","matchPrefix":"pick","requiredCapabilities":["pick"],"cycleTimeP95":"2h"} |
       | PUT    | /process-paths/PICK | not json at all                                                                           |
       | PUT    | /sites/sp1/cpt-schedule | {"timezone":"UTC","cutoffs":[{"cptId":                                                |
+      | POST   | /process-paths      |                                                                                           |
 
   @bdd
   Scenario Outline: A request that no operation matches is the route-not-found problem, never a text 404
@@ -539,9 +559,3 @@ Feature: Process path rules from the aggregate design
       | /process-paths/PICK/history         |
       | /sites/sp1                          |
       | /sites/sp1/cpt-schedule/cutoffs     |
-
-  @bdd
-  Scenario: A POST with no body at all is a malformed request, not a validation problem
-    When the client sends POST "/process-paths"
-    Then the request is rejected with status 400
-    And the response problem reports type "malformed-request-body"
