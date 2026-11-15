@@ -237,7 +237,7 @@ Top terms: **ProcessPath**, **PathId**, **MatchPrefix**, **Direct**,
   read-model lag (ADR 0007).
 - Number of live consumers of `warehouse.process-path-management.events`:
   5 today (see the [Context Map](../ecosystem/context-map.md)).
-- BDD: 32 Gherkin scenarios; mutation testing on `internal/domain` gated at
+- BDD: 153 Gherkin scenario definitions (268 executed with Examples rows); mutation testing on `internal/domain` gated at
   99%.
 
 ## Open Questions

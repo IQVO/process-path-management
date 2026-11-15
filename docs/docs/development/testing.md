@@ -12,7 +12,7 @@ description: The process-path-management test pyramid as it exists in this repos
 | Layer | Where | How it runs | Run it |
 | --- | --- | --- | --- |
 | Unit | `*_test.go` next to the code (no build tag): domain aggregates, use cases with fakes (`internal/application/usecases/fakes_test.go`), HTTP handlers via `httptest`, encoders, relay/consumer logic with fake writers | In-process, in-memory adapters, `-race` | `make test` |
-| BDD (godog) | 6 files in `features/` with **32 scenarios**, driven by `features_test.go` (`TestFeatures`) | Black-box over HTTP against the real chi router wired to the in-memory repositories, a fixed clock and a recording publisher, so scenarios assert responses **and** the domain events raised | `make bdd` |
+| BDD (godog) | 20 files in `features/` with **153 `Scenario`/`Scenario Outline` blocks** (**268** executed with Examples rows expanded), driven by `features_test.go` (`TestFeatures`) | Black-box over HTTP against the real chi router wired to the in-memory repositories, a fixed clock and a recording publisher, so scenarios assert responses **and** the domain events raised | `make bdd` |
 | Contract | `scripts/contract-test.sh`; `internal/adapters/inbound/http/reports_contract_test.go` | Builds `cmd/pathmgmt`, boots it on real Postgres 16 and Kafka (`DATABASE_URL` + `KAFKA_BROKERS`; `docker-compose.yml` locally, service containers in CI) on `127.0.0.1:18085`, waits for `/readyz`, runs Schemathesis `4.28.0` against `apis/openapi.yaml` (100 examples per operation, 4 workers, `--generation-allow-x00 false`, a hook gives each `Idempotency-Key` request a fresh key; [ADR 0037](../adr/0037-postgres-and-kafka-are-the-only-runtime.md)). The reports router is checked against `apis/openapi-reports.yaml` by Go tests ([ADR 0031](../adr/0031-reports-api-openapi-contract.md)) | `make contract`; the Go tests run in `make test` |
 | Integration | 26 files tagged `//go:build integration` (25 under `internal/adapters/...`, plus `internal/application/usecases/usecases_wiring_integration_test.go`) | Each test starts its own Postgres 16 and/or Kafka with testcontainers-go; no `DATABASE_URL`, no compose | `make integration` (needs Docker) |
 | Architecture fitness | `internal/architecture/` | Static checks over the source tree and import graph | `make arch-test` |
@@ -23,17 +23,39 @@ description: The process-path-management test pyramid as it exists in this repos
 
 ### BDD features
 
-| File | Scenarios | Covers |
-| --- | --- | --- |
-| `features/define_and_read.feature` | 5 | Define a path, read it back, 404 for an unknown id, duplicate id rejected, list returns only active paths by default |
-| `features/define_validation.feature` | 6 | Empty and upper-case `matchPrefix`, no capabilities, unknown `destinationLocationRole`, a declared role and eligibility carried on the path |
-| `features/revise.feature` | 3 | Revise an Active path, 404 for an unknown id, a deactivated path rejects revision |
-| `features/revise_and_events.feature` | 6 | `ProcessPathCreated`/`Updated`/`Deactivated` published (deactivation exactly once), no-op revision publishes nothing, malformed `cycleTimeP95`, re-defining a deactivated id rejected |
-| `features/deactivate.feature` | 5 | Deactivate, idempotent re-deactivate, 404, 409 while a CPT schedule lists the path, success once the schedule no longer lists it |
-| `features/cpt_schedule.feature` | 7 | Define and get a site schedule, 404 before definition, unknown or deactivated path in a cutoff, duplicate `cptId`, unrecognised timezone |
-| `features/relocate_path.feature` | 4 | The declared RELOCATE entry: defined Active, published with `intake` `SLOT_RELOCATION` and no fake eligibility, re-seed refused 409, sits beside PICK |
-| `features/replenish_path.feature` | 6 | The declared REPLENISH entry ([ADR 0036](../adr/0036-replenish-process-path.md)): defined Active, published with `intake` `REPLENISHMENT`, re-seed refused 409, sits beside PICK, `REPLENISHMENT` accepted and a near miss rejected 422 `invalid-intake` |
-| `features/process_path_intake.feature` | 14 | Intake ([ADR 0034](../adr/0034-process-path-intake.md)): define/read/publish, `[]` on the wire when absent, 422 `invalid-intake` for an unknown or repeated source, intake-only revise publishes `ProcessPathUpdated`, an omitted intake is kept, `[]` clears it, and the declared intake of PICK/PACK/REBIN/SLAM/RELOCATE/DISPATCH/REPLENISH (outline) |
+20 feature files hold **153** `Scenario`/`Scenario Outline` blocks (33 of them
+outlines; `git grep -c -E "^[[:space:]]*Scenario" -- features`). With the
+Examples rows expanded, `make bdd` runs **268** scenarios and 2001 steps
+(`268 scenarios (268 passed)`, `2001 steps (2001 passed)`, godog's own summary
+from `go test . -run TestFeatures -count=1 -v`). The suite found no divergence
+between the specification and the code, so no scenario is a known bug.
+
+| File | Scenarios | Executed | Covers |
+| --- | --- | --- | --- |
+| `features/case_flow_paths.feature` | 10 | 12 | The full-case and cross-dock process paths |
+| `features/catalogue_growth_report.feature` | 6 | 6 | The catalogue growth report from the analytics topic |
+| `features/cpt_rules.feature` | 12 | 39 | CPTSchedule rules from the aggregate design: every cutoff field invariant (`localTime`, days, `shipMethod`, eligible paths, `cptId`), IANA timezone accepted and refused, the documented check order, `cptId` unique per site only, every single-field change republishes the full snapshot |
+| `features/cpt_schedule.feature` | 7 | 7 | Define and get a site schedule, 404 before definition, unknown or deactivated path in a cutoff, duplicate `cptId`, unrecognised timezone |
+| `features/cpt_schedule_boundaries.feature` | 7 | 9 | Site-scoped CPT schedules, revision, validation and path protection |
+| `features/deactivate.feature` | 5 | 5 | Deactivate, idempotent re-deactivate, 404, 409 while a CPT schedule lists the path, success once the schedule no longer lists it |
+| `features/define_and_read.feature` | 5 | 5 | Define a path, read it back, 404 for an unknown id, duplicate id rejected, list returns only active paths by default |
+| `features/define_boundaries.feature` | 3 | 4 | Define-time boundaries of a path definition |
+| `features/define_validation.feature` | 6 | 6 | Empty and upper-case `matchPrefix`, no capabilities, unknown `destinationLocationRole`, a declared role and eligibility carried on the path |
+| `features/list_and_problems.feature` | 5 | 5 | Listing paths and unknown-path problems |
+| `features/path_rules.feature` | 32 | 93 | ProcessPath rules from the aggregate design: PathId case-sensitivity, `matchPrefix`, `destinationLocationRole` and `cycleTimeP95` rules, eligibility and intake as sets, what a Revise changes (13 single-field rows) and what is a no-op, deactivation and the CPT protection (ADR 0026), list paging (limits, cursors) |
+| `features/process_path_intake.feature` | 8 | 14 | Intake ([ADR 0034](../adr/0034-process-path-intake.md)): define/read/publish, `[]` on the wire when absent, 422 `invalid-intake` for an unknown or repeated source, intake-only revise publishes `ProcessPathUpdated`, an omitted intake is kept, `[]` clears it, and the declared intake of PICK/PACK/REBIN/SLAM/RELOCATE/DISPATCH/REPLENISH (outline) |
+| `features/published_events.feature` | 5 | 5 | Published events on the wire |
+| `features/relocate_path.feature` | 4 | 4 | The declared RELOCATE entry: defined Active, published with `intake` `SLOT_RELOCATION` and no fake eligibility, re-seed refused 409, sits beside PICK |
+| `features/replenish_path.feature` | 6 | 6 | The declared REPLENISH entry ([ADR 0036](../adr/0036-replenish-process-path.md)): defined Active, published with `intake` `REPLENISHMENT`, re-seed refused 409, sits beside PICK, `REPLENISHMENT` accepted and a near miss rejected 422 `invalid-intake` |
+| `features/republish_catalogue.feature` | 3 | 3 | Republishing the current catalogue at startup |
+| `features/revise.feature` | 3 | 3 | Revise an Active path, 404 for an unknown id, a deactivated path rejects revision |
+| `features/revise_and_events.feature` | 6 | 6 | `ProcessPathCreated`/`Updated`/`Deactivated` published (deactivation exactly once), no-op revision publishes nothing, malformed `cycleTimeP95`, re-defining a deactivated id rejected |
+| `features/revise_boundaries.feature` | 4 | 5 | Revision boundaries and what a revision publishes |
+| `features/runtime_rules.feature` | 16 | 31 | Runtime failure modes and the analytics projection: SIGTERM flips `/readyz` to `503 not_ready` while `/healthz` stays 200, unreachable Postgres/Kafka are `503 dependency-unavailable`, a database outage is `500 internal-error`, `409 concurrent-modification` and `path-already-exists`, report query errors, the projector's dispatch on the full event type and dedupe on the CloudEvents id |
+| **20 files** | **153** | **268** | |
+
+`path_rules.feature`, `cpt_rules.feature` and `runtime_rules.feature` pin the
+rules written in the documentation (their steps are in `steps_rules_test.go`).
 
 ### Contract test exclusions
 
