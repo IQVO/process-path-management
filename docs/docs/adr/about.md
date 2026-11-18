@@ -99,6 +99,7 @@ Typos, broken links and formatting are of course fair game.
 | [0039](./0039-a2a-inbound-adapter.md) | A2A inbound adapter (third driving adapter): two curated READ-ONLY skills, `get_process_path` and `list_process_paths`, over the same use cases as REST and MCP; message-only, problems answered in-band, delegation only | Accepted; follows 0006, mirrors the MCP read-only charter |
 | [0040](./0040-adopt-fleet-rest-api-guideline.md) | Adopt the fleet REST API guideline: keyset-paged `GET /process-paths`, key reuse 409, `Idempotency-Replayed` | Accepted; amends 0011 |
 | [0041](./0041-agent-authority-levels-and-complete-mcp-surface.md) | Agent authority levels and complete MCP surface: every MCP tool and A2A skill declares one level (all `L1` here; `com.warehouse/authority` meta, `authority:L<n>` tag), the MCP server is stateless (serves the 2026-07-28 revision), and the server gains one resource template and one prompt | Accepted; follows 0006, 0039 |
+| [0042](./0042-process-flows.md) | `ProcessFlow`: the ordered stages (`path_id` + `process_type`) a workload passes through; full-state versioned `ProcessFlowDefined`/`Revised`/`Retired`; a path an active flow uses cannot be deactivated; read by warehouse-planning (its ADR 0025) | Accepted; extends 0001 next to 0034 |
 
 Each of these reconstructs a decision that is actually visible in this
 repository's history or code — none is a generic placeholder.
