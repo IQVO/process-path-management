@@ -40,6 +40,10 @@ type DeactivatePath struct {
 	// check and exists only for narrow use-case tests that do not model
 	// schedules.
 	CPTSchedules ports.CPTScheduleRepo
+	// Flows is consulted for ACTIVE flows that still have a stage on the
+	// path (ADR 0042). Always wired by the composition root; nil disables
+	// the check and exists only for use-case tests that do not model flows.
+	Flows ports.ProcessFlowRepo
 }
 
 func (uc *DeactivatePath) Execute(ctx context.Context, id shared.PathId) error {
@@ -74,6 +78,9 @@ func (uc *DeactivatePath) Execute(ctx context.Context, id shared.PathId) error {
 		if err := uc.rejectIfReferenced(ctx, id); err != nil {
 			return err
 		}
+		if err := uc.rejectIfInActiveFlow(ctx, id); err != nil {
+			return err
+		}
 		p.Deactivate(now)
 		if err := uc.Repo.Save(ctx, p); err != nil {
 			return err
@@ -100,6 +107,26 @@ func (uc *DeactivatePath) rejectIfReferenced(ctx context.Context, id shared.Path
 	}
 	if len(sites) > 0 {
 		return fmt.Errorf("%w: path %q is listed by the schedule of site(s) %v; revise those schedules first", ErrPathReferencedByCPTSchedule, id, sites)
+	}
+	return nil
+}
+
+// rejectIfInActiveFlow fails with ErrPathInActiveFlow, naming the flows, when
+// an ACTIVE flow still has a stage on id (ADR 0042). Like the schedule check
+// it runs after the path row is locked FOR UPDATE: a DefineProcessFlow that
+// names the path holds the matching FOR SHARE lock until it commits, so a
+// flow that commits concurrently is either already visible here or still
+// blocked on the path's share lock.
+func (uc *DeactivatePath) rejectIfInActiveFlow(ctx context.Context, id shared.PathId) error {
+	if uc.Flows == nil {
+		return nil
+	}
+	flows, err := uc.Flows.ListActiveFlowIDsReferencingPath(ctx, id)
+	if err != nil {
+		return err
+	}
+	if len(flows) > 0 {
+		return fmt.Errorf("%w: path %q is used by active flow(s) %v; revise or retire those flows first", ErrPathInActiveFlow, id, flows)
 	}
 	return nil
 }

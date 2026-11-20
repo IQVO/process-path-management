@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/claudioed/process-path-management/internal/domain/cptschedule"
+	"github.com/claudioed/process-path-management/internal/domain/processflow"
 	"github.com/claudioed/process-path-management/internal/domain/processpath"
 	"github.com/claudioed/process-path-management/internal/domain/shared"
 )
@@ -81,6 +82,37 @@ type CPTScheduleRepo interface {
 	LockAllForShare(ctx context.Context) ([]shared.SiteId, error)
 }
 
+// ProcessFlowRepo persists and retrieves ProcessFlow aggregates, keyed by
+// their FlowId (ADR 0042).
+type ProcessFlowRepo interface {
+	// Create inserts a brand-new flow (version 1) and nothing else: when a
+	// row with the same id already exists it writes nothing and returns
+	// ErrAlreadyExists, so two concurrent first defines of one flow can
+	// never both succeed.
+	Create(ctx context.Context, f *processflow.ProcessFlow) error
+	// Save persists a change to an existing flow, version-guarded (ADR
+	// 0017): f carries the NEW version, and the row only updates when its
+	// stored version is exactly one lower. ErrConcurrentModification is
+	// returned otherwise. The stages are replaced wholesale.
+	Save(ctx context.Context, f *processflow.ProcessFlow) error
+	// FindByID returns nil, nil for an unknown id.
+	FindByID(ctx context.Context, id processflow.FlowId) (*processflow.ProcessFlow, error)
+	// ListPage is the keyset-paginated read behind GET /process-flows: at
+	// most size flows ordered by id, strictly after `after` ("" starts at
+	// the first). activeOnly narrows to ACTIVE flows.
+	ListPage(ctx context.Context, activeOnly bool, after processflow.FlowId, size int) ([]*processflow.ProcessFlow, error)
+	// ListActiveFlowIDsReferencingPath returns, ascending, the id of every
+	// ACTIVE flow that has a stage on path id. DeactivatePath uses it to
+	// refuse retiring a path an active flow still uses (ADR 0042).
+	ListActiveFlowIDsReferencingPath(ctx context.Context, id shared.PathId) ([]processflow.FlowId, error)
+	// LockActiveForShare takes a share lock on every ACTIVE flow row (held
+	// until the bound unit of work ends) and returns their ids ascending.
+	// RepublishCatalogue uses it so a flow it republishes cannot be
+	// superseded by a concurrent revision whose event would then be
+	// overtaken in the outbox by a stale snapshot.
+	LockActiveForShare(ctx context.Context) ([]processflow.FlowId, error)
+}
+
 // EventPublisher publishes a domain event raised by a use case. Mirrors
 // the exact interface shape already used across the fleet (see
 // labor-performance's ports.EventPublisher) so the outbound Kafka/log
@@ -115,8 +147,8 @@ type Clock interface {
 // metric, not only as a log line. Use cases treat a nil value as "not
 // instrumented", like PathMetrics.
 type CatalogueMetrics interface {
-	// CatalogueRepublished records n events of kind ("path" or
-	// "schedule") enqueued by a successful republish.
+	// CatalogueRepublished records n events of kind ("path", "schedule"
+	// or "flow") enqueued by a successful republish.
 	CatalogueRepublished(ctx context.Context, kind string, n int)
 	// CatalogueRepublishFailed records a republish run that enqueued
 	// nothing because it failed.

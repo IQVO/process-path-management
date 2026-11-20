@@ -23,6 +23,7 @@ const MaxRepublishedPerKind = 1000
 const (
 	republishKindPath     = "path"
 	republishKindSchedule = "schedule"
+	republishKindFlow     = "flow"
 )
 
 // RepublishResult reports what one RepublishCatalogue run enqueued.
@@ -31,7 +32,10 @@ type RepublishResult struct {
 	Paths int
 	// Schedules is the number of CPTScheduleChanged events enqueued.
 	Schedules int
-	// Omitted is the number of paths and schedules NOT enqueued because a
+	// Flows is the number of ProcessFlowRevised events enqueued, one per
+	// ACTIVE flow (ADR 0042).
+	Flows int
+	// Omitted is the number of paths, schedules and flows NOT enqueued because a
 	// kind exceeded MaxRepublishedPerKind. Non-zero means the topic is
 	// still incomplete and the caller must report it loudly.
 	Omitted int
@@ -60,8 +64,11 @@ type RepublishResult struct {
 type RepublishCatalogue struct {
 	Repo         ports.ProcessPathRepo
 	CPTSchedules ports.CPTScheduleRepo
-	Publisher    ports.EventPublisher
-	Clock        ports.Clock
+	// Flows holds the ProcessFlow aggregates (ADR 0042). Optional: nil
+	// republishes no flows, as in a use-case test that models none.
+	Flows     ports.ProcessFlowRepo
+	Publisher ports.EventPublisher
+	Clock     ports.Clock
 	// UnitOfWork brackets the whole republish atomically (ADR 0003); nil
 	// means no transactional backing (see DefinePath).
 	UnitOfWork ports.UnitOfWork
@@ -80,7 +87,10 @@ func (uc *RepublishCatalogue) Execute(ctx context.Context) (RepublishResult, err
 		if err := uc.republishPaths(ctx, now, &res); err != nil {
 			return err
 		}
-		return uc.republishSchedules(ctx, now, &res)
+		if err := uc.republishSchedules(ctx, now, &res); err != nil {
+			return err
+		}
+		return uc.republishFlows(ctx, now, &res)
 	})
 	if err != nil {
 		if uc.Metrics != nil {
@@ -91,6 +101,9 @@ func (uc *RepublishCatalogue) Execute(ctx context.Context) (RepublishResult, err
 	if uc.Metrics != nil {
 		uc.Metrics.CatalogueRepublished(ctx, republishKindPath, res.Paths)
 		uc.Metrics.CatalogueRepublished(ctx, republishKindSchedule, res.Schedules)
+		if uc.Flows != nil {
+			uc.Metrics.CatalogueRepublished(ctx, republishKindFlow, res.Flows)
+		}
 	}
 	return res, nil
 }
@@ -153,6 +166,38 @@ func (uc *RepublishCatalogue) republishSchedules(ctx context.Context, now time.T
 			return err
 		}
 		res.Schedules++
+	}
+	return nil
+}
+
+// republishFlows share-locks every ACTIVE flow and publishes each one's
+// current state as ProcessFlowRevised (ADR 0042), ascending by id. The
+// version is the flow's current one, so a consumer that is caught up (it
+// applies a message only when the version is greater) ignores it and a fresh
+// one learns the flow. RETIRED flows are not republished, like deactivated
+// paths.
+func (uc *RepublishCatalogue) republishFlows(ctx context.Context, now time.Time, res *RepublishResult) error {
+	if uc.Flows == nil {
+		return nil
+	}
+	ids, err := uc.Flows.LockActiveForShare(ctx)
+	if err != nil {
+		return err
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	ids, res.Omitted = capIDs(ids, res.Omitted)
+	for _, id := range ids {
+		f, err := uc.Flows.FindByID(ctx, id)
+		if err != nil {
+			return err
+		}
+		if f == nil || !f.IsActive() {
+			continue
+		}
+		if err := uc.Publisher.Publish(ctx, f.RevisedEvent(now)); err != nil {
+			return err
+		}
+		res.Flows++
 	}
 	return nil
 }
