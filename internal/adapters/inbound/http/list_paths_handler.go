@@ -18,29 +18,11 @@ import (
 // must be a real boolean when present: a query like ?all=null is a client
 // bug and gets a 400 problem+json, never silently coerced to "false".
 func (s *Server) handleListPaths(w http.ResponseWriter, r *http.Request) {
-	limit, pos, ok := pageParams(w, r, "all")
+	limit, activeOnly, after, ok := listQuery(w, r)
 	if !ok {
 		return
 	}
-	activeOnly := true
-	if vals, present := r.URL.Query()["all"]; present {
-		all, err := parseStrictBool(vals[0])
-		if err != nil {
-			writeProblem(w, http.StatusBadRequest, problemInfo{"invalid-query-parameter", "The 'all' query parameter must be a boolean (true or false)"}, "could not parse 'all' as a boolean: "+vals[0], r.URL.Path)
-			return
-		}
-		activeOnly = !all
-	}
-	if pos != nil && pos.Sort != pos.ID {
-		writeInvalidCursor(w, r)
-		return
-	}
-	var after shared.PathId
-	if pos != nil {
-		after = shared.PathId(pos.ID)
-	}
-
-	paths, err := s.ListPaths.ExecutePage(r.Context(), activeOnly, after, page.FetchSize(limit))
+	paths, err := s.ListPaths.ExecutePage(r.Context(), activeOnly, shared.PathId(after), page.FetchSize(limit))
 	if err != nil {
 		writeError(w, r, err)
 		return

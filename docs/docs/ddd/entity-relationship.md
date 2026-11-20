@@ -2,14 +2,14 @@
 title: Entity Relationship
 sidebar_label: Entity Relationship
 sidebar_position: 10
-description: ER diagrams of process-path-management's final Postgres schemas — the OLTP database (process paths, CPT schedules, outbox, idempotency keys) and the separate analytics database — with the table-to-aggregate mapping.
+description: ER diagrams of process-path-management's final Postgres schemas — the OLTP database (process paths, CPT schedules, process flows, outbox, idempotency keys) and the separate analytics database — with the table-to-aggregate mapping.
 ---
 
 # Entity Relationship
 
 The final schema after applying every migration in order. Part of the
 [DDD artifact pack](./ddd-artifacts.md). There are **two databases**:
-the OLTP database (`DATABASE_URL`, `migrations/0001`–`0008`) and the
+the OLTP database (`DATABASE_URL`, `migrations/0001`–`0010`) and the
 separate analytics database (`ANALYTICS_DATABASE_URL`,
 `migrations/analytics/0001`), written only by `pathmgmt-projector` and
 read only by `pathmgmt-reports` (ADR 0007). Both are migrated with
@@ -51,6 +51,22 @@ erDiagram
         text_array eligible_path_ids
     }
 
+    process_flows {
+        text flow_id PK
+        text name
+        text status "ACTIVE or RETIRED"
+        integer version "published in every flow event (ADR 0042)"
+        timestamptz created_at
+        timestamptz updated_at
+    }
+
+    process_flow_stages {
+        text flow_id PK,FK
+        integer position PK "stage order, from 0"
+        text path_id "UK with flow_id, no FK to process_paths"
+        text process_type "PICK REBIN PACK SLAM DISPATCH ARRIVAL RELOCATE REPLENISH"
+    }
+
     outbox_events {
         bigserial id PK
         uuid event_id UK "unique with topic"
@@ -85,10 +101,11 @@ erDiagram
     }
 
     cpt_schedules ||--|{ cpt_schedule_cutoffs : "has cutoffs, ON DELETE CASCADE"
+    process_flows ||--|{ process_flow_stages : "has stages, ON DELETE CASCADE"
 ```
 
 Source: `migrations/0001_init.up.sql` through
-`migrations/0009_intake.up.sql`; `schema_migrations` is golang-migrate's
+`migrations/0010_process_flows.up.sql`; `schema_migrations` is golang-migrate's
 own table (`internal/adapters/outbound/postgres/migrate.go`). `text_array`
 stands for Postgres `TEXT[]`. Omits: indexes
 (`idx_process_paths_active` partial on `status = 'ACTIVE'`,
@@ -96,15 +113,20 @@ stands for Postgres `TEXT[]`. Omits: indexes
 `idx_idempotency_keys_created_at`) and the `CHECK` constraints on
 `status` and `destination_location_role`.
 
-The only `FOREIGN KEY` in the schema is
-`cpt_schedule_cutoffs.schedule_site_id → cpt_schedules.site_id`. Three
+The only `FOREIGN KEY`s in the schema are
+`cpt_schedule_cutoffs.schedule_site_id → cpt_schedules.site_id` and
+`process_flow_stages.flow_id → process_flows.flow_id`. Four
 logical links deliberately have **no** foreign key:
 
+- `process_flow_stages.path_id → process_paths.id` is an aggregate boundary
+  too: the path must be **ACTIVE**, which a foreign key cannot say, so
+  `DefineProcessFlow` checks it under the path's row lock (ADR 0042, ADR 0028).
+  `UNIQUE (flow_id, path_id)` keeps a path to one stage per flow.
 - `cpt_schedule_cutoffs.eligible_path_ids → process_paths.id` is an
   aggregate boundary. ADR 0010 checks it at write time in the
   `DefineCPTSchedule` use case, "not by a foreign key", and it is stored as
   a `TEXT[]` that is never queried on its own.
-- `outbox_events.aggregate_id` holds a `path_id` or `site_id` (the Kafka
+- `outbox_events.aggregate_id` holds a `path_id`, `site_id` or `flow_id` (the Kafka
   key). The outbox is infrastructure and keeps rows independent of the
   aggregate tables; the sweeper deletes published rows after a retention
   period (ADR 0018).
@@ -150,6 +172,8 @@ tables hold CloudEvents `id`s, and the rollup is bucketed by UTC day.
 | `process_paths` | Domain state | `ProcessPath` aggregate (one row per aggregate) |
 | `cpt_schedules` | Domain state | `CPTSchedule` aggregate root |
 | `cpt_schedule_cutoffs` | Domain state | `Cutoff` entities inside `CPTSchedule`; replaced wholesale on every `CPTScheduleRepo.Save` (delete then insert) |
+| `process_flows` | Domain state | `ProcessFlow` aggregate root (ADR 0042); `version` is the published event version |
+| `process_flow_stages` | Domain state | `Stage` values inside `ProcessFlow`; replaced wholesale on every `ProcessFlowRepo.Save` |
 | `outbox_events` | Infrastructure: transactional outbox (ADR 0003, topic column from ADR 0007) | One row per event per topic, written in the aggregate's transaction |
 | `idempotency_keys` | Infrastructure: `Idempotency-Key` replay cache (ADR 0011), swept by TTL (ADR 0018) | none — HTTP adapter |
 | `schema_migrations` | Infrastructure: golang-migrate bookkeeping | none |

@@ -36,6 +36,8 @@ tags:
     description: Define, revise, retrieve, list, and deactivate process paths
   - name: cpt-schedule
     description: Site-scoped Critical Pull Time (CPT) schedules (ADR 0010)
+  - name: process-flows
+    description: The ordered stages of process paths a workload passes through (ADR 0042)
   - name: health
     description: Liveness and readiness probes
 paths:
@@ -376,7 +378,10 @@ paths:
         Deactivated. A path that any site's CPT schedule still lists in a
         cutoff's eligiblePathIds cannot be deactivated (ADR 0026): the
         request is refused with 409 path-referenced-by-cpt-schedule, naming
-        the sites, and nothing changes — revise those schedules first. This
+        the sites, and nothing changes — revise those schedules first. A
+        path that an ACTIVE process flow has a stage on cannot be deactivated
+        either (ADR 0042): 409 path-in-active-flow, naming the flows —
+        revise or retire those flows first. This
         service takes no position on work already assigned to this path in
         a downstream context — that is each consumer's own operational
         concern.
@@ -395,7 +400,9 @@ paths:
           description: >-
             path-referenced-by-cpt-schedule: at least one site's CPT
             schedule still lists this path in a cutoff's eligiblePathIds
-            (ADR 0026). The path stays Active and nothing is published.
+            (ADR 0026), or path-in-active-flow: at least one ACTIVE process
+            flow has a stage on this path (ADR 0042). Either way the path
+            stays Active and nothing is published.
             Also concurrent-modification when another request committed a
             change to this path between this call's load and write (ADR
             0017).
@@ -499,6 +506,187 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /process-flows:
+    get:
+      tags: [process-flows]
+      operationId: listProcessFlows
+      summary: List process flows
+      description: >
+        Returns only ACTIVE flows by default; pass ?all=true for the audit
+        view (ACTIVE and RETIRED). The list is keyset-paginated (REST
+        guideline section 3): `limit` (1-500, default 100) and an opaque
+        `cursor`, in flowId order (the unique key); the answer is `{items,
+        nextCursor}` and `nextCursor` is absent on the last page. Filters
+        (`all`) are repeated on every page request. Any query parameter other
+        than `all`, `limit` and `cursor` is 400 `unknown-query-parameter`.
+      parameters:
+        - name: all
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
+          description: When true, includes RETIRED flows too.
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: One page of the requested set of process flows
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProcessFlowPage"
+        "400":
+          description: >-
+            The `all` query parameter is present but not a boolean
+            (`invalid-query-parameter`), `limit` is not an integer from 1 to
+            500 (`invalid-limit`), `cursor` is not a token this API issued
+            (`invalid-cursor`), or the request carries a query parameter this
+            operation does not declare (`unknown-query-parameter`).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetails"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /process-flows/{flowId}:
+    get:
+      tags: [process-flows]
+      operationId: getProcessFlow
+      summary: Get one process flow by id
+      description: Returns the flow regardless of status (ACTIVE or RETIRED).
+      parameters:
+        - $ref: "#/components/parameters/FlowIdPathParam"
+      responses:
+        "200":
+          description: The requested process flow
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProcessFlow"
+        "404":
+          description: No process flow exists with this id (`flow-not-found`)
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetails"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    put:
+      tags: [process-flows]
+      operationId: putProcessFlow
+      summary: Define or revise a process flow
+      description: >
+        The ordered stages a workload passes through (ADR 0042). The body is
+        the flow's FULL definition: every PUT replaces the name and the
+        stages. Idempotent by nature (full state), so it takes no
+        Idempotency-Key. 201 when the flowId is new, 200 for every later PUT
+        — including one that changes nothing, which raises no event and
+        keeps the version. Each accepted change raises ProcessFlowDefined
+        (first) or ProcessFlowRevised, carrying the full state and a
+        `version` that starts at 1 and grows by one per accepted change.
+        Invariants: at least one stage; a pathId appears at most once; each
+        processType is one of the closed set; each stage's pathId names an
+        ACTIVE process path of this service's own catalogue (checked at
+        write time, under the path's row lock). A RETIRED flow cannot be
+        revised (422 `flow-retired`).
+      parameters:
+        - $ref: "#/components/parameters/FlowIdPathParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PutProcessFlowRequest"
+            examples:
+              pickRebinPackSlam:
+                summary: PICK, REBIN, PACK, SLAM, each stage on its own path
+                value:
+                  name: Single-unit outbound
+                  stages:
+                    - {pathId: PICK, processType: PICK}
+                    - {pathId: REBIN, processType: REBIN}
+                    - {pathId: PACK, processType: PACK}
+                    - {pathId: SLAM, processType: SLAM}
+              directToPack:
+                summary: A direct-to-PACK flow that shares the PICK path
+                value:
+                  name: Direct to pack
+                  stages:
+                    - {pathId: PICK, processType: PICK}
+                    - {pathId: PACK, processType: PACK}
+      responses:
+        "200":
+          description: Flow revised, or the request changed nothing (no event, same version)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProcessFlow"
+        "201":
+          description: Flow defined (ProcessFlowDefined at version 1)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProcessFlow"
+        "400":
+          description: The request body is missing, not valid JSON, or contains a NUL character U+0000 (`malformed-request-body`).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetails"
+        "409":
+          description: >-
+            concurrent-modification: another request committed a change to
+            this flow between the caller's load and this write (optimistic
+            concurrency, ADR 0017). Reload the flow and re-apply the change.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetails"
+        "422":
+          description: >
+            name is empty, stages is empty, a stage's pathId is empty or
+            repeated (`duplicate-stage-path`), a processType is not one of
+            the closed set (`invalid-process-type`), a stage's pathId does
+            not reference an Active process path (`ineligible-stage-path`),
+            or the flow is retired (`flow-retired`).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetails"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    delete:
+      tags: [process-flows]
+      operationId: retireProcessFlow
+      summary: Retire a process flow
+      description: >
+        Idempotent: retiring an already retired flow is a 204 again and does
+        NOT republish. The first retirement raises ProcessFlowRetired, the
+        full state with status RETIRED and the next version. A retired flow
+        cannot be revised, and its paths may be deactivated again.
+      parameters:
+        - $ref: "#/components/parameters/FlowIdPathParam"
+      responses:
+        "204":
+          description: Flow retired (or already was)
+        "404":
+          description: No process flow exists with this id (`flow-not-found`)
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetails"
+        "409":
+          description: >-
+            concurrent-modification: another request committed a change to
+            this flow between the caller's load and this write (ADR 0017).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetails"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
 components:
   responses:
     InternalError:
@@ -530,6 +718,14 @@ components:
         type: string
         minLength: 1
       example: PICK
+    FlowIdPathParam:
+      name: flowId
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+      example: single-unit-outbound
     SiteIdPathParam:
       name: siteId
       in: path
@@ -883,6 +1079,82 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Cutoff"
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    ProcessFlowPage:
+      type: object
+      required: [items]
+      description: >-
+        One keyset page of process flows (REST guideline section 3.3),
+        ordered by flowId (the unique key).
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProcessFlow"
+        nextCursor:
+          type: string
+          description: >-
+            Opaque cursor of the next page, to be passed back unchanged as
+            `cursor`. Absent on the last page.
+          example: eyJzIj...SyJ9
+    FlowStage:
+      type: object
+      required: [pathId, processType]
+      properties:
+        pathId:
+          type: string
+          minLength: 1
+          description: An ACTIVE process path of this service's own catalogue.
+          example: PICK
+        processType:
+          type: string
+          enum: [PICK, REBIN, PACK, SLAM, DISPATCH, ARRIVAL, RELOCATE, REPLENISH]
+          description: The kind of work the stage performs (the task types fulfillment-execution publishes).
+          example: PICK
+    PutProcessFlowRequest:
+      type: object
+      required: [name, stages]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          example: Single-unit outbound
+        stages:
+          type: array
+          minItems: 1
+          description: The ordered stages; a pathId appears at most once.
+          items:
+            $ref: "#/components/schemas/FlowStage"
+    ProcessFlow:
+      type: object
+      required: [flowId, name, stages, status, version, createdAt, updatedAt]
+      properties:
+        flowId:
+          type: string
+          example: single-unit-outbound
+        name:
+          type: string
+          example: Single-unit outbound
+        stages:
+          type: array
+          items:
+            $ref: "#/components/schemas/FlowStage"
+        status:
+          type: string
+          enum: [ACTIVE, RETIRED]
+        version:
+          type: integer
+          minimum: 1
+          description: >-
+            Starts at 1 and grows by one per accepted change (a revision that
+            changes something, or the retirement). The same number the flow's
+            events carry.
+          example: 1
         createdAt:
           type: string
           format: date-time

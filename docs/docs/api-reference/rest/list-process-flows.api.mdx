@@ -1,0 +1,71 @@
+---
+id: list-process-flows
+title: "List process flows"
+description: "Returns only ACTIVE flows by default; pass ?all=true for the audit view (ACTIVE and RETIRED). The list is keyset-paginated (REST guideline section 3): `limit` (1-500, default 100) and an opaque `cursor`, in flowId order (the unique key); the answer is `{items, nextCursor}` and `nextCursor` is absent on the last page. Filters (`all`) are repeated on every page request. Any query parameter other than `all`, `limit` and `cursor` is 400 `unknown-query-parameter`."
+sidebar_label: "List process flows"
+hide_title: true
+hide_table_of_contents: true
+api: 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
+sidebar_class_name: "get api-method"
+info_path: docs/api-reference/rest/process-path-management-api
+custom_edit_url: null
+hide_send_button: true
+---
+
+import MethodEndpoint from "@theme/ApiExplorer/MethodEndpoint";
+import ParamsDetails from "@theme/ParamsDetails";
+import RequestSchema from "@theme/RequestSchema";
+import StatusCodes from "@theme/StatusCodes";
+import OperationTabs from "@theme/OperationTabs";
+import TabItem from "@theme/TabItem";
+import Heading from "@theme/Heading";
+import Translate from "@docusaurus/Translate";
+
+<Heading
+  as={"h1"}
+  className={"openapi__heading"}
+  children={"List process flows"}
+>
+</Heading>
+
+<MethodEndpoint
+  method={"get"}
+  path={"/process-flows"}
+  context={"endpoint"}
+>
+  
+</MethodEndpoint>
+
+
+
+Returns only ACTIVE flows by default; pass ?all=true for the audit view (ACTIVE and RETIRED). The list is keyset-paginated (REST guideline section 3): `limit` (1-500, default 100) and an opaque `cursor`, in flowId order (the unique key); the answer is `{items, nextCursor}` and `nextCursor` is absent on the last page. Filters (`all`) are repeated on every page request. Any query parameter other than `all`, `limit` and `cursor` is 400 `unknown-query-parameter`.
+
+
+<Heading
+  id={"request"}
+  as={"h2"}
+  className={"openapi-tabs__heading"}
+>
+  <Translate id="theme.openapi.request.title">Request</Translate>
+</Heading>
+
+<ParamsDetails
+  {...require("./list-process-flows.ParamsDetails.json")}
+>
+  
+</ParamsDetails>
+
+<RequestSchema
+  {...require("./list-process-flows.RequestSchema.json")}
+>
+  
+</RequestSchema>
+
+<StatusCodes
+  {...require("./list-process-flows.StatusCodes.json")}
+>
+  
+</StatusCodes>
+
+
+      

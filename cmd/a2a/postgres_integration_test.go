@@ -50,7 +50,7 @@ func TestA2AReadsFromRealPostgresAndWritesNothing(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	repo, closeAdapters, err := buildRepo(ctx, dsn, dsn, migrationsDirForTest(t), quietLogger())
+	repo, flows, closeAdapters, err := buildRepo(ctx, dsn, dsn, migrationsDirForTest(t), quietLogger())
 	if err != nil {
 		t.Fatalf("buildRepo: %v", err)
 	}
@@ -72,7 +72,7 @@ func TestA2AReadsFromRealPostgresAndWritesNothing(t *testing.T) {
 		}
 	}
 
-	srv := httptest.NewServer(newAgent(repo, testAgentURL, "itest"))
+	srv := httptest.NewServer(newAgent(repo, flows, testAgentURL, "itest"))
 	t.Cleanup(srv.Close)
 	client := clientFor(t, srv.URL+"/a2a")
 

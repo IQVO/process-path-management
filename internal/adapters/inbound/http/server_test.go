@@ -40,17 +40,22 @@ func newTestServer(t *testing.T) http.Handler {
 	t.Helper()
 	repo := memory.NewProcessPathRepo()
 	scheduleRepo := memory.NewCPTScheduleRepo()
+	flowRepo := memory.NewProcessFlowRepo()
 	clock := fixedClock{time.Date(2026, 9, 6, 0, 0, 0, 0, time.UTC)}
 	pub := &logOnlyPublisher{}
 
 	server := &inboundhttp.Server{
 		DefinePath:        &usecases.DefinePath{Repo: repo, Publisher: pub, Clock: clock},
 		RevisePath:        &usecases.RevisePath{Repo: repo, Publisher: pub, Clock: clock},
-		DeactivatePath:    &usecases.DeactivatePath{Repo: repo, Publisher: pub, Clock: clock, CPTSchedules: scheduleRepo},
+		DeactivatePath:    &usecases.DeactivatePath{Repo: repo, Publisher: pub, Clock: clock, CPTSchedules: scheduleRepo, Flows: flowRepo},
 		GetPath:           &usecases.GetPath{Repo: repo},
 		ListPaths:         &usecases.ListPaths{Repo: repo},
 		DefineCPTSchedule: &usecases.DefineCPTSchedule{Repo: scheduleRepo, ProcessPathRepo: repo, Publisher: pub, Clock: clock},
 		GetCPTSchedule:    &usecases.GetCPTSchedule{Repo: scheduleRepo},
+		DefineProcessFlow: &usecases.DefineProcessFlow{Repo: flowRepo, ProcessPathRepo: repo, Publisher: pub, Clock: clock},
+		RetireProcessFlow: &usecases.RetireProcessFlow{Repo: flowRepo, Publisher: pub, Clock: clock},
+		GetProcessFlow:    &usecases.GetProcessFlow{Repo: flowRepo},
+		ListProcessFlows:  &usecases.ListProcessFlows{Repo: flowRepo},
 	}
 	return inboundhttp.NewRouter(server, nil, "")
 }

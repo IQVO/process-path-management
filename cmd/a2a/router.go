@@ -14,12 +14,17 @@ import (
 // newAgent composes the A2A surface over the process path repository: the
 // SAME read use cases the HTTP and MCP adapters use (GetPath and ListPaths),
 // the Agent Card advertising agentURL, and the HTTP router around them. The
-// adapter never writes, so no EventPublisher, UnitOfWork or Clock is wired,
+// ProcessFlow reads (ADR 0042) run over the flow repository. The adapter never
+// writes, so no EventPublisher, UnitOfWork or Clock is wired,
 // and it calls no other context and no reports client.
-func newAgent(repo ports.ProcessPathRepo, agentURL, version string) http.Handler {
+func newAgent(repo ports.ProcessPathRepo, flows ports.ProcessFlowRepo, agentURL, version string) http.Handler {
 	deps := inbounda2a.Deps{
 		GetPath:   &usecases.GetPath{Repo: repo},
 		ListPaths: &usecases.ListPaths{Repo: repo},
+	}
+	if flows != nil {
+		deps.GetProcessFlow = &usecases.GetProcessFlow{Repo: flows}
+		deps.ListProcessFlows = &usecases.ListProcessFlows{Repo: flows}
 	}
 	card := inbounda2a.Card(inbounda2a.Config{AgentURL: agentURL, Version: version})
 	return newRouter(inbounda2a.Handler(inbounda2a.NewExecutor(deps)), card)

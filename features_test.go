@@ -25,6 +25,7 @@ import (
 	"github.com/claudioed/process-path-management/internal/adapters/outbound/memory"
 	"github.com/claudioed/process-path-management/internal/application/usecases"
 	"github.com/claudioed/process-path-management/internal/domain/cptschedule"
+	"github.com/claudioed/process-path-management/internal/domain/processflow"
 	"github.com/claudioed/process-path-management/internal/domain/shared"
 )
 
@@ -44,30 +45,37 @@ func (p *recordingPublisher) Publish(_ context.Context, e shared.DomainEvent) er
 	return nil
 }
 
-// countFor counts recorded events of one event type for one aggregate id
-// (PathId for the ProcessPath* events, SiteId for CPTScheduleChanged).
+// recordedEventIdentity is the event name and the aggregate id (PathId for the
+// ProcessPath* events, SiteId for CPTScheduleChanged, FlowId for the
+// ProcessFlow* events) of a recorded domain event.
+func recordedEventIdentity(e shared.DomainEvent) (name, id string) {
+	switch ev := e.(type) {
+	case shared.ProcessPathCreated:
+		return ev.EventName(), string(ev.PathId)
+	case shared.ProcessPathUpdated:
+		return ev.EventName(), string(ev.PathId)
+	case shared.ProcessPathDeactivated:
+		return ev.EventName(), string(ev.PathId)
+	case cptschedule.CPTScheduleChanged:
+		return ev.EventName(), string(ev.SiteId)
+	case processflow.ProcessFlowDefined:
+		return ev.EventName(), string(ev.FlowId)
+	case processflow.ProcessFlowRevised:
+		return ev.EventName(), string(ev.FlowId)
+	case processflow.ProcessFlowRetired:
+		return ev.EventName(), string(ev.FlowId)
+	}
+	return "", ""
+}
+
+// countFor counts recorded events of one event type for one aggregate id.
 func (p *recordingPublisher) countFor(name, id string) int {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	n := 0
 	for _, e := range p.events {
-		switch ev := e.(type) {
-		case shared.ProcessPathCreated:
-			if ev.EventName() == name && string(ev.PathId) == id {
-				n++
-			}
-		case shared.ProcessPathUpdated:
-			if ev.EventName() == name && string(ev.PathId) == id {
-				n++
-			}
-		case shared.ProcessPathDeactivated:
-			if ev.EventName() == name && string(ev.PathId) == id {
-				n++
-			}
-		case cptschedule.CPTScheduleChanged:
-			if ev.EventName() == name && string(ev.SiteId) == id {
-				n++
-			}
+		if gotName, gotID := recordedEventIdentity(e); gotName == name && gotID == id {
+			n++
 		}
 	}
 	return n
@@ -79,6 +87,7 @@ func (p *recordingPublisher) countFor(name, id string) int {
 func newServer() (*httptest.Server, *recordingPublisher, *settableClock, *republishRig) {
 	repo := memory.NewProcessPathRepo()
 	scheduleRepo := memory.NewCPTScheduleRepo()
+	flowRepo := memory.NewProcessFlowRepo()
 	// A settable clock starting at a fixed instant, so response bodies are
 	// deterministic across scenario runs and scenarios can move time on.
 	clock := newSettableClock(time.Date(2026, 9, 6, 0, 0, 0, 0, time.UTC))
@@ -87,18 +96,22 @@ func newServer() (*httptest.Server, *recordingPublisher, *settableClock, *republ
 	s := &inboundhttp.Server{
 		DefinePath:        &usecases.DefinePath{Repo: repo, Publisher: pub, Clock: clock},
 		RevisePath:        &usecases.RevisePath{Repo: repo, Publisher: pub, Clock: clock},
-		DeactivatePath:    &usecases.DeactivatePath{Repo: repo, Publisher: pub, Clock: clock, CPTSchedules: scheduleRepo},
+		DeactivatePath:    &usecases.DeactivatePath{Repo: repo, Publisher: pub, Clock: clock, CPTSchedules: scheduleRepo, Flows: flowRepo},
 		GetPath:           &usecases.GetPath{Repo: repo},
 		ListPaths:         &usecases.ListPaths{Repo: repo},
 		DefineCPTSchedule: &usecases.DefineCPTSchedule{Repo: scheduleRepo, ProcessPathRepo: repo, Publisher: pub, Clock: clock},
 		GetCPTSchedule:    &usecases.GetCPTSchedule{Repo: scheduleRepo},
+		DefineProcessFlow: &usecases.DefineProcessFlow{Repo: flowRepo, ProcessPathRepo: repo, Publisher: pub, Clock: clock},
+		RetireProcessFlow: &usecases.RetireProcessFlow{Repo: flowRepo, Publisher: pub, Clock: clock},
+		GetProcessFlow:    &usecases.GetProcessFlow{Repo: flowRepo},
+		ListProcessFlows:  &usecases.ListProcessFlows{Repo: flowRepo},
 	}
 
 	// The startup catalogue republish (ADR 0038) over the SAME repositories,
 	// publishing into its own recorder so a scenario sees only what a restart
 	// re-enqueues.
 	rig := &republishRig{published: &recordingPublisher{}}
-	rig.uc = &usecases.RepublishCatalogue{Repo: repo, CPTSchedules: scheduleRepo, Publisher: rig.published, Clock: clock}
+	rig.uc = &usecases.RepublishCatalogue{Repo: repo, CPTSchedules: scheduleRepo, Flows: flowRepo, Publisher: rig.published, Clock: clock}
 
 	return httptest.NewServer(inboundhttp.NewRouter(s, nil, "")), pub, clock, rig
 }
@@ -547,6 +560,7 @@ func InitializeScenario(sc *godog.ScenarioContext) {
 	// CloudEvents wire form, the analytics projector and its report).
 	w2 := registerWave2Steps(sc, w)
 	registerRepublishSteps(sc, w)
+	registerProcessFlowSteps(sc, w)
 	// Documentation-derived rules (features/*_rules.feature).
 	registerRulesSteps(sc, w2)
 }

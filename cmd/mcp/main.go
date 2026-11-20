@@ -99,6 +99,7 @@ func run() error {
 	}
 	defer closeAdapters()
 	scheduleRepo := postgres.NewCPTScheduleRepo(pool)
+	flowRepo := postgres.NewProcessFlowRepo(pool)
 	// The MCP adapter reuses the SAME read use cases the HTTP adapter
 	// uses: GetPath and ListPaths. It never writes, so no
 	// EventPublisher/UnitOfWork/Clock is needed here.
@@ -106,6 +107,9 @@ func run() error {
 		GetPath:        &usecases.GetPath{Repo: repo},
 		ListPaths:      &usecases.ListPaths{Repo: repo},
 		GetCPTSchedule: &usecases.GetCPTSchedule{Repo: scheduleRepo},
+		// ADR 0042: the two read-only flow tools over the same flow repo.
+		GetProcessFlow:   &usecases.GetProcessFlow{Repo: flowRepo},
+		ListProcessFlows: &usecases.ListProcessFlows{Repo: flowRepo},
 	}
 	// When REPORTS_BASE_URL is set, the curated catalogue-growth report
 	// tool is additionally registered, calling the pathmgmt-reports REST

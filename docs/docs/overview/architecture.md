@@ -20,9 +20,10 @@ not by convention alone ([ADR 0021](../adr/0021-architecture-fitness-suite.md)).
 | --- | --- | --- |
 | `internal/domain/processpath` | Domain | `ProcessPath` aggregate: `Define`, `Revise`, `Deactivate`, `Rehydrate`, its invariant errors |
 | `internal/domain/cptschedule` | Domain | `CPTSchedule` aggregate and `Cutoff` value object, `CPTScheduleChanged` event |
+| `internal/domain/processflow` | Domain | `ProcessFlow` aggregate (`Define`, `Revise`, `Retire`, `Rehydrate`), `Stage` and the closed `ProcessType` set, its invariant errors, and the `ProcessFlowDefined` / `ProcessFlowRevised` / `ProcessFlowRetired` events ([ADR 0042](../adr/0042-process-flows.md)) |
 | `internal/domain/shared` | Domain | `PathId`, `Capability`, `SiteId`, `DestinationLocationRole`, `Eligibility`, the `ProcessPath*` domain events |
-| `internal/application/ports` | Application | Outbound ports: `ProcessPathRepo`, `CPTScheduleRepo`, `EventPublisher`, `UnitOfWork`, `Clock`, `PathMetrics`, and `ErrConcurrentModification` / `ErrAlreadyExists` |
-| `internal/application/usecases` | Application | `DefinePath`, `RevisePath`, `DeactivatePath`, `GetPath`, `ListPaths`, `DefineCPTSchedule`, `GetCPTSchedule` (see [Use cases](../ddd/use-cases.md)) |
+| `internal/application/ports` | Application | Outbound ports: `ProcessPathRepo`, `CPTScheduleRepo`, `ProcessFlowRepo`, `EventPublisher`, `UnitOfWork`, `Clock`, `PathMetrics`, and `ErrConcurrentModification` / `ErrAlreadyExists` |
+| `internal/application/usecases` | Application | `DefinePath`, `RevisePath`, `DeactivatePath`, `GetPath`, `ListPaths`, `DefineCPTSchedule`, `GetCPTSchedule`, `DefineProcessFlow`, `RetireProcessFlow`, `GetProcessFlow`, `ListProcessFlows` (see [Use cases](../ddd/use-cases.md)) |
 | `internal/analytics/report` | Read model | Catalogue-growth report shapes and the `ReportStore` / `ProjectionStore` ports. Imports nothing else in the module ([ADR 0007](../adr/0007-analytical-data-product.md)) |
 | `internal/adapters/inbound/http` | Inbound adapter | chi router, DTOs, RFC 7807 mapping, Idempotency-Key middleware, readiness gate, request logger, and the separate reports router |
 | `internal/adapters/inbound/mcp` | Inbound adapter | MCP server and its read-only tools, plus the REST client for `pathmgmt-reports` |
@@ -48,9 +49,9 @@ The binaries are built into one image (`Dockerfile`, entrypoint
 
 | Binary | Role | Port (default env) | Endpoints | Helm workload |
 | --- | --- | --- | --- | --- |
-| `cmd/pathmgmt` | OLTP REST API. Also runs the outbox relay and the housekeeping sweeper in-process when Postgres is configured | `:8080` (`HTTP_ADDR`) | The 7 operations in `apis/openapi.yaml`, plus `GET /healthz` and `GET /readyz` | `<release>` Deployment (component `api`), Service port 80 → 8080 |
+| `cmd/pathmgmt` | OLTP REST API. Also runs the outbox relay and the housekeeping sweeper in-process when Postgres is configured | `:8080` (`HTTP_ADDR`) | The 11 operations in `apis/openapi.yaml`, plus `GET /healthz` and `GET /readyz` | `<release>` Deployment (component `api`), Service port 80 → 8080 |
 | `cmd/mcp` | Read-only MCP server over Streamable HTTP | `:8090` (`MCP_ADDR`) | MCP at `/`, `/mcp` and `/mcp/`; `GET /healthz` | `<release>-mcp` (only with `mcp.enabled=true`), Service port 8090 |
-| `cmd/a2a` | Read-only A2A agent (skills `get_process_path`, `list_process_paths`), JSON-RPC over HTTP ([ADR 0039](../adr/0039-a2a-inbound-adapter.md)) | `:8093` (`A2A_ADDR`) | JSON-RPC at `/` and `/a2a`; Agent Card at `/.well-known/agent-card.json`; `GET /healthz` | `<release>-a2a` (only with `a2a.enabled=true`), Service port 8093 |
+| `cmd/a2a` | Read-only A2A agent (skills `get_process_path`, `list_process_paths`, `get_process_flow`, `list_process_flows`), JSON-RPC over HTTP ([ADR 0039](../adr/0039-a2a-inbound-adapter.md)) | `:8093` (`A2A_ADDR`) | JSON-RPC at `/` and `/a2a`; Agent Card at `/.well-known/agent-card.json`; `GET /healthz` | `<release>-a2a` (only with `a2a.enabled=true`), Service port 8093 |
 | `cmd/pathmgmt-projector` | Analytics writer: consumes `warehouse.process-path-management.analytics` into the analytical database. Owns the analytical schema | `:8091` (`ADMIN_ADDR`) | `GET /healthz`, `GET /readyz` only | `<release>-projector` (only with `analytics.enabled=true`), no Service |
 | `cmd/pathmgmt-reports` | Analytics reader: serves the catalogue-growth report over a read-only pool | `:8092` (`HTTP_ADDR`) | `GET /reports/catalogue-growth`, `GET /reports/catalogue-growth/freshness`, `GET /healthz` | `<release>-reports` (only with `analytics.enabled=true`), Service port 80 → 8092 |
 
@@ -72,7 +73,7 @@ flowchart LR
   subgraph api["cmd/pathmgmt :8080"]
     ROUTER["chi router<br/>otelchi, RequestLogger, CORS"]
     IDEM["RequireIdempotencyKey<br/>POST /process-paths only"]
-    UC["use cases<br/>Define/Revise/Deactivate/Get/List<br/>DefineCPTSchedule/GetCPTSchedule"]
+    UC["use cases<br/>Define/Revise/Deactivate/Get/List<br/>DefineCPTSchedule/GetCPTSchedule<br/>DefineProcessFlow/RetireProcessFlow<br/>GetProcessFlow/ListProcessFlows"]
     UOW["UnitOfWork"]
     OBP["OutboxPublisher"]
     RELAY["OutboxRelay"]
@@ -80,7 +81,7 @@ flowchart LR
   end
 
   subgraph mcpbin["cmd/mcp :8090"]
-    TOOLS["MCP tools<br/>get_process_path, list_process_paths<br/>get_cpt_schedule, get_catalogue_growth_report"]
+    TOOLS["MCP tools<br/>get_process_path, list_process_paths<br/>get_cpt_schedule, get_process_flow<br/>list_process_flows, get_catalogue_growth_report"]
   end
 
   subgraph analytics["analytics data product"]
@@ -88,7 +89,7 @@ flowchart LR
     REP["cmd/pathmgmt-reports :8092<br/>reports router"]
   end
 
-  OLTP[("OLTP Postgres<br/>process_paths, cpt_schedules,<br/>cpt_schedule_cutoffs, outbox_events,<br/>idempotency_keys")]
+  OLTP[("OLTP Postgres<br/>process_paths, cpt_schedules,<br/>cpt_schedule_cutoffs, process_flows,<br/>process_flow_stages, outbox_events,<br/>idempotency_keys")]
   ADB[("Analytics Postgres<br/>catalogue_growth_rollup,<br/>analytics_processed_events,<br/>analytics_consumed_events")]
   EV{{"warehouse.process-path-management.events"}}
   AN{{"warehouse.process-path-management.analytics"}}
@@ -104,7 +105,7 @@ flowchart LR
   RELAY --> AN
   SWEEP --> OLTP
   AGENT --> TOOLS
-  TOOLS -- "GetPath, ListPaths, GetCPTSchedule" --> OLTP
+  TOOLS -- "GetPath, ListPaths, GetCPTSchedule, GetProcessFlow, ListProcessFlows" --> OLTP
   TOOLS -- "REST, when REPORTS_BASE_URL set" --> REP
   AN --> PROJ --> ADB
   PROJ -- "poison message" --> DLQ

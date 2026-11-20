@@ -70,7 +70,7 @@ envelope toggle.**
 | `id` | UUID v4 minted **once** per domain event by `OutboxPublisher` and persisted as `outbox_events.event_id`; the relay republishes the stored bytes, so a redelivery carries the same `id`. The same `id` is shared by the integration and analytics rows of one occurrence. |
 | `source` | `/warehouse/process-path-management` |
 | `type` | `com.warehouse.wes.process-path-management.<entity>.<EventName>` |
-| `subject` | aggregate id — `path_id` for ProcessPath*, `site_id` for CPTScheduleChanged (equal to the Kafka key) |
+| `subject` | aggregate id — `path_id` for ProcessPath*, `site_id` for CPTScheduleChanged, `flow_id` for ProcessFlow* (equal to the Kafka key) |
 | `time` | the domain event's occurred-at, UTC, RFC 3339 |
 | `datacontenttype` | `application/json` |
 | `dataschema` | `urn:warehouse:process-path-management:<events\|analytics>:<EventName>:v1` |
@@ -87,6 +87,9 @@ not a payload change. No extension attributes are used.
 | `com.warehouse.wes.process-path-management.processpath.ProcessPathUpdated` | `processpath` | same four |
 | `com.warehouse.wes.process-path-management.processpath.ProcessPathDeactivated` | `processpath` | same four |
 | `com.warehouse.wes.process-path-management.cptschedule.CPTScheduleChanged` | `cptschedule` | order-management |
+| `com.warehouse.wes.process-path-management.processflow.ProcessFlowDefined` | `processflow` | none yet (warehouse-planning, ADR 0042) |
+| `com.warehouse.wes.process-path-management.processflow.ProcessFlowRevised` | `processflow` | none yet (warehouse-planning, ADR 0042); also the startup republish of every ACTIVE flow |
+| `com.warehouse.wes.process-path-management.processflow.ProcessFlowRetired` | `processflow` | none yet (warehouse-planning, ADR 0042) |
 
 The same type names the occurrence on both topics; `dataschema` names
 the shape. A breaking payload change ships as a new `.v2` type with a new

@@ -11,9 +11,15 @@ const (
 	EntityProcessPath = "processpath"
 	// EntityCPTSchedule is the `type` entity segment for CPTScheduleChanged.
 	EntityCPTSchedule = "cptschedule"
+	// EntityProcessFlow is the `type` entity segment for ProcessFlow* events
+	// (ADR 0042).
+	EntityProcessFlow = "processflow"
 
 	TypeProcessPathCreated     = "com.warehouse.wes.process-path-management.processpath.ProcessPathCreated"
 	TypeProcessPathUpdated     = "com.warehouse.wes.process-path-management.processpath.ProcessPathUpdated"
 	TypeProcessPathDeactivated = "com.warehouse.wes.process-path-management.processpath.ProcessPathDeactivated"
 	TypeCPTScheduleChanged     = "com.warehouse.wes.process-path-management.cptschedule.CPTScheduleChanged"
+	TypeProcessFlowDefined     = "com.warehouse.wes.process-path-management.processflow.ProcessFlowDefined"
+	TypeProcessFlowRevised     = "com.warehouse.wes.process-path-management.processflow.ProcessFlowRevised"
+	TypeProcessFlowRetired     = "com.warehouse.wes.process-path-management.processflow.ProcessFlowRetired"
 )

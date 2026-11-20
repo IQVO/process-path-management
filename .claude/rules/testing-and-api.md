@@ -36,7 +36,7 @@ router (`readiness.go`) but is not in the spec:
 `GET /reports/catalogue-growth` and `/reports/catalogue-growth/freshness`
 (ADR 0007); it is not in `apis/openapi.yaml`. The MCP server (`cmd/mcp`)
 exposes read-only `get_process_path`, `list_process_paths`,
-`get_cpt_schedule`, and `get_catalogue_growth_report` (only when
+`get_process_flow`, `list_process_flows`, `get_cpt_schedule`, and `get_catalogue_growth_report` (only when
 `REPORTS_BASE_URL` is set).
 
 Every error is `application/problem+json` (RFC 7807), the fleet-standard

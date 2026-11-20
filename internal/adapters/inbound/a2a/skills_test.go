@@ -60,6 +60,21 @@ func depsOver(repo ports.ProcessPathRepo) Deps {
 type wireEnvelope struct {
 	Skill string `json:"skill"`
 	Data  struct {
+		ProcessFlow *struct {
+			FlowId  string `json:"flowId"`
+			Status  string `json:"status"`
+			Version int    `json:"version"`
+			Stages  []struct {
+				PathId      string `json:"pathId"`
+				ProcessType string `json:"processType"`
+			} `json:"stages"`
+		} `json:"processFlow"`
+		ProcessFlows *struct {
+			ActiveOnly bool `json:"activeOnly"`
+			Flows      []struct {
+				FlowId string `json:"flowId"`
+			} `json:"flows"`
+		} `json:"processFlows"`
 		ProcessPath  *wirePath `json:"processPath"`
 		ProcessPaths *struct {
 			ActiveOnly bool       `json:"activeOnly"`
