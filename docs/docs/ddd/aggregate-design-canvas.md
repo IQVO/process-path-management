@@ -2,15 +2,16 @@
 title: Aggregate Design Canvas
 sidebar_label: Aggregate Design Canvas
 sidebar_position: 5
-description: ddd-crew Aggregate Design Canvas v1.1 for the ProcessPath and CPTSchedule aggregates — state transitions, enforced invariants, corrective policies, commands, events, throughput and size.
+description: ddd-crew Aggregate Design Canvas v1.1 for the ProcessPath, CPTSchedule and ProcessFlow aggregates — state transitions, enforced invariants, corrective policies, commands, events, throughput and size.
 ---
 
 # Aggregate Design Canvas
 
 Following the [ddd-crew Aggregate Design Canvas v1.1](https://github.com/ddd-crew/aggregate-design-canvas).
 Part of the [DDD artifact pack](./ddd-artifacts.md). The domain package
-(`internal/domain/**`) has exactly **two aggregate roots**:
-`processpath.ProcessPath` and `cptschedule.CPTSchedule`. The narrative
+(`internal/domain/**`) has exactly **three aggregate roots**:
+`processpath.ProcessPath`, `cptschedule.CPTSchedule` and
+`processflow.ProcessFlow`. The narrative
 "why" behind the invariants lives in
 [Aggregates & Invariants](./aggregates-and-invariants.md).
 
@@ -66,6 +67,7 @@ transition).
 | `pathId`, `direct`, `destinationLocationRole` immutable | `Revise` has no parameter for them |
 | an id is never re-defined, active or deactivated | `usecases.ErrPathAlreadyExists` in `DefinePath` (use case, needs the repo): a `FindByID` pre-check, backed by the insert-only `ports.ProcessPathRepo.Create` (`INSERT ... ON CONFLICT (id) DO NOTHING` → `ports.ErrAlreadyExists`) so two concurrent defines of one id cannot both succeed |
 | a path that a CPT schedule lists cannot be deactivated | `usecases.ErrPathReferencedByCPTSchedule` in `DeactivatePath`, via `ports.CPTScheduleRepo.ListSiteIDsReferencingPath` (409 `path-referenced-by-cpt-schedule`, ADR 0026); race-free since the path row is read `FOR UPDATE` first and `DefineCPTSchedule` holds `FOR SHARE` on every path it lists until commit (`ports.ProcessPathRepo.FindByIDForUpdate` / `LockByIDsForShare`, ADR 0028) |
+| a path that an ACTIVE process flow has a stage on cannot be deactivated | `usecases.ErrPathInActiveFlow` in `DeactivatePath`, via `ports.ProcessFlowRepo.ListActiveFlowIDsReferencingPath` (409 `path-in-active-flow`, ADR 0042); same lock order as the schedule rule, `DefineProcessFlow` holds `FOR SHARE` on every path it names until commit |
 | no lost update between load and save | `ports.ErrConcurrentModification` from the version-guarded upsert in `postgres.ProcessPathRepo.Save` (ADR 0017) — used by revise and deactivate, not by create |
 
 ### 5. Corrective Policies
@@ -84,6 +86,9 @@ transition).
   sites, and the operator revises those schedules first (ADR 0026). The
   schedule is never pruned automatically and no `CPTScheduleChanged` is
   raised as a side effect of a deactivation.
+- A path that an ACTIVE process flow has a stage on is **not** deactivated
+  either: `409 path-in-active-flow` naming the flows; the operator revises or
+  retires those flows first (ADR 0042).
 
 ### 6. Handled Commands
 
@@ -187,12 +192,98 @@ Source: `cptschedule.Define`, `(*CPTSchedule).Revise`,
 *Estimate.* Lifetime of the site. Tens of cutoffs per schedule; one event
 per revision, so a few hundred events per instance over years.
 
+## ProcessFlow
+
+### 1. Name
+
+`ProcessFlow` (`internal/domain/processflow/process_flow.go`), identity
+`processflow.FlowId`.
+
+### 2. Description
+
+The ordered sequence of process-path stages a workload passes through (for
+example PICK, REBIN, PACK, SLAM): `name`, ordered `stages` (each a `Stage`
+of `pathId` and `processType`), `status` and a published `version`
+([ADR 0042](../adr/0042-process-flows.md)). A `ProcessPath` is one stage; the
+flow says which stage follows which. Persisted by natural key; never deleted,
+retired instead.
+
+### 3. State Transitions
+
+```mermaid
+stateDiagram-v2
+    [*] --> ACTIVE : Define - raises ProcessFlowDefined, version 1
+    ACTIVE --> ACTIVE : Revise - changed raises ProcessFlowRevised
+    ACTIVE --> RETIRED : Retire - raises ProcessFlowRetired
+    RETIRED --> RETIRED : Retire - idempotent no-op
+    note right of RETIRED
+        Revise returns ErrFlowRetired
+        No transition back to ACTIVE
+        Row is never deleted
+    end note
+```
+
+Source: `processflow.Status` (`StatusActive = "ACTIVE"`,
+`StatusRetired = "RETIRED"`), `Define`, `(*ProcessFlow).Revise`,
+`(*ProcessFlow).Retire`. Omits: `Rehydrate`; a `Revise` that changes nothing
+(no event, same `version`).
+
+### 4. Enforced Invariants
+
+| Invariant | Enforced by |
+| --- | --- |
+| `flowId` non-empty | `processflow.ErrEmptyFlowId` in `Define` |
+| `name` non-empty | `processflow.ErrEmptyName` in `validate` |
+| at least one stage | `processflow.ErrNoStages` |
+| each stage's `pathId` non-empty | `processflow.ErrEmptyStagePathId` (`NewStage`) |
+| `processType` is one of `PICK`, `REBIN`, `PACK`, `SLAM`, `DISPATCH`, `ARRIVAL`, `RELOCATE`, `REPLENISH` | `processflow.ErrInvalidProcessType` (`NewStage`, `validate`) |
+| a `pathId` appears at most once in a flow | `processflow.ErrDuplicateStagePath` |
+| only an ACTIVE flow can be revised | `processflow.ErrFlowRetired` in `Revise` |
+| `version` starts at 1, +1 per accepted change, unchanged by a no-op | `Define`, `Revise`, `Retire` |
+| every stage's `pathId` is an Active ProcessPath (cross-aggregate) | `usecases.ErrIneligibleStagePath` in `DefineProcessFlow.lockAndValidateStagePaths`, under `LockByIDsForShare` |
+| no lost update; a concurrent first define of one id | `ports.ErrConcurrentModification` from `postgres.ProcessFlowRepo.Save`, and from `Create` reporting `ports.ErrAlreadyExists` |
+
+### 5. Corrective Policies
+
+- Invalid flow → 422, nothing stored or published.
+- Concurrent writer → 409, reload and retry.
+- A retired flow is never revived; define a new `flowId` instead.
+- Consumers apply a flow event only when its `version` is greater than the
+  one they hold; the start-up republish re-sends each ACTIVE flow as
+  `ProcessFlowRevised` at its current version (ADR 0038, ADR 0042).
+
+### 6. Handled Commands
+
+| Command | Entry point | Use case |
+| --- | --- | --- |
+| Define or revise process flow | `PUT /process-flows/{flowId}` | `usecases.DefineProcessFlow` → `processflow.Define` or `(*ProcessFlow).Revise` |
+| Retire process flow | `DELETE /process-flows/{flowId}` | `usecases.RetireProcessFlow` → `(*ProcessFlow).Retire` |
+
+### 7. Created Events
+
+- `com.warehouse.wes.process-path-management.processflow.ProcessFlowDefined`
+- `com.warehouse.wes.process-path-management.processflow.ProcessFlowRevised` (only when `changed`, and on every start-up republish of an ACTIVE flow)
+- `com.warehouse.wes.process-path-management.processflow.ProcessFlowRetired` (first retirement only)
+
+Each carries the full state (`flow_id`, `name`, `stages[]`, `status`, `version`).
+
+### 8. Throughput
+
+*Estimate.* Flows describe the floor's topology and change when a
+process is re-laid out — a handful of writes per flow per quarter.
+
+### 9. Size
+
+*Estimate.* A few flows per site and a few stages each; one event per
+accepted change, so tens of events per flow over its life.
+
 ## Not aggregates
 
 | Type | What it is |
 | --- | --- |
 | `shared.Eligibility`, `shared.DestinationLocationRole`, `shared.PathId`, `shared.SiteId`, `shared.Capability`, `cptschedule.Weekday` | Value objects / identity types |
 | `cptschedule.Cutoff` | Entity inside `CPTSchedule` |
+| `processflow.Stage`, `processflow.ProcessType`, `processflow.FlowId` | Value objects inside / identity of `ProcessFlow` |
 | `report.CatalogueReport`, `report.Row` (`internal/analytics/report`) | Read model of the analytics projection — built by `pathmgmt-projector`, served by `pathmgmt-reports` |
-| `processPathResponse`, `cptScheduleResponse`, MCP DTOs | Adapter DTOs |
+| `processPathResponse`, `cptScheduleResponse`, `processFlowDTO`, MCP DTOs | Adapter DTOs |
 | Consumer catalogue caches in sibling repos | Their read models, not part of this context |

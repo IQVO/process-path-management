@@ -51,16 +51,16 @@ flowchart LR
     end
     subgraph BC["process-path-management - Generic subdomain - WES tier"]
         direction TB
-        purpose["<b>Purpose</b><br/>The single, auditable source of truth for the process-path<br/>catalogue (identity, matchPrefix, capabilities,<br/>destination role, cycle time and eligibility) and each<br/>site's CPT schedule; every change is published so<br/>consumers keep local copies and never call it."]:::card
+        purpose["<b>Purpose</b><br/>The single, auditable source of truth for the process-path<br/>catalogue (identity, matchPrefix, capabilities,<br/>destination role, cycle time and eligibility), each<br/>site's CPT schedule and the ordered process flows<br/>(stages of paths); every change is published so<br/>consumers keep local copies and never call it."]:::card
         roles["<b>Domain roles</b><br/>- Specification / Published Language owner<br/>- Open Host Service (one stable topic)<br/>- Gateway / configuration surface<br/>- Analysis, additive (catalogue growth report)"]:::card
-        rules["<b>Business decisions it enforces</b><br/>- matchPrefix is non-empty, lower-case, validated never<br/>coerced<br/>- requiredCapabilities non-empty; cycleTimeP95 strictly<br/>positive<br/>- A path id is permanent: re-defining an existing id is a<br/>409<br/>- Deactivation is terminal and idempotent; no-op revisions<br/>publish nothing<br/>- A CPT schedule is per site, revised wholesale, only Active<br/>eligible paths<br/>- A path a CPT schedule still lists cannot be deactivated"]:::card
+        rules["<b>Business decisions it enforces</b><br/>- matchPrefix is non-empty, lower-case, validated never<br/>coerced<br/>- requiredCapabilities non-empty; cycleTimeP95 strictly<br/>positive<br/>- A path id is permanent: re-defining an existing id is a<br/>409<br/>- Deactivation is terminal and idempotent; no-op revisions<br/>publish nothing<br/>- A CPT schedule is per site, revised wholesale, only Active<br/>eligible paths<br/>- A path a CPT schedule still lists cannot be deactivated<br/>- A process flow's stages name Active paths, a path appears once, and a<br/>path an ACTIVE flow uses cannot be deactivated"]:::card
         purpose ~~~ roles ~~~ rules
     end
-    in0 -->|"cmd - REST<br/>Define path, Revise path,<br/>Deactivate path, Define or<br/>revise CPT schedule"| BC
-    in0 -.->|"qry - REST<br/>List paths, Get path, Get CPT<br/>schedule"| BC
+    in0 -->|"cmd - REST<br/>Define path, Revise path,<br/>Deactivate path, Define or<br/>revise CPT schedule, Define or<br/>revise process flow, Retire<br/>process flow"| BC
+    in0 -.->|"qry - REST<br/>List paths, Get path, Get CPT<br/>schedule, List process flows,<br/>Get process flow"| BC
     in1 -.->|"qry - REST (reports)<br/>Catalogue growth report,<br/>freshness"| BC
     in2 -.->|"qry - MCP<br/>get_process_path,<br/>list_process_paths"| BC
-    in3 -.->|"qry - MCP<br/>get_cpt_schedule,<br/>get_catalogue_growth_report"| BC
+    in3 -.->|"qry - MCP<br/>get_cpt_schedule,<br/>get_process_flow,<br/>list_process_flows,<br/>get_catalogue_growth_report"| BC
     linkStyle 0 stroke:#1971c2,stroke-width:1.5px
     linkStyle 1 stroke:#2f9e44,stroke-width:1.5px
     linkStyle 2 stroke:#2f9e44,stroke-width:1.5px
@@ -88,17 +88,20 @@ flowchart LR
         out1["order-management,<br/>network-fulfillment,<br/>dock-scheduling,<br/>outbound-shipping"]:::ctx
         out2["own pathmgmt-projector and<br/>pathmgmt-reports"]:::self
         out3["operators (manual replay)"]:::self
+        out4["warehouse-planning<br/>(consumer named in ADR 0042)"]:::ctx
     end
     BC ==>|"evt - Kafka<br/>warehouse.process-path-management.events<br/>ProcessPathCreated,<br/>ProcessPathUpdated,<br/>ProcessPathDeactivated"| out0
     BC ==>|"evt - Kafka<br/>warehouse.process-path-management.events<br/>CPTScheduleChanged"| out1
-    BC ==>|"evt - Kafka<br/>warehouse.process-path-management.analytics<br/>all four types (analytics<br/>copy)"| out2
+    BC ==>|"evt - Kafka<br/>warehouse.process-path-management.analytics<br/>all seven types (analytics<br/>copy)"| out2
     BC -.->|"qry - REST<br/>Catalogue growth report (from<br/>the MCP report tool)"| out2
     BC ==>|"evt - Kafka ...analytics.dlq<br/>poison analytics message"| out3
+    BC ==>|"evt - Kafka<br/>warehouse.process-path-management.events<br/>ProcessFlowDefined,<br/>ProcessFlowRevised,<br/>ProcessFlowRetired"| out4
     linkStyle 0 stroke:#e8590c,stroke-width:2.5px
     linkStyle 1 stroke:#e8590c,stroke-width:2.5px
     linkStyle 2 stroke:#e8590c,stroke-width:2.5px
     linkStyle 3 stroke:#2f9e44,stroke-width:1.5px
     linkStyle 4 stroke:#e8590c,stroke-width:2.5px
+    linkStyle 5 stroke:#e8590c,stroke-width:2.5px
 ```
 
 Source: the Inbound Communication and Outbound Communication tables of this
@@ -121,7 +124,8 @@ rule consumers use to resolve a caller-supplied id to a path family,
 whether it is `Direct`, the capabilities a station/associate must hold to
 work it, its optional destination location role, and its fulfillment
 capability contract (`cycleTimeP95`, `eligibility`) — plus each site's
-recurring **CPT schedule**. It replaced a static YAML file that three
+recurring **CPT schedule** and the **process flows**, the ordered stages of
+paths a workload passes through ([ADR 0042](../adr/0042-process-flows.md)). It replaced a static YAML file that three
 services boot-loaded independently, and it publishes every change as a
 Kafka event so consumers keep local copies without ever calling it.
 
@@ -154,14 +158,20 @@ Kafka event so consumers keep local copies without ever calling it.
 | Operator / audit tooling | Get path | Query | REST `GET /process-paths/{pathId}` | OHS |
 | Operator | Define or revise CPT schedule | Command | REST `PUT /sites/{siteId}/cpt-schedule` | OHS |
 | Operator | Get CPT schedule | Query | REST `GET /sites/{siteId}/cpt-schedule` | OHS |
+| Operator | Define or revise process flow | Command | REST `PUT /process-flows/{flowId}` | OHS |
+| Operator | Retire process flow | Command | REST `DELETE /process-flows/{flowId}` | OHS |
+| Operator / audit tooling | Get process flow | Query | REST `GET /process-flows/{flowId}` | OHS |
+| Operator / audit tooling | List process flows (`?all=true` for audit view) | Query | REST `GET /process-flows` | OHS |
 | Kubernetes probes | Liveness / readiness | Query | REST `GET /healthz`, `GET /readyz` | Infrastructure |
 | warehouse-console (context reports) | Catalogue growth report | Query | REST `GET /reports/catalogue-growth` on `pathmgmt-reports` | OHS |
 | warehouse-console (context reports) | Report freshness | Query | REST `GET /reports/catalogue-growth/freshness` on `pathmgmt-reports` | OHS |
 | warehouse-ops-agent (wired, unused) | Get process path | Query | MCP `get_process_path` | OHS, Customer |
 | warehouse-ops-agent (wired, unused) | List process paths | Query | MCP `list_process_paths` | OHS, Customer |
 | Any MCP host (no known caller) | Get CPT schedule | Query | MCP `get_cpt_schedule` | OHS |
+| Any MCP host or A2A caller (no known caller) | Get / list process flows | Query | MCP `get_process_flow`, `list_process_flows`; A2A skills of the same names | OHS |
 | Any MCP host (no known caller) | Catalogue growth report | Query | MCP `get_catalogue_growth_report` (only when `REPORTS_BASE_URL` is set) | OHS |
 | Own `pathmgmt-projector` | ProcessPathCreated / Updated / Deactivated | Event | Kafka `warehouse.process-path-management.analytics`, types `com.warehouse.wes.process-path-management.processpath.*` | Internal (own topic) |
+| Own `pathmgmt-projector` | CPTScheduleChanged and the three ProcessFlow* types | Event | same analytics topic; committed and skipped, never projected | Internal (own topic) |
 
 No sibling context sends this context a command or event.
 
@@ -174,7 +184,10 @@ No sibling context sends this context a command or event.
 | same five | ProcessPathDeactivated | Event | same topic, `com.warehouse.wes.process-path-management.processpath.ProcessPathDeactivated` | OHS + PL → CF |
 | order-management, network-fulfillment, dock-scheduling, outbound-shipping | CPTScheduleChanged | Event | same topic, `com.warehouse.wes.process-path-management.cptschedule.CPTScheduleChanged` | OHS + PL → CF |
 | the consumers of each type above | ProcessPathUpdated and CPTScheduleChanged for the whole current catalogue, once per service start (`RepublishCatalogue`, ADR 0038) | Event | same topic only, not the analytics topic | OHS + PL → CF |
-| Own `pathmgmt-projector` | all four types (analytics copy) | Event | Kafka `warehouse.process-path-management.analytics` | Internal |
+| warehouse-planning (the consumer named in ADR 0042) | ProcessFlowDefined | Event | same topic, `com.warehouse.wes.process-path-management.processflow.ProcessFlowDefined` | OHS + PL → CF |
+| same | ProcessFlowRevised, also one per ACTIVE flow at every service start (`RepublishCatalogue`, integration topic only) | Event | same topic, `com.warehouse.wes.process-path-management.processflow.ProcessFlowRevised` | OHS + PL → CF |
+| same | ProcessFlowRetired | Event | same topic, `com.warehouse.wes.process-path-management.processflow.ProcessFlowRetired` | OHS + PL → CF |
+| Own `pathmgmt-projector` | all seven types (analytics copy) | Event | Kafka `warehouse.process-path-management.analytics` | Internal |
 | Own `pathmgmt-reports` | Catalogue growth report | Query | REST `GET /reports/catalogue-growth` from the MCP report tool | Internal |
 | Operators (manual replay) | Poison analytics message | Event | Kafka `warehouse.process-path-management.analytics.dlq` | Internal |
 
@@ -187,7 +200,8 @@ Full glossary with code identifiers: [Ubiquitous Language](./ubiquitous-language
 Top terms: **ProcessPath**, **PathId**, **MatchPrefix**, **Direct**,
 **Capability** (required capabilities), **DestinationLocationRole**,
 **CycleTimeP95**, **Eligibility**, **Status** (ACTIVE / DEACTIVATED),
-**CPTSchedule**, **Cutoff**, **SiteId**.
+**CPTSchedule**, **Cutoff**, **SiteId**, **ProcessFlow**, **Stage**,
+**ProcessType**, **FlowId**.
 
 ## Business Decisions
 
@@ -213,6 +227,15 @@ Top terms: **ProcessPath**, **PathId**, **MatchPrefix**, **Direct**,
     `path-referenced-by-cpt-schedule` until the schedule is revised
     (`ErrPathReferencedByCPTSchedule`, ADR 0026). The concurrent
     define-vs-deactivate race is closed with row locks (ADR 0028).
+11. A process flow is the ordered list of stages (`pathId` + one of eight
+    `processType`s) a workload passes through; every stage names an Active
+    path, a path appears once, and a retired flow cannot be revised
+    (`ErrIneligibleStagePath`, `ErrDuplicateStagePath`, `ErrFlowRetired`).
+    Each flow event carries the full state and a `version`; consumers apply
+    only a greater version (ADR 0042).
+12. A path that an ACTIVE flow has a stage on cannot be deactivated: 409
+    `path-in-active-flow` until the flow is revised or retired
+    (`ErrPathInActiveFlow`, ADR 0042).
 
 ## Assumptions
 

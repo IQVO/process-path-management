@@ -2,7 +2,7 @@
 title: Class Diagram
 sidebar_label: Class Diagram
 sidebar_position: 9
-description: UML class diagrams of process-path-management's domain packages (ProcessPath, CPTSchedule, shared value types and domain events) and of its hexagonal ports and adapters.
+description: UML class diagrams of process-path-management's domain packages (ProcessPath, CPTSchedule, ProcessFlow, shared value types and domain events) and of its hexagonal ports and adapters.
 ---
 
 # Class Diagram
@@ -82,6 +82,54 @@ classDiagram
         Sun
     }
 
+    class ProcessFlow {
+        <<AggregateRoot>>
+        -FlowId id
+        -string name
+        -List~Stage~ stages
+        -Status status
+        -Time createdAt
+        -Time updatedAt
+        -int version
+        +Define(id, name, stages, now) ProcessFlow
+        +Rehydrate(...) ProcessFlow
+        +Revise(name, stages, now) bool
+        +Retire(now) bool
+        +IsActive() bool
+        +Snapshot() State
+        +Version() int
+    }
+
+    class Stage {
+        <<ValueObject>>
+        -PathId pathId
+        -ProcessType processType
+        +NewStage(pathId, processType) Stage
+    }
+
+    class ProcessType {
+        <<Enumeration>>
+        PICK
+        REBIN
+        PACK
+        SLAM
+        DISPATCH
+        ARRIVAL
+        RELOCATE
+        REPLENISH
+    }
+
+    class FlowStatus["processflow.Status"] {
+        <<Enumeration>>
+        ACTIVE
+        RETIRED
+    }
+
+    class FlowId {
+        <<ValueObject>>
+        string
+    }
+
     class Eligibility {
         <<ValueObject>>
         -int maxUnitsPerLine
@@ -123,10 +171,16 @@ classDiagram
     CPTSchedule *-- "1..*" Cutoff
     Cutoff --> "1..7" Weekday
     Cutoff ..> "1..*" PathId : eligiblePathIds, reference by id
+    ProcessFlow --> FlowId : identity
+    ProcessFlow --> FlowStatus
+    ProcessFlow *-- "1..*" Stage
+    Stage --> ProcessType
+    Stage ..> PathId : reference by id, an Active path
 ```
 
 Source: `internal/domain/processpath/process_path.go`,
 `internal/domain/cptschedule/cpt_schedule.go`,
+`internal/domain/processflow/process_flow.go`,
 `internal/domain/shared/shared.go`, `internal/domain/shared/eligibility.go`.
 Omits: read accessors (`MatchPrefix()`, `Cutoffs()`, ...), the private
 `validate`/equality helpers and the `Err...` sentinels (listed on the
@@ -202,19 +256,53 @@ classDiagram
         +EligiblePathIds List~PathId~
     }
 
+    class ProcessFlowDefined {
+        <<DomainEvent>>
+        +State State
+        +At Time
+    }
+
+    class ProcessFlowRevised {
+        <<DomainEvent>>
+        +State State
+        +At Time
+    }
+
+    class ProcessFlowRetired {
+        <<DomainEvent>>
+        +State State
+        +At Time
+    }
+
+    class StageSnapshot {
+        <<ValueObject>>
+        +PathId string
+        +ProcessType string
+    }
+
     DomainEvent <|.. ProcessPathCreated
     DomainEvent <|.. ProcessPathUpdated
     DomainEvent <|.. ProcessPathDeactivated
     DomainEvent <|.. CPTScheduleChanged
     CPTScheduleChanged *-- "1..*" CutoffSnapshot
+    DomainEvent <|.. ProcessFlowDefined
+    DomainEvent <|.. ProcessFlowRevised
+    DomainEvent <|.. ProcessFlowRetired
+    ProcessFlowDefined *-- "1..*" StageSnapshot
+    ProcessFlowRevised *-- "1..*" StageSnapshot
+    ProcessFlowRetired *-- "1..*" StageSnapshot
 ```
 
 Source: `internal/domain/shared/events.go`,
 `internal/domain/cptschedule/events.go`. Omits: the wire structs
 (`ProcessPathData`, `CPTScheduleData`; see [Domain Events](./domain-events.md)).
 The three path events live in `shared`; `CPTScheduleChanged` and
-`CutoffSnapshot` live in `cptschedule`. Events are built in the use cases,
-not by the aggregates.
+`CutoffSnapshot` live in `cptschedule`; the three flow events and
+`StageSnapshot` live in `processflow` (`internal/domain/processflow/events.go`),
+and each carries the same `State` (`FlowId`, `Name`, `Stages`, `Status`,
+`Version`) plus `At`; the wire struct is `ProcessFlowData`. Events are built in the use cases,
+not by the aggregates (the flow events come from the aggregate's
+`DefinedEvent` / `RevisedEvent` / `RetiredEvent` methods, called by the use cases).
 
 ## 3. Ports and adapters
 

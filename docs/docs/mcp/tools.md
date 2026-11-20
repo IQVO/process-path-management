@@ -34,6 +34,8 @@ has `additionalProperties: false`, so unknown arguments are rejected.
 | `get_process_path` | `readOnlyHint: true`, `idempotentHint: false` | `L1` | always | `GetPath` over the OLTP store |
 | `list_process_paths` | `readOnlyHint: true`, `idempotentHint: false` | `L1` | always | `ListPaths` over the OLTP store |
 | `get_cpt_schedule` | `readOnlyHint: true`, `idempotentHint: false` | `L1` | whenever the schedule read port is wired, which `cmd/mcp` always does | `GetCPTSchedule` over the OLTP store |
+| `get_process_flow` | `readOnlyHint: true` | `L1` | whenever the flow read port (`GetProcessFlow`) is wired, which `cmd/mcp` always does | `GetProcessFlow` over the OLTP store ([ADR 0042](../adr/0042-process-flows.md)) |
+| `list_process_flows` | `readOnlyHint: true` | `L1` | whenever the flow list port (`ListProcessFlows`) is wired, which `cmd/mcp` always does | `ListProcessFlows` over the OLTP store |
 | `get_catalogue_growth_report` | `readOnlyHint: true`, `idempotentHint: false` | `L1` | only when `REPORTS_BASE_URL` is set | HTTP `GET /reports/catalogue-growth` on `pathmgmt-reports` (10 s client timeout) |
 
 Every tool declares its authority level in its `Meta` under
@@ -91,6 +93,28 @@ Returns `siteId`, `timezone` (IANA), `createdAt`, `updatedAt` and
 `cutoffs[]`, each with `cptId`, `localTime` (`HH:MM`), `daysOfWeek[]`
 (`Mon`…`Sun`), `shipMethod`, `eligiblePathIds[]`. A site with no schedule is
 a tool error.
+
+### `get_process_flow`
+
+| Input | Type | Required | Meaning |
+| --- | --- | --- | --- |
+| `flowId` | string | yes | Process flow id, e.g. `single-unit-outbound`. Empty → error `flowId is required`. |
+
+Returns one flow in any status: `flowId`, `name`, `stages[]` in order (each
+`pathId` and `processType`, one of `PICK`, `REBIN`, `PACK`, `SLAM`,
+`DISPATCH`, `ARRIVAL`, `RELOCATE`, `REPLENISH`), `status`
+(`ACTIVE`/`RETIRED`), `version`, `createdAt`, `updatedAt`. An unknown id is a
+**tool error** (`usecases: process flow not found`). Flows are changed
+through REST only ([ADR 0042](../adr/0042-process-flows.md)).
+
+### `list_process_flows`
+
+| Input | Type | Required | Meaning |
+| --- | --- | --- | --- |
+| `activeOnly` | boolean or null | no | `true` or omitted: only ACTIVE flows. `false`: include retired ones. |
+
+Returns `{"flows": [...]}` in id order, with the same per-flow shape as
+`get_process_flow`.
 
 ### `get_catalogue_growth_report`
 

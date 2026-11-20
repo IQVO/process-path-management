@@ -7,9 +7,9 @@ description: Every application use case in internal/application/usecases - its t
 
 # Use cases
 
-The application layer (`internal/application/usecases`) has eight use cases,
-one struct each. Four are writes triggered only by REST; the three reads are
-also exposed as MCP tools. The eighth, `RepublishCatalogue`, is triggered by
+The application layer (`internal/application/usecases`) has twelve use cases,
+one struct each. Six are writes triggered only by REST; the five reads are
+also exposed as MCP tools (and, for paths and flows, as A2A skills). The twelfth, `RepublishCatalogue`, is triggered by
 neither: `cmd/pathmgmt` runs it once at every start
 ([ADR 0038](../adr/0038-republish-catalogue-on-start.md)). There is no
 Kafka-triggered use case and nothing runs a use case on a timer: this service
@@ -26,7 +26,11 @@ housekeeping sweeper) are infrastructure in
 | `ListPaths` | REST `GET /process-paths[?all=true]`; MCP `list_process_paths` | — | — |
 | `DefineCPTSchedule` | REST `PUT /sites/{siteId}/cpt-schedule` | `cpt_schedules`, `cpt_schedule_cutoffs` | `CPTScheduleChanged`, only if the schedule is new or changed |
 | `GetCPTSchedule` | REST `GET /sites/{siteId}/cpt-schedule`; MCP `get_cpt_schedule` | — | — |
-| `RepublishCatalogue` | Start of `cmd/pathmgmt`, once per start, after the migrations and before the listener binds | `outbox_events` (integration-topic rows only) | `ProcessPathUpdated` per ACTIVE path, then `CPTScheduleChanged` per site |
+| `DefineProcessFlow` | REST `PUT /process-flows/{flowId}` | `process_flows`, `process_flow_stages` | `ProcessFlowDefined` (first define), `ProcessFlowRevised` (a real change); nothing when the request changes nothing |
+| `RetireProcessFlow` | REST `DELETE /process-flows/{flowId}` | `process_flows` | `ProcessFlowRetired`, only on the first retirement |
+| `GetProcessFlow` | REST `GET /process-flows/{flowId}`; MCP `get_process_flow`; A2A `get_process_flow` | — | — |
+| `ListProcessFlows` | REST `GET /process-flows[?all=true]`; MCP `list_process_flows`; A2A `list_process_flows` | — | — |
+| `RepublishCatalogue` | Start of `cmd/pathmgmt`, once per start, after the migrations and before the listener binds | `outbox_events` (integration-topic rows only) | `ProcessPathUpdated` per ACTIVE path, then `CPTScheduleChanged` per site, then `ProcessFlowRevised` per ACTIVE flow |
 
 Every write runs inside `UnitOfWork.Execute`, so
 the aggregate row and the `outbox_events` rows commit together
@@ -116,6 +120,12 @@ identical body returns 200 and publishes nothing.
    ([ADR 0026](../adr/0026-reject-deactivation-of-paths-in-cpt-schedules.md)).
    The row lock serialises this against `DefineCPTSchedule`
    ([ADR 0028](../adr/0028-close-path-cpt-schedule-race-with-row-locks.md)).
+3. Then, still under the same row lock, `ListActiveFlowIDsReferencingPath`: if
+   an ACTIVE process flow has a stage on the path, fail with
+   `ErrPathInActiveFlow` (409 `path-in-active-flow`), naming the flows
+   ([ADR 0042](../adr/0042-process-flows.md)). `DefineProcessFlow` holds the
+   matching `FOR SHARE` lock on every path it names until commit. Retiring
+   or revising the flow clears the refusal.
 
 **Raises:** `ProcessPathDeactivated` (`path_id` only). Deactivation is
 terminal: nothing reactivates a path.
@@ -162,6 +172,60 @@ returns 200 and publishes nothing.
 
 Returns the site's schedule or `ErrCPTScheduleNotFound`. No events.
 
+## `DefineProcessFlow`
+
+`internal/application/usecases/process_flow.go`
+
+**Inputs:** `flowId` (URL), `name`, `stages[]` each with `pathId` and
+`processType`. Every `PUT` replaces the name and all stages; there is no
+partial update and no `Idempotency-Key`.
+
+**Checks, in order:**
+
+1. Before any lock (`processflow.ValidateDefinition`): non-empty `flowId` and
+   `name`; at least one stage; each stage's `pathId` non-empty and
+   `processType` one of `PICK`, `REBIN`, `PACK`, `SLAM`, `DISPATCH`,
+   `ARRIVAL`, `RELOCATE`, `REPLENISH`; a `pathId` at most once per flow.
+2. Inside the unit of work: an existing RETIRED flow is refused
+   (`ErrFlowRetired`, 422 `flow-retired`).
+3. The distinct stage `pathId`s are sorted and locked `FOR SHARE`; every one
+   must be an existing **Active** path (`ErrIneligibleStagePath`, 422
+   `ineligible-stage-path`), the same shape as `DefineCPTSchedule`'s rule
+   ([ADR 0028](../adr/0028-close-path-cpt-schedule-race-with-row-locks.md)).
+4. `processflow.Define` (new, version 1) or `Revise` (existing). A new flow is
+   an insert-only `Create`; losing that race is `ErrConcurrentModification`
+   (409), not a second `ProcessFlowDefined`.
+
+**Raises:** `ProcessFlowDefined` on the first define, `ProcessFlowRevised`
+when the name or the stages changed. Both carry the full state and the
+`version` (1, then +1 per accepted change). An identical `PUT` returns 200,
+publishes nothing and keeps the version. REST answers 201 for a new flow,
+200 otherwise ([ADR 0042](../adr/0042-process-flows.md)).
+
+## `RetireProcessFlow`
+
+`internal/application/usecases/process_flow.go`
+
+**Inputs:** `flowId` (URL). An unknown id is `ErrFlowNotFound` (404
+`flow-not-found`); retiring an already RETIRED flow succeeds and publishes
+nothing.
+
+**Raises:** `ProcessFlowRetired`, the full state with `status` `RETIRED` and
+the next `version`. A retired flow cannot be revised, and the paths it used
+can be deactivated again.
+
+## `GetProcessFlow` and `ListProcessFlows`
+
+`internal/application/usecases/process_flow.go`
+
+- `GetProcessFlow(flowId)` returns the flow in any status, or
+  `ErrFlowNotFound`.
+- `ListProcessFlows(activeOnly)` returns ACTIVE flows by default; `?all=true`
+  (REST) or `activeOnly: false` (MCP, A2A) includes retired ones. REST pages
+  by `flowId` keyset (`limit`, `cursor`).
+
+No invariants, no events.
+
 ## `RepublishCatalogue`
 
 `internal/application/usecases/republish_catalogue.go`; wired by
@@ -179,13 +243,18 @@ Returns the site's schedule or `ErrCPTScheduleNotFound`. No events.
    never republished.
 2. `CPTScheduleRepo.LockAllForShare`, then one snapshot per site, sorted by
    site id.
-3. At most `MaxRepublishedPerKind` (1000) paths and 1000 schedules per start.
+3. `ProcessFlowRepo.LockActiveForShare`, then one `ProcessFlowRevised` per
+   ACTIVE flow (its current state and current `version`), sorted by flow id;
+   RETIRED flows are not republished
+   ([ADR 0042](../adr/0042-process-flows.md)).
+4. At most `MaxRepublishedPerKind` (1000) paths, 1000 schedules and 1000 flows per start.
    What exceeds the cap is counted in `RepublishResult.Omitted` and logged at
    ERROR.
 
 **Raises:** one `ProcessPathUpdated` per ACTIVE path (the payload
-`RevisePath` builds, `processPathUpdated`) and one `CPTScheduleChanged` per
-site (`cptschedule.ToSnapshot`), through the same transactional outbox, on
+`RevisePath` builds, `processPathUpdated`), one `CPTScheduleChanged` per
+site (`cptschedule.ToSnapshot`) and one `ProcessFlowRevised` per ACTIVE flow
+(`ProcessFlow.RevisedEvent`), through the same transactional outbox, on
 the **integration topic only**: `buildRepublishCatalogue` gives the
 `OutboxPublisher` the integration encoder alone, so nothing reaches the
 analytics topic and `paths_revised` is not inflated by restarts.
@@ -193,7 +262,7 @@ analytics topic and `paths_revised` is not inflated by restarts.
 **Failure:** it never fails the boot. A run is all-or-nothing, bounded by a
 30 s timeout, logged at ERROR on failure or truncation, and counted on
 `process_path_management.catalogue.republished`
-(`kind=path|schedule`, `outcome=accepted|failed`).
+(`kind=path|schedule|flow`, `outcome=accepted|failed`).
 
 ## Outside the application layer: the analytics projection
 

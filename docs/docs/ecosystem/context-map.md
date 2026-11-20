@@ -182,6 +182,7 @@ Exact `type` strings consumers dispatch on (cross-service contract):
 | `com.warehouse.wes.process-path-management.processpath.ProcessPathUpdated` | same five |
 | `com.warehouse.wes.process-path-management.processpath.ProcessPathDeactivated` | same five |
 | `com.warehouse.wes.process-path-management.cptschedule.CPTScheduleChanged` | order-management, network-fulfillment, dock-scheduling, outbound-shipping |
+| `com.warehouse.wes.process-path-management.processflow.ProcessFlowDefined`, `...ProcessFlowRevised`, `...ProcessFlowRetired` | warehouse-planning (the consumer named in ADR 0042; its side is owned by that repo) |
 
 The analytics occurrence carries the same `type`/`id`/`subject`/`time`/`data`
 with `dataschema` `urn:warehouse:process-path-management:analytics:<EventName>:v1`.

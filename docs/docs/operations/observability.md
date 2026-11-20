@@ -78,7 +78,7 @@ no OTel middleware, so `http.server.request.duration` covers only the REST API.
 | Span | Kind | Emitted by | Attributes |
 | --- | --- | --- | --- |
 | one per HTTP request, named after the chi route pattern (e.g. `/process-paths/{pathId}`), not the raw path | server | `pathmgmt` (`otelchi.Middleware` with `WithChiRoutes`) | otelchi HTTP semantic-convention attributes |
-| `mcp.tool get_process_path`, `mcp.tool list_process_paths`, `mcp.tool get_cpt_schedule`, `mcp.tool get_catalogue_growth_report` | internal | `mcp` (`internal/adapters/inbound/mcp/tools.go`) | `mcp.tool.name`; status `Error` with the message when the tool fails |
+| `mcp.tool get_process_path`, `mcp.tool list_process_paths`, `mcp.tool get_cpt_schedule`, `mcp.tool get_process_flow`, `mcp.tool list_process_flows`, `mcp.tool get_catalogue_growth_report` | internal | `mcp` (`internal/adapters/inbound/mcp/tools.go`) | `mcp.tool.name`; status `Error` with the message when the tool fails |
 
 There are no database or Kafka client spans (pgx and kafka-go are not
 instrumented). Instead, the trace context of the request that raised an

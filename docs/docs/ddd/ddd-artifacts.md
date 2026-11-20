@@ -17,7 +17,7 @@ diagram is Mermaid, derived from the code on `develop`, and carries a
 | [Core Domain Chart](./core-domain-chart.md) | Where this context sits on business differentiation vs model complexity (Generic) and its evolution | [Core Domain Charts](https://github.com/ddd-crew/core-domain-charts) |
 | [Bounded Context Canvas](./bounded-context-canvas.md) | Purpose, classification, roles, every inbound and outbound message | [Bounded Context Canvas v5](https://github.com/ddd-crew/bounded-context-canvas) |
 | [Context Map](../ecosystem/context-map.md) | This context's slice of the fleet map: OHS + PL to five Conformists over Kafka, MCP and console edges, deliberately absent edges | [Context Mapping](https://github.com/ddd-crew/context-mapping) |
-| [Aggregate Design Canvas](./aggregate-design-canvas.md) | `ProcessPath` and `CPTSchedule`: states, invariants, commands, events, throughput, size | [Aggregate Design Canvas v1.1](https://github.com/ddd-crew/aggregate-design-canvas) |
+| [Aggregate Design Canvas](./aggregate-design-canvas.md) | `ProcessPath`, `CPTSchedule` and `ProcessFlow`: states, invariants, commands, events, throughput, size | [Aggregate Design Canvas v1.1](https://github.com/ddd-crew/aggregate-design-canvas) |
 | [Domain Message Flow](./domain-message-flow.md) | Four business scenarios as numbered `cmd:` / `evt:` / `qry:` flows | [Domain Message Flow Modelling](https://github.com/ddd-crew/domain-message-flow-modelling) |
 | [EventStorming](./eventstorming.md) | Design-level boards for the path lifecycle, the CPT schedule and the analytics projection, with real hotspots | [EventStorming glossary and cheat sheet](https://github.com/ddd-crew/eventstorming-glossary-cheat-sheet) |
 | [Ubiquitous Language](./ubiquitous-language.md) | Glossary, every term mapped to its code identifier and wire name | ddd-crew glossary practice |
@@ -36,6 +36,7 @@ Code wins over every page here. When a page and the code disagree, the
 code is right and the page is a bug.
 
 - Domain model: `internal/domain/processpath`, `internal/domain/cptschedule`,
+  `internal/domain/processflow`,
   `internal/domain/shared`.
 - Use cases and ports: `internal/application/usecases`,
   `internal/application/ports`.
