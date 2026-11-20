@@ -53,6 +53,11 @@ type Deps struct {
 	// 0010). Nil disables the get_cpt_schedule tool without disabling
 	// the others — same optional-tool convention Reports already uses.
 	GetCPTSchedule GetCPTScheduleQuery
+	// GetProcessFlow and ListProcessFlows are the read use cases for the
+	// ProcessFlow aggregate (ADR 0042). Nil disables the matching tool
+	// (get_process_flow, list_process_flows) without disabling the others.
+	GetProcessFlow   GetProcessFlowQuery
+	ListProcessFlows ListProcessFlowsQuery
 	// Reports is the pathmgmt-reports REST client the catalogue-growth
 	// report tool calls. Nil disables that tool (e.g. a deployment with
 	// analytics not yet enabled) without disabling the other two tools.
@@ -160,6 +165,7 @@ func (d Deps) registerTools(server *mcp.Server) {
 		}, d.getCPTSchedule)
 	}
 
+	d.registerProcessFlowTools(server)
 	d.registerReportTool(server)
 }
 

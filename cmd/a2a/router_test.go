@@ -32,7 +32,7 @@ func newTestAgent(t *testing.T) http.Handler {
 	if err := repo.Save(context.Background(), p); err != nil {
 		t.Fatal(err)
 	}
-	return newAgent(repo, testAgentURL, "test")
+	return newAgent(repo, memory.NewProcessFlowRepo(), testAgentURL, "test")
 }
 
 func TestRouter_HealthzServesOK(t *testing.T) {

@@ -47,14 +47,14 @@ func skillAuthorityViolation(s a2a.AgentSkill) string {
 
 // TestEveryAgentToolDeclaresAuthority (A2A half; the MCP half lives in the
 // mcp package under the same name) asserts every skill on the Agent Card
-// declares exactly one valid authority level — L1 for both curated skills,
+// declares exactly one valid authority level — L1 for every curated skill,
 // the same level as the tool each fronts (ADR 0041).
 func TestEveryAgentToolDeclaresAuthority(t *testing.T) {
 	card := Card(Config{AgentURL: testAgentURL, Version: "1.0.0"})
 	if len(card.Skills) == 0 {
 		t.Fatal("card has no skills; the sensor is looking at nothing")
 	}
-	want := map[string]string{skillGetProcessPath: "L1", skillListProcessPaths: "L1"}
+	want := map[string]string{skillGetProcessPath: "L1", skillListProcessPaths: "L1", skillGetProcessFlow: "L1", skillListProcessFlows: "L1"}
 	for _, s := range card.Skills {
 		if v := skillAuthorityViolation(s); v != "" {
 			t.Errorf("skill %q %s", s.ID, v)

@@ -93,6 +93,9 @@ func run(ctx context.Context, deps Deps, req skillRequest) (skillDTO, *problem) 
 		}
 		return skillDTO{ProcessPaths: &data, summary: summarizePaths(data)}, nil
 	default:
+		if dto, problem, handled := runFlowSkill(ctx, deps, req); handled {
+			return dto, problem
+		}
 		return skillDTO{}, problemUnknownSkill(req.Skill)
 	}
 }

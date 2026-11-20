@@ -36,14 +36,14 @@ func TestCardShape(t *testing.T) {
 	}
 }
 
-// TestCardSkillsAreCuratedAndTruthful pins the two-skill, READ-ONLY surface
+// TestCardSkillsAreCuratedAndTruthful pins the four-skill (two path reads, two flow reads), READ-ONLY surface
 // and proves the card never lies about its own contract: every advertised
 // example must parse under the SAME strict decoder the executor uses, name its
 // own skill, and carry arguments that skill accepts.
 func TestCardSkillsAreCuratedAndTruthful(t *testing.T) {
 	card := Card(Config{AgentURL: testAgentURL, Version: "1.0.0"})
 
-	want := map[string]bool{skillGetProcessPath: true, skillListProcessPaths: true}
+	want := map[string]bool{skillGetProcessPath: true, skillListProcessPaths: true, skillGetProcessFlow: true, skillListProcessFlows: true}
 	if len(card.Skills) != len(want) {
 		t.Fatalf("card has %d skills, want exactly %d (curated, goal-shaped, not one per endpoint)", len(card.Skills), len(want))
 	}
@@ -80,6 +80,10 @@ func assertArgsAccepted(t *testing.T, skill string, raw json.RawMessage) {
 		err = decodeStrict(raw, &getProcessPathArgs{})
 	case skillListProcessPaths:
 		err = decodeStrict(raw, &listProcessPathsArgs{})
+	case skillGetProcessFlow:
+		err = decodeStrict(raw, &getProcessFlowArgs{})
+	case skillListProcessFlows:
+		err = decodeStrict(raw, &listProcessFlowsArgs{})
 	}
 	if err != nil {
 		t.Errorf("skill %q example arguments are rejected by its own strict decoder: %v", skill, err)
@@ -122,7 +126,7 @@ func TestCardSerializable(t *testing.T) {
 	if err := json.Unmarshal(raw, &back); err != nil {
 		t.Fatalf("card JSON does not round-trip: %v", err)
 	}
-	if back.Name != "process-path-management" || len(back.Skills) != 2 {
+	if back.Name != "process-path-management" || len(back.Skills) != 4 {
 		t.Errorf("round-tripped card = %q with %d skills", back.Name, len(back.Skills))
 	}
 }
