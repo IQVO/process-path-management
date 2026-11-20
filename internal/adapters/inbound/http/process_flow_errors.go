@@ -17,16 +17,16 @@ var flowProblems = []struct {
 	status int
 	info   problemInfo
 }{
-	{usecases.ErrFlowNotFound, http.StatusNotFound, problemInfo{"flow-not-found", "No process flow exists with this id"}},
-	{usecases.ErrPathInActiveFlow, http.StatusConflict, problemInfo{"path-in-active-flow", "The process path is still used by an active process flow; revise or retire those flows before deactivating it"}},
-	{usecases.ErrIneligibleStagePath, http.StatusUnprocessableEntity, problemInfo{"ineligible-stage-path", "every stage's pathId must reference an Active process path in this service's own catalogue"}},
-	{processflow.ErrFlowRetired, http.StatusUnprocessableEntity, problemInfo{"flow-retired", "This process flow has been retired and can no longer be revised"}},
-	{processflow.ErrEmptyFlowId, http.StatusUnprocessableEntity, problemInfo{"empty-flow-id", "flowId must not be empty"}},
-	{processflow.ErrEmptyName, http.StatusUnprocessableEntity, problemInfo{"empty-flow-name", "name must not be empty"}},
-	{processflow.ErrNoStages, http.StatusUnprocessableEntity, problemInfo{"no-stages", "at least one stage is required"}},
-	{processflow.ErrEmptyStagePathId, http.StatusUnprocessableEntity, problemInfo{"empty-stage-path-id", "a stage's pathId must not be empty"}},
-	{processflow.ErrInvalidProcessType, http.StatusUnprocessableEntity, problemInfo{"invalid-process-type", "processType must be one of PICK, REBIN, PACK, SLAM, DISPATCH, ARRIVAL, RELOCATE, REPLENISH"}},
-	{processflow.ErrDuplicateStagePath, http.StatusUnprocessableEntity, problemInfo{"duplicate-stage-path", "a pathId may appear at most once in a flow"}},
+	{usecases.ErrFlowNotFound, http.StatusNotFound, problemInfo{"flow-not-found", "No process flow exists with this id", classRetryable}},
+	{usecases.ErrPathInActiveFlow, http.StatusConflict, problemInfo{"path-in-active-flow", "The process path is still used by an active process flow; revise or retire those flows before deactivating it", classRetryable}},
+	{usecases.ErrIneligibleStagePath, http.StatusUnprocessableEntity, problemInfo{"ineligible-stage-path", "every stage's pathId must reference an Active process path in this service's own catalogue", classRetryable}},
+	{processflow.ErrFlowRetired, http.StatusUnprocessableEntity, problemInfo{"flow-retired", "This process flow has been retired and can no longer be revised", classFinal}},
+	{processflow.ErrEmptyFlowId, http.StatusUnprocessableEntity, problemInfo{"empty-flow-id", "flowId must not be empty", classFinal}},
+	{processflow.ErrEmptyName, http.StatusUnprocessableEntity, problemInfo{"empty-flow-name", "name must not be empty", classFinal}},
+	{processflow.ErrNoStages, http.StatusUnprocessableEntity, problemInfo{"no-stages", "at least one stage is required", classFinal}},
+	{processflow.ErrEmptyStagePathId, http.StatusUnprocessableEntity, problemInfo{"empty-stage-path-id", "a stage's pathId must not be empty", classFinal}},
+	{processflow.ErrInvalidProcessType, http.StatusUnprocessableEntity, problemInfo{"invalid-process-type", "processType must be one of PICK, REBIN, PACK, SLAM, DISPATCH, ARRIVAL, RELOCATE, REPLENISH", classFinal}},
+	{processflow.ErrDuplicateStagePath, http.StatusUnprocessableEntity, problemInfo{"duplicate-stage-path", "a pathId may appear at most once in a flow", classFinal}},
 }
 
 // flowStatusFor reports the status of a ProcessFlow error.

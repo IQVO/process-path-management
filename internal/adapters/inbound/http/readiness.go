@@ -112,8 +112,7 @@ func (g *Readiness) Failing(ctx context.Context) []string {
 	return append([]string(nil), failing...)
 }
 
-// dependencyUnavailable is the 503 problem of a failed dependency check.
-var dependencyUnavailable = problemInfo{"dependency-unavailable", "A runtime dependency is unavailable"}
+// problemDependencyUnavailable is the 503 problem of a failed dependency check.
 
 // HandleReadyz serves 200 {"status":"ready"} while ready; 503
 // {"status":"not_ready"} once SetNotReady was called (draining); 503
@@ -126,7 +125,7 @@ func HandleReadyz(g *Readiness) http.HandlerFunc {
 			return
 		}
 		if failing := g.Failing(r.Context()); len(failing) > 0 {
-			writeProblem(w, http.StatusServiceUnavailable, dependencyUnavailable, "not ready: "+strings.Join(failing, ", "), r.URL.Path)
+			writeProblem(w, http.StatusServiceUnavailable, problemDependencyUnavailable, "not ready: "+strings.Join(failing, ", "), r.URL.Path)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]string{statusKey: "ready"})
