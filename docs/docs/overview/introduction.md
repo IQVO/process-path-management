@@ -57,6 +57,7 @@ synchronous HTTP read-through.
 | **Define / Revise / Deactivate** | The lifecycle of a path definition. Each change publishes its own domain event; a no-op revision publishes nothing. |
 | **List / Get** | Reads for the operator SPA's default view (active only) and audit view (`?all=true`). |
 | **CPTSchedule** | A second aggregate, one per site: its IANA timezone and recurring Critical Pull Time cutoffs, each naming the Active paths that can make it. Defined or wholesale-revised by `PUT /sites/{siteId}/cpt-schedule`; publishes `CPTScheduleChanged` ([ADR 0010](../adr/0010-fulfillment-capability-contract.md)). |
+| **ProcessFlow** | A third aggregate, identified by `flow_id`: the ordered `stages` a workload passes through (for example PICK, REBIN, PACK, SLAM), each a `{path_id, process_type}` that names an Active path of this catalogue and one of eight process types, plus `name`, `status` (`ACTIVE`/`RETIRED`) and a `version`. Defined or wholesale-revised by `PUT /process-flows/{flowId}`, retired by `DELETE`; publishes full-state `ProcessFlowDefined`, `ProcessFlowRevised` and `ProcessFlowRetired`, and refuses to deactivate a path an ACTIVE flow uses ([ADR 0042](../adr/0042-process-flows.md)). |
 | **Catalogue growth report** | An analytical read model (paths defined, revised and deactivated per UTC day) built by `pathmgmt-projector` from this service's own analytics topic and served by `pathmgmt-reports` ([ADR 0007](../adr/0007-analytical-data-product.md)). |
 
 Four binaries ship from `cmd/`: `pathmgmt` (REST API on `:8080`, plus the
@@ -94,8 +95,8 @@ flowchart LR
   PPM -- "warehouse.process-path-management.events<br/>ProcessPathCreated/Updated/Deactivated" --> FE
   PPM -- "same topic" --> WWP
   PPM -- "same topic" --> WFM
-  PPM -- "same topic, incl. CPTScheduleChanged" --> OM
-  PPM -- "same topic, incl. CPTScheduleChanged" --> NF
+  PPM -- "same topic, incl. CPTScheduleChanged<br/>and the ProcessFlow* types" --> OM
+  PPM -- "same topic, incl. CPTScheduleChanged<br/>and the ProcessFlow* types" --> NF
 
   classDef this fill:#b45309,stroke:#78350f,color:#fff,stroke-width:4px;
   classDef core fill:#1e3a8a,stroke:#1e293b,color:#fff;

@@ -36,7 +36,7 @@ router (`readiness.go`) but is not in the spec:
 `GET /reports/catalogue-growth` and `/reports/catalogue-growth/freshness`
 (ADR 0007); it is not in `apis/openapi.yaml`. The MCP server (`cmd/mcp`)
 exposes read-only `get_process_path`, `list_process_paths`,
-`get_cpt_schedule`, and `get_catalogue_growth_report` (only when
+`get_process_flow`, `list_process_flows`, `get_cpt_schedule`, and `get_catalogue_growth_report` (only when
 `REPORTS_BASE_URL` is set).
 
 Every error is `application/problem+json` (RFC 7807), the fleet-standard
@@ -55,10 +55,12 @@ here, including this file.
 - **Unit tests are colocated** (`process_path_test.go`, `events_test.go`,
   `usecases_test.go`, `unit_of_work_test.go`, `fakes_test.go`,
   `server_test.go`).
-- **BDD**: `features/*.feature` (godog/Gherkin) — `define_and_read.feature`,
-  `define_validation.feature`, `revise.feature`, `revise_and_events.feature`,
-  `deactivate.feature`, `cpt_schedule.feature` (30 scenarios), driven
-  through `features_test.go`. Run via `make bdd`.
+- **BDD**: `features/*.feature` (godog/Gherkin) covering path
+  definition, revision, deactivation, the CPT schedule, the catalogue
+  growth report, the published events and the intake, relocate and
+  replenish paths (list them with `ls features/`; do not copy the list
+  here, it goes stale), driven through `features_test.go`. Run via
+  `make bdd`.
 - **Architecture fitness**: `internal/architecture/architecture_test.go`
   (arch-go) enforces the hexagonal dependency rule described above —
   every PR that reshapes package imports must keep this green, not just

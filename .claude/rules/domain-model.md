@@ -61,6 +61,13 @@ paths:
   `timezone` plus recurring **Cutoffs** (`cptId`, `localTime` HH:MM,
   `daysOfWeek` Mon..Sun, `shipMethod`, `eligiblePathIds`). Revised
   wholesale (ADR 0010).
+- **ProcessFlow** — the third aggregate root (ADR 0042): `flow_id`, `name`, ordered
+  `stages` (`path_id` + `process_type`, at least one, a `path_id` at most once, each an
+  ACTIVE ProcessPath of this catalogue), `status` ACTIVE | RETIRED and a `version` that
+  starts at 1 and rises by 1 per ACCEPTED change (a no-op changes nothing and raises no
+  event). `PUT /process-flows/{id}` defines or revises, `DELETE` retires; a retired flow
+  cannot be revised. Deactivating a path an ACTIVE flow uses is refused
+  (`409 path-in-active-flow`). This context owns the flow topology; it never reads a sibling.
 - **Status (ACTIVE / DEACTIVATED)** — the activation lifecycle. There is
   no "draft" state — a path is live the instant it is defined; this
   service has no review workflow. Deactivation is one-way and idempotent
@@ -114,8 +121,11 @@ paths:
 ## Domain events (past tense, on `warehouse.process-path-management.events`)
 
 `ProcessPathCreated`, `ProcessPathUpdated`, `ProcessPathDeactivated` —
-defined in `internal/domain/shared/events.go` — and `CPTScheduleChanged`
-(`internal/domain/cptschedule/events.go`, a full schedule snapshot). One
+defined in `internal/domain/shared/events.go` — `CPTScheduleChanged`
+(`internal/domain/cptschedule/events.go`, a full schedule snapshot) and
+`ProcessFlowDefined`, `ProcessFlowRevised`, `ProcessFlowRetired` (ADR 0042, full flow
+state plus `version`, keyed and subject = `flow_id`, republished on start as
+`ProcessFlowRevised`; the projector acknowledges them and projects nothing). One
 shared topic (not one per event type), matching the fleet's convention;
 path events are keyed by `path_id` so a consumer replaying the topic sees
 one path's events in publish order; `CPTScheduleChanged` is keyed by
@@ -132,5 +142,6 @@ On the wire every event is a CloudEvents 1.0 event (ADR 0016) with
 and `subject` = `path_id` / `site_id` (the Kafka key). These four full type
 strings are consumed byte-for-byte by five sibling services
 (fulfillment-execution, wes-work-planning, workforce-management,
-order-management, network-fulfillment) — see
+order-management, network-fulfillment) and, for `CPTScheduleChanged` only, by
+dock-scheduling and outbound-shipping — see
 `internal/adapters/kafka/cloudevents/types.go`.

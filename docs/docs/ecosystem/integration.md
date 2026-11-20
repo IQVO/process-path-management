@@ -66,7 +66,7 @@ assets.
 | --- | --- | --- | --- |
 | Operator through warehouse-console and this repo's `process_path_mfe` remote (`web/`) | REST over Kong, base `/api/process-path-management` (`web/src/config.ts`; `http://localhost:8087` in dev) | `GET /process-paths`, `POST /process-paths` (fresh `Idempotency-Key` per submit), `PUT /process-paths/{pathId}`, `DELETE /process-paths/{pathId}` — see the [API Reference](/docs/api-reference/rest/process-path-management-api) | Errors come back as RFC 7807 problem documents the remote shows to the operator. The remote has no CPT schedule screen: `PUT /sites/{siteId}/cpt-schedule` is called directly against the API. |
 | warehouse-console context reports | REST to `pathmgmt-reports` | `GET /reports/catalogue-growth`, `GET /reports/catalogue-growth/freshness`, specified in `apis/openapi-reports.yaml` ([ADR 0031](../adr/0031-reports-api-openapi-contract.md), [Runbook](../operations/runbook.md#reports-api-pathmgmt-reports)) | 400 `invalid-report-query`, 500 `report-store-error`. Independent of the OLTP database. |
-| warehouse-ops-agent | MCP Streamable HTTP to `cmd/mcp` (`/`, `/mcp`) | Tools `get_process_path`, `list_process_paths` (and `get_cpt_schedule`, `get_catalogue_growth_report`, which no sibling calls) — [MCP tools](../mcp/tools.md) | The agent's client is constructed but assigned to `_` in its `cmd/agent/main.go`; no use case calls it today. |
+| warehouse-ops-agent | MCP Streamable HTTP to `cmd/mcp` (`/`, `/mcp`) | Tools `get_process_path`, `list_process_paths` (and `get_cpt_schedule`, `get_process_flow`, `list_process_flows`, `get_catalogue_growth_report`, which no sibling calls) — [MCP tools](../mcp/tools.md) | The agent's client is constructed but assigned to `_` in its `cmd/agent/main.go`; no use case calls it today. |
 | Any sibling over Kafka | — | **None.** This service consumes no other context's topic. | — |
 
 All inbound surfaces are unauthenticated
@@ -77,18 +77,21 @@ the origins in `CORS_ALLOWED_ORIGINS`.
 
 ### `warehouse.process-path-management.events`
 
-The integration topic, a Published Language consumed by five siblings.
+The integration topic, a Published Language consumed by seven siblings (see the Consumers column).
 
 | Event `type` | Raised by | `data` | Consumers |
 | --- | --- | --- | --- |
 | `com.warehouse.wes.process-path-management.processpath.ProcessPathCreated` | `DefinePath` | `path_id`, `match_prefix`, `direct`, `required_capabilities`, `destination_location_role` (omitted when unset), `cycle_time_p95` (Go duration string), `eligibility` | fulfillment-execution, wes-work-planning, workforce-management, order-management, network-fulfillment |
 | `com.warehouse.wes.process-path-management.processpath.ProcessPathUpdated` | `RevisePath`, only when something changed | same full snapshot | same five |
 | `com.warehouse.wes.process-path-management.processpath.ProcessPathDeactivated` | `DeactivatePath`, only on the first deactivation | `path_id` only | same five |
-| `com.warehouse.wes.process-path-management.cptschedule.CPTScheduleChanged` | `DefineCPTSchedule`, only when the schedule changed | `site_id`, `timezone`, `cutoffs[]` (`cpt_id`, `local_time`, `days_of_week`, `ship_method`, `eligible_path_ids`) | order-management, network-fulfillment |
+| `com.warehouse.wes.process-path-management.cptschedule.CPTScheduleChanged` | `DefineCPTSchedule`, only when the schedule changed | `site_id`, `timezone`, `cutoffs[]` (`cpt_id`, `local_time`, `days_of_week`, `ship_method`, `eligible_path_ids`) | order-management, network-fulfillment, dock-scheduling, outbound-shipping |
+| `com.warehouse.wes.process-path-management.processflow.ProcessFlowDefined` | `DefineProcessFlow`, on the first define | `flow_id`, `name`, `stages[]` (`path_id`, `process_type`, in order), `status`, `version` | warehouse-planning (ADR 0042) |
+| `com.warehouse.wes.process-path-management.processflow.ProcessFlowRevised` | `DefineProcessFlow`, only when the flow changed; and `RepublishCatalogue` per ACTIVE flow at every start | same full state | same |
+| `com.warehouse.wes.process-path-management.processflow.ProcessFlowRetired` | `RetireProcessFlow`, only on the first retirement | same full state, `status` `RETIRED` | same |
 
 Envelope: CloudEvents 1.0, structured mode, `source`
 `/warehouse/process-path-management`, `subject` and Kafka key = `PathId`
-(or `SiteId`), `dataschema`
+(or `SiteId`, or `FlowId`), `dataschema`
 `urn:warehouse:process-path-management:events:<EventName>:v1`
 ([ADR 0016](../adr/0016-cloudevents-mandatory-event-envelope.md)). Headers:
 `content-type: application/cloudevents+json; charset=UTF-8`, plus
@@ -97,7 +100,11 @@ Envelope: CloudEvents 1.0, structured mode, `source`
 
 Every event is a **full snapshot** of the aggregate (except the
 deactivation), so a consumer that replays the topic from offset 0 rebuilds
-the whole catalogue. The three WES consumers do exactly that on boot.
+the whole catalogue. The three WES consumers do exactly that on boot. At
+every start this service also re-enqueues the current catalogue on this
+topic only (`ProcessPathUpdated` per ACTIVE path, `CPTScheduleChanged` per
+site, [ADR 0038](../adr/0038-republish-catalogue-on-start.md)), so a replay
+does not depend on broker retention.
 
 **RELOCATE** ([ADR 0033](../adr/0033-relocate-process-path.md)) is published
 like every other path, as a `ProcessPathCreated` keyed `RELOCATE`

@@ -1,3 +1,4 @@
-get_cpt_schedule	true	false
-get_process_path	true	false
-list_process_paths	true	false
+get_catalogue_growth_report	true	false	L1
+get_cpt_schedule	true	false	L1
+get_process_path	true	false	L1
+list_process_paths	true	false	L1

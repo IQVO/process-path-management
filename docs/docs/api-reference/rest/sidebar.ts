@@ -70,6 +70,40 @@ const sidebar: SidebarsConfig = {
     },
     {
       type: "category",
+      label: "process-flows",
+      link: {
+        type: "doc",
+        id: "api-reference/rest/process-flows",
+      },
+      items: [
+        {
+          type: "doc",
+          id: "api-reference/rest/list-process-flows",
+          label: "List process flows",
+          className: "api-method get",
+        },
+        {
+          type: "doc",
+          id: "api-reference/rest/get-process-flow",
+          label: "Get one process flow by id",
+          className: "api-method get",
+        },
+        {
+          type: "doc",
+          id: "api-reference/rest/put-process-flow",
+          label: "Define or revise a process flow",
+          className: "api-method put",
+        },
+        {
+          type: "doc",
+          id: "api-reference/rest/retire-process-flow",
+          label: "Retire a process flow",
+          className: "api-method delete",
+        },
+      ],
+    },
+    {
+      type: "category",
       label: "health",
       link: {
         type: "doc",

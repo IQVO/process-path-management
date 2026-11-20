@@ -14,6 +14,7 @@ import (
 
 	"github.com/claudioed/process-path-management/internal/adapters/kafka/cloudevents"
 	"github.com/claudioed/process-path-management/internal/domain/cptschedule"
+	"github.com/claudioed/process-path-management/internal/domain/processflow"
 	"github.com/claudioed/process-path-management/internal/domain/shared"
 )
 
@@ -279,10 +280,12 @@ func mapEvent(event shared.DomainEvent) (mapped, error) {
 			Timezone: e.Timezone,
 			Cutoffs:  cutoffsToData(e.Cutoffs),
 		}}, nil
+	case processflow.ProcessFlowDefined, processflow.ProcessFlowRevised, processflow.ProcessFlowRetired:
+		return mapProcessFlowEvent(event)
 	default:
 		// An event type this publisher does not know how to serialize.
 		// Every event this service's use cases raise today is one of
-		// the four above; a future new event type must be added here
+		// the ones above; a future new event type must be added here
 		// explicitly rather than silently dropped.
 		return mapped{}, fmt.Errorf("kafka: unknown event type %T", event)
 	}

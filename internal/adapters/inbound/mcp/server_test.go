@@ -1,6 +1,9 @@
 package mcp_test
 
 import (
+	"slices"
+	"strings"
+
 	"context"
 	"net/http/httptest"
 	"testing"
@@ -168,5 +171,100 @@ func TestServer_ListProcessPathsIncludingDeactivated(t *testing.T) {
 	}
 	if len(paths) != 2 {
 		t.Fatalf("paths = %d, want 2 (activeOnly=false)", len(paths))
+	}
+}
+
+// TestServer_ResourceTemplateListedAndRead pins the AS-3 surface: the
+// path-definition resource template is listed, a concrete URI reads the
+// seeded path as bounded JSON, and a malformed or unknown URI is an error
+// (never a silent empty success).
+func TestServer_ResourceTemplateListedAndRead(t *testing.T) {
+	url := newServer(t)
+	session := connect(t, url)
+	ctx := context.Background()
+
+	tmpls, err := session.ListResourceTemplates(ctx, nil)
+	if err != nil {
+		t.Fatalf("list resource templates: %v", err)
+	}
+	found := false
+	for _, tmpl := range tmpls.ResourceTemplates {
+		if tmpl.URITemplate == "warehouse://process-path-management/paths/{pathId}" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("path-definition resource template not listed: %+v", tmpls.ResourceTemplates)
+	}
+
+	res, err := session.ReadResource(ctx, &sdk.ReadResourceParams{
+		URI: "warehouse://process-path-management/paths/PICK",
+	})
+	if err != nil {
+		t.Fatalf("read resource: %v", err)
+	}
+	if len(res.Contents) == 0 || res.Contents[0].Text == "" {
+		t.Fatalf("empty resource contents: %+v", res.Contents)
+	}
+	if res.Contents[0].MIMEType != "application/json" {
+		t.Errorf("resource MIMEType = %q, want application/json", res.Contents[0].MIMEType)
+	}
+	if !strings.Contains(res.Contents[0].Text, `"pathId":"PICK"`) {
+		t.Errorf("resource body does not carry pathId PICK: %s", res.Contents[0].Text)
+	}
+
+	if _, err := session.ReadResource(ctx, &sdk.ReadResourceParams{
+		URI: "warehouse://process-path-management/paths/DOES-NOT-EXIST",
+	}); err == nil {
+		t.Error("reading an unknown path id must be a resource error, not an empty success")
+	}
+	if _, err := session.ReadResource(ctx, &sdk.ReadResourceParams{
+		URI: "warehouse://other-context/paths/PICK",
+	}); err == nil {
+		t.Error("a URI outside this context's namespace must be rejected")
+	}
+}
+
+// TestServer_PromptGet pins the AS-3 prompt: listed with its typed
+// arguments, and get returns the SOP message.
+func TestServer_PromptGet(t *testing.T) {
+	url := newServer(t)
+	session := connect(t, url)
+	ctx := context.Background()
+
+	list, err := session.ListPrompts(ctx, nil)
+	if err != nil {
+		t.Fatalf("list prompts: %v", err)
+	}
+	var listed *sdk.Prompt
+	for i := range list.Prompts {
+		if list.Prompts[i].Name == "review_path_definition" {
+			listed = list.Prompts[i]
+		}
+	}
+	if listed == nil {
+		t.Fatalf("review_path_definition prompt not listed: %+v", list.Prompts)
+	}
+	var args []string
+	for _, a := range listed.Arguments {
+		args = append(args, a.Name)
+	}
+	if !slices.Contains(args, "pathId") || !slices.Contains(args, "siteId") {
+		t.Errorf("prompt arguments = %v, want typed pathId and siteId", args)
+	}
+
+	res, err := session.GetPrompt(ctx, &sdk.GetPromptParams{Name: "review_path_definition"})
+	if err != nil {
+		t.Fatalf("get prompt: %v", err)
+	}
+	if len(res.Messages) == 0 {
+		t.Fatal("review_path_definition prompt returned no messages")
+	}
+	text, ok := res.Messages[0].Content.(*sdk.TextContent)
+	if !ok {
+		t.Fatalf("prompt message is not text content: %T", res.Messages[0].Content)
+	}
+	if !strings.Contains(text.Text, "get_process_path") {
+		t.Error("the SOP must name the tools it refers to")
 	}
 }

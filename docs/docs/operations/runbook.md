@@ -43,10 +43,20 @@ routes live in warehouse-infra, not here.
 
 ### What readiness waits for
 
-Nothing at runtime. Every binary dials its database **before** it starts
-listening (migrations, then `pool.Ping`, each wrapped in
-`bootretry.Do`: 5 attempts, backoff 1/2/4/8 s). Once the listener is up,
-`/readyz` answers `200 {"status":"ready"}` until shutdown begins.
+Every binary dials its database **before** it starts listening (migrations,
+then `pool.Ping`, each wrapped in `bootretry.Do`: 5 attempts, backoff
+1/2/4/8 s). After that, the two binaries differ:
+
+- `pathmgmt` (the api): `/readyz` is `200 {"status":"ready"}` only while
+  Postgres answers a ping **and** a Kafka broker answers a metadata request
+  (`cmd/pathmgmt/main.go:154-156`, [ADR 0037](../adr/0037-postgres-and-kafka-are-the-only-runtime.md)).
+  The verdict is cached for 3 s and each check has a 2 s timeout
+  (`DefaultReadinessTTL`, `DefaultReadinessTimeout` in `readiness.go`). While a
+  dependency fails, `/readyz` is `503` `dependency-unavailable` (a problem
+  document naming `postgres` and/or `kafka`), and the pod leaves the Service.
+- `pathmgmt-projector` (admin server): the drain gate only
+  (`cmd/pathmgmt-projector/main.go`, `readinessGate`); it stays `200 ready`
+  until shutdown begins.
 
 On `SIGTERM`, `pathmgmt` (`cmd/pathmgmt/main.go`, `serveHTTP`):
 
@@ -60,8 +70,10 @@ consumer (waits for the in-flight message to commit or dead-letter). `mcp`
 and `pathmgmt-reports` simply call `Shutdown` with a 10 s budget; they have
 no `/readyz`.
 
-`/readyz` does **not** track Postgres or Kafka health after boot. A database
-outage surfaces as 500 responses and relay errors, not as an unready pod.
+On the api, a database outage therefore takes the pod out of the Service
+(`503 dependency-unavailable`) and, for requests that still arrive, surfaces as
+`500 internal-error` and relay errors; the projector's `/readyz` does not track
+its database or Kafka.
 
 ## Migrations
 
@@ -100,8 +112,8 @@ travel as Kafka headers ([ADR 0027](../adr/0027-w3c-trace-context-on-kafka-heade
 
 | Topic | Direction | Producer / consumer | Key | Event types |
 | --- | --- | --- | --- | --- |
-| `warehouse.process-path-management.events` | produced | `pathmgmt` (outbox relay, or direct without Postgres) | `PathId`, or `SiteId` for CPT schedules | `com.warehouse.wes.process-path-management.processpath.ProcessPathCreated`, `...processpath.ProcessPathUpdated`, `...processpath.ProcessPathDeactivated`, `com.warehouse.wes.process-path-management.cptschedule.CPTScheduleChanged` |
-| `warehouse.process-path-management.analytics` | produced and consumed | produced by `pathmgmt` (same event, same CloudEvents `id`, `dataschema` `urn:warehouse:process-path-management:analytics:<EventName>:v1`); consumed by `pathmgmt-projector`, group **`process-path-management-analytics`** | as above | same four types; the projector applies the three `ProcessPath*` types and commits `CPTScheduleChanged` as a no-op |
+| `warehouse.process-path-management.events` | produced | `pathmgmt` (outbox relay, or direct without Postgres) | `PathId`, `SiteId` for CPT schedules, or `FlowId` for process flows | `com.warehouse.wes.process-path-management.processpath.ProcessPathCreated`, `...processpath.ProcessPathUpdated`, `...processpath.ProcessPathDeactivated`, `com.warehouse.wes.process-path-management.cptschedule.CPTScheduleChanged`, `com.warehouse.wes.process-path-management.processflow.ProcessFlowDefined`, `...processflow.ProcessFlowRevised`, `...processflow.ProcessFlowRetired` |
+| `warehouse.process-path-management.analytics` | produced and consumed | produced by `pathmgmt` (same event, same CloudEvents `id`, `dataschema` `urn:warehouse:process-path-management:analytics:<EventName>:v1`); consumed by `pathmgmt-projector`, group **`process-path-management-analytics`** | as above | same seven types; the projector applies the three `ProcessPath*` types and commits `CPTScheduleChanged` and the three `ProcessFlow*` types as no-ops |
 | `warehouse.process-path-management.analytics.dlq` | produced | `pathmgmt-projector` dead-letter writer | original key | the original, byte-identical message plus headers `x-dlq-source-topic`, `x-dlq-error`, `x-dlq-failed-at` |
 
 This service consumes **no other context's topic**. Who consumes

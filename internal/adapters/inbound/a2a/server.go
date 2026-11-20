@@ -53,6 +53,11 @@ type Deps struct {
 	// ListPaths is the existing read use case, reused unchanged: the
 	// catalogue, active-only by default or every path including deactivated.
 	ListPaths *usecases.ListPaths
+	// GetProcessFlow and ListProcessFlows are the read use cases of the
+	// ProcessFlow aggregate (ADR 0042), reused unchanged. Nil leaves the
+	// matching skill unserved (answered as an unknown skill).
+	GetProcessFlow   *usecases.GetProcessFlow
+	ListProcessFlows *usecases.ListProcessFlows
 }
 
 // Card builds this agent's Agent Card (ADR 0039). The surface is two curated,
@@ -67,10 +72,17 @@ type Deps struct {
 // card advertises by default (ADR 0039).
 const mediaTypeJSON = "application/json"
 
+// authorityL1Tag is the ADR 0041 authority declaration every skill here
+// carries: they all read facts and change nothing.
+const (
+	authorityL1Tag = "authority:L1"
+	tagRead        = "read"
+)
+
 func Card(cfg Config) *a2a.AgentCard {
 	return &a2a.AgentCard{
 		Name:        "process-path-management",
-		Description: "Process Path Management agent for the Warehouse Execution System: the read-only source of truth for the fleet's process-path catalogue. It answers what a process path is (its matchPrefix routing rule, whether it is direct, the capabilities required to work it, cycle time, eligibility and which demand sources may route onto it) and which paths currently exist. It never changes the catalogue, and it does not decide dispatch, routing or assignment.",
+		Description: "Process Path Management agent for the Warehouse Execution System: the read-only source of truth for the fleet's process-path catalogue. It answers what a process path is (its matchPrefix routing rule, whether it is direct, the capabilities required to work it, cycle time, eligibility and which demand sources may route onto it), which paths currently exist, and which ordered stages of paths a process flow passes through. It never changes the catalogue, and it does not decide dispatch, routing or assignment.",
 		Version:     cfg.Version,
 		Provider: &a2a.AgentProvider{
 			Org: "IQVO",
@@ -87,7 +99,7 @@ func Card(cfg Config) *a2a.AgentCard {
 				ID:          skillGetProcessPath,
 				Name:        "Look up one process path",
 				Description: "Read the full definition of one process path by its canonical pathId (e.g. PICK, PACK, REBIN, SLAM): matchPrefix, direct, requiredCapabilities, cycleTimeP95, eligibility, intake (the demand sources allowed to route work onto it; [] means only an explicit path id reaches it), status and timestamps. Works for deactivated paths too. Answers a 404 problem when no path has that id. Persists nothing.",
-				Tags:        []string{"process-path", "catalogue", "read"},
+				Tags:        []string{"process-path", "catalogue", tagRead, authorityL1Tag},
 				InputModes:  []string{mediaTypeJSON},
 				Examples: []string{
 					`{"skill":"get_process_path","arguments":{"pathId":"PICK"}}`,
@@ -97,11 +109,32 @@ func Card(cfg Config) *a2a.AgentCard {
 				ID:          skillListProcessPaths,
 				Name:        "List the process-path catalogue",
 				Description: "Read the process-path catalogue: every ACTIVE path by default, or, with activeOnly=false, deactivated paths too (the audit view). Each entry carries the same fields as get_process_path. The catalogue is small and bounded. Persists nothing.",
-				Tags:        []string{"process-path", "catalogue", "read"},
+				Tags:        []string{"process-path", "catalogue", tagRead, authorityL1Tag},
 				InputModes:  []string{mediaTypeJSON},
 				Examples: []string{
 					`{"skill":"list_process_paths","arguments":{}}`,
 					`{"skill":"list_process_paths","arguments":{"activeOnly":false}}`,
+				},
+			},
+			{
+				ID:          skillGetProcessFlow,
+				Name:        "Look up one process flow",
+				Description: "Read one process flow by flowId (ADR 0042): the ordered stages a workload passes through, each a pathId naming a process path and the processType of the work done there (PICK, REBIN, PACK, SLAM, DISPATCH, ARRIVAL, RELOCATE or REPLENISH), plus name, status (ACTIVE or RETIRED), version and timestamps. Works for retired flows too. Answers a 404 problem when no flow has that id. Persists nothing.",
+				Tags:        []string{"process-flow", "flows", tagRead, authorityL1Tag},
+				InputModes:  []string{mediaTypeJSON},
+				Examples: []string{
+					`{"skill":"get_process_flow","arguments":{"flowId":"single-unit-outbound"}}`,
+				},
+			},
+			{
+				ID:          skillListProcessFlows,
+				Name:        "List the process flows",
+				Description: "Read the process flows in id order: every ACTIVE flow by default, or, with activeOnly=false, retired ones too. Each entry carries the same fields as get_process_flow. Persists nothing.",
+				Tags:        []string{"process-flow", "flows", tagRead, authorityL1Tag},
+				InputModes:  []string{mediaTypeJSON},
+				Examples: []string{
+					`{"skill":"list_process_flows","arguments":{}}`,
+					`{"skill":"list_process_flows","arguments":{"activeOnly":false}}`,
 				},
 			},
 		},

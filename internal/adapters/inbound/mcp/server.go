@@ -17,6 +17,8 @@ func NewServer(deps Deps) *mcp.Server {
 	)
 
 	deps.registerTools(server)
+	deps.registerResources(server)
+	deps.registerPrompts(server)
 
 	return server
 }
@@ -26,5 +28,12 @@ func NewServer(deps Deps) *mcp.Server {
 // removed fleet-wide, see this repo's ADR 0005), the server is mounted
 // unauthenticated.
 func Handler(server *mcp.Server) http.Handler {
-	return mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, nil)
+	// Stateless (Agentic Standard v2, AS-4): no Mcp-Session-Id is issued,
+	// so the server also answers the 2026-07-28 revision's per-request
+	// handshake (server/discover) while legacy initialize clients keep
+	// working. Nothing here relies on cross-call session state.
+	return mcp.NewStreamableHTTPHandler(
+		func(*http.Request) *mcp.Server { return server },
+		&mcp.StreamableHTTPOptions{Stateless: true},
+	)
 }

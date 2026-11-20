@@ -167,5 +167,6 @@ func (d Deps) registerReportTool(server *mcp.Server) {
 		Name:        "get_catalogue_growth_report",
 		Description: "Return the process-path-management 'Process Path Catalogue Growth & Change' report (paths defined/revised/deactivated) for a time window, bucketed by day. Reads via the pathmgmt-reports REST service.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: readOnly},
+		Meta:        authorityMeta(authorityL1),
 	}, d.getCatalogueGrowthReport)
 }

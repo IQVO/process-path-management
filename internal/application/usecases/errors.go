@@ -27,3 +27,18 @@ var ErrIneligiblePathId = errors.New("usecases: eligiblePathIds must reference a
 // eligiblePathIds (ADR 0026). The wrapped message names the sites, so an
 // operator knows which schedules to revise first.
 var ErrPathReferencedByCPTSchedule = errors.New("usecases: process path is still referenced by a CPT schedule")
+
+// ErrFlowNotFound is returned by GetProcessFlow and RetireProcessFlow when
+// the given FlowId has never been defined.
+var ErrFlowNotFound = errors.New("usecases: process flow not found")
+
+// ErrIneligibleStagePath is returned by DefineProcessFlow when a stage names
+// a path that is not an ACTIVE ProcessPath in this service's own catalogue
+// (ADR 0042). The wrapped message names the offending path ids.
+var ErrIneligibleStagePath = errors.New("usecases: a flow's stages must reference ACTIVE process paths")
+
+// ErrPathInActiveFlow is returned by DeactivatePath when at least one ACTIVE
+// ProcessFlow still has a stage on the path (ADR 0042, the ADR 0026
+// precedent). The wrapped message names the flows, so an operator knows
+// which ones to revise or retire first.
+var ErrPathInActiveFlow = errors.New("usecases: process path is used by an active flow")

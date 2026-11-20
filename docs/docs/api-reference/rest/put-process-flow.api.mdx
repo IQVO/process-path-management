@@ -1,0 +1,71 @@
+---
+id: put-process-flow
+title: "Define or revise a process flow"
+description: "The ordered stages a workload passes through (ADR 0042). The body is the flow's FULL definition: every PUT replaces the name and the stages. Idempotent by nature (full state), so it takes no Idempotency-Key. 201 when the flowId is new, 200 for every later PUT — including one that changes nothing, which raises no event and keeps the version. Each accepted change raises ProcessFlowDefined (first) or ProcessFlowRevised, carrying the full state and a `version` that starts at 1 and grows by one per accepted change. Invariants: at least one stage; a pathId appears at most once; each processType is one of the closed set; each stage's pathId names an ACTIVE process path of this service's own catalogue (checked at write time, under the path's row lock). A RETIRED flow cannot be revised (422 `flow-retired`)."
+sidebar_label: "Define or revise a process flow"
+hide_title: true
+hide_table_of_contents: true
+api: eJztWu9uGzcSf5UBv0RGV39spGirflJt9aqrkwiyXOCQGhDFHWlZccktyZUsGAL6EPeE9ySHIXe1kiwn12txBQ7Oh0TZJYfz9zfDmX1ini8d639khTUCnWsvlNk49pAwU6DlXho9SlmfFaUfxxXfK7NhCUvRCSsLWsD6bJohGJuixRSc50t0wGFj7EoZnkLBnUMHPrOmXGbQGtxMoNd7e3XRAdo4N+kWJL1HoOPfOPj+/vYWUlxILemEPuAa7RbG91OwWCguMC7XPEfgOg3/iQd3YJRiXhiP2sN8C5r70iK0FqVStMTjRQLOgPTg+QodaNPsENv2j7jtwFXvEjYZ6j1Po5Q41LhJ4KrXg4WxFUuKe7SBsX/99k+QWqgylXoJRiP4jHsQGdfLcIzPpF4msMmkyMBy6eLhuCZOSYgVYhHlWqN10ugODLnIgAuBhce0olXvPTDIDakKU2gtpHX+Aow9fDvBtXSYJiC4tVviLoi1V0g4nMOsOnUWGXeeW++Ae7gMC5bWbBxplEQr0J6y1YGRXnMrufauT9sUcufD6mCZb4FDwX02SoEXBXIbaOcmrBH4LSDJWvnhdFsgaZx2m0XgVyjjyL3QV0sD1TeuJkq+4IBrGFxPRz8Na0rhdaQhHTi0aylol9loENxzZZYlQktkKFaYEksbKz2ClzkmUOoUbTieyLxxYM0GlBGriw4MYDKcjibDm+AhILjWxsMcwUZ9Q+vt1RXM6GXbopcW09lF52fNElZwy3P0aCn2nhixzvosOhpLmKSYogNZwiz+WtJW1ve2xIQ5kWHOWf+J+W1Bu5y3Ui9ZwnKpb1Evfcb6l7uE4SPPCxVWSL1U2C619G1T+rkpdcp2D5E2Ov+dSbdE8PQoYTRFEb3iRaGkCHjQ/cVRzD8958TMf0Hhj3j+GGVLWAxOApbCErR4iY62RtE/LcyhLHeNLNDIsqffUOLW8m0kNPKYu0Dnc6j1GR/tkG0isU8LHWmwhB2483PZq1Wflf6Y68F/5eHEeqPF8ej6R9LaIXtn2EBd5iROWJ6wyfC70XuWsPEg/PfudvCOJexmdDceTK9/YAkbTCajnwa3Yenth+vBdBh+jm+H70d3P5ACnhtgJXVKzFO2aGCcAGZhbO6gRc88dysg7hzB1kIqlaP2bXxEURItKMq5ki5Dd3FO0F3CvPThAeHhHZ3AdoePx0f5bRLjgjVRFO0lxWqCc6nHXKzuFM9DFJR5zu22OiuBoKQESEcJkIqSA7QCo0H6aJoqvtdcldhEwnkHb/z7Y+M2tVmOjFib9mBZbbbjdfHp0cLKrif0Bqf0KrsfLwsPdw+k01RaFH5qSEvHGhpAfNf2pk10I3DGbJNxWyV1kuAl7dyE/eANFET9D+nlE+I+7MIfCmpXGO2i/a96Pfrn2IfJX2rETyjxkggVsFaZMa2TP7TqfJ+Ao9KlyrgX7E8C230GOUbd8MOX9KM6kQ60yD2mA6JRFmn1+xlIVSTPocNnEkzyIrj/ATh/hd//G/jde+UnRI+qDmKEUos97BofbvZJ7XGJNppO5rT3meHufmc9Cy0e45oEPCrlncmxKub38U7lHSmlutOE6NZlPq+qx+peE2LfxTr8SFNUsDUBeUYhZA3uWZ9RoLapOCUHauL2P9xymPIO7nMR7K56ly/gW1rfL87cObivYQwuX4HsFchegewVyP5iIHt7rlCbHtRldcspl84F8enmvuZKpvD3uw/vgzoIx7jU1Ml6f39LOrNcULPn/oter9eD1izniljDtF3RbRPdWXCdF1CwsGauMP/i82h4zPzk+2v46uveV9TWIQJwg55L5UIn6ofpdAyD8ch12Ck0+Bcicq/S0krW6PJ04TnXrl2UKv3AxNltUjvPtThHc3eMceFtzcEBwFfED0g9HNmc1FBpYW/2b56bXRgtSmspzHOTykVliT5wKsrRNrW6yXPpKWx4HTjeRCwM15Q5+g1WLUHBlUL7xkHob8YGpHRV56hlCi9z6bwUsD9dbBOIfc/Lry46MMGws46oQMJim1xlG0+IPbVXT/prPOnq6rknhWazdIB54bdJ3eduHvDTjmT9itDEYhFAEVqztIxWxHZY36bVswvaf9L8JFA62wCF1kzqAFftum9PskciJ0ykJjafweICyREx9EiFl2s8zvxEFJVcyrk6Zc004E+MVd1MaJ1tbr467P/eYb88l/EGGkqNjwUKcjy01lhoVWYIVRDMSCKruWqHt7OLfnAgY0OvykJESKkXljtvSxFGKQsuVWkxeAVVFsKsQwu14FqKDnzQMBt/uJtCt/ZN8iI3Aw5fPj7GMcoabTgG04MO+8kUJkxpiL63W9hIn8WqjoJwhVuwJaXmJZf6FST/Cp/bJYyKR1NNB8NQg+4ZrHs0Suw+xXvXjs5Cu65HHqVVrM8y74t+t6uM4Cozzve/7n3de2aNW3oNKa5RmYJq0zC8IJtOmgHGsK5A/+RO6kPQ7sIEzR5XnDAm2HzHNV+Gkpmc4hnzH8Ic1di2MHohl6Xlc7UH3hAazeWqT0MkoyWJK1PUXlJeIbfPuRfZ2OJCPoItFUJqNtp5izynGsOVOVoHpQs1i0Vn1Bqpjgl1StuVFBOYgkzpfZxxwILnUlHequanghd8LpUkZ455JMQQd84ISWPCvHQeMqMCkeqexX0gRpeF5tLYDGk3tGDDXQJzXBiLNHbFR+k8NUurMwT8Y/DuFhZSIbQ23GJmSoftgDrdqLVjKOk6Yz2psb0QnS3P1UWowzANQxq6GM2NCcPfs5e8BDbo2sR/u1Bc63ABICXQo4WxAtv53qYdGPl6OH334X5yPazT8ZEJ63tjCorrZcmXmFQwx/f2oY1cbymjo3KUomlkHMfIVcGZoQ2Zn1CFL0O9YPSG2xTwUajSyTWqLawlhx/5YsWh5RCBF9J1udtqwQsZ9VEfXo/cOdDrzBptShe8Ys7FCqSuK9zKcJ2f9c86WHIwHsHCKArhKvUjepgM76bh1bKUKSqpcT/N71304X5y6+JMPtwqXfJCJpAO5pjJyu9OcB9ymaYKyRHizZXwPzjU1lUX+5A4uHYbtE1mqFv1kCGnlDI7pDsJ+zHtA402Z98e55JAg0MqF6FE8hCRLak6InZ/X3zb+wZm8oDuCrdti6XDdEazw+o+GYiG5b1zyyMYU101G99PZ8H3ZjfD2+F0OAMSe78lOHFkJoYpXyF9M7DCw7g1SqEI7YvZ34Zntb3CrUPfLvhS6uBV3MHsKbSgyFUe/XVpnbG7WVTFTMlc+ooxEV7NYm2371iwy06vQ1CtpEDtDnH33WhKKSncn4U/ePESbE6R59S726cE1+92l9Jn5bwjTN4VipepNJgeSXYQpCHJFcb5nOvDYVHoUMbqm+YzTYUdKtlTqH5qqojXD1peP2h5/aDld3zQUtWcHh99t1Bc6tDUs6puTz//xCxh/aoj/5Awqv1oydPTnDu8t2q3o8e/lkhz448PNAi2klJ+qNtS6eh3yvoLrhx+Io5bkwptL+AlLuu+vN4282bGErbCbfNNTigDY2IJHMSX1/Gc9jTW1PXmZ2MPGjvHHYPgYp9c+3BQWI/vpyxh8+r7nNyktMVygi76O/BpgtjhyhCePbG6BGF9FknSn38Dnn7BDA==
+sidebar_class_name: "put api-method"
+info_path: docs/api-reference/rest/process-path-management-api
+custom_edit_url: null
+hide_send_button: true
+---
+
+import MethodEndpoint from "@theme/ApiExplorer/MethodEndpoint";
+import ParamsDetails from "@theme/ParamsDetails";
+import RequestSchema from "@theme/RequestSchema";
+import StatusCodes from "@theme/StatusCodes";
+import OperationTabs from "@theme/OperationTabs";
+import TabItem from "@theme/TabItem";
+import Heading from "@theme/Heading";
+import Translate from "@docusaurus/Translate";
+
+<Heading
+  as={"h1"}
+  className={"openapi__heading"}
+  children={"Define or revise a process flow"}
+>
+</Heading>
+
+<MethodEndpoint
+  method={"put"}
+  path={"/process-flows/{flowId}"}
+  context={"endpoint"}
+>
+  
+</MethodEndpoint>
+
+
+
+The ordered stages a workload passes through (ADR 0042). The body is the flow's FULL definition: every PUT replaces the name and the stages. Idempotent by nature (full state), so it takes no Idempotency-Key. 201 when the flowId is new, 200 for every later PUT — including one that changes nothing, which raises no event and keeps the version. Each accepted change raises ProcessFlowDefined (first) or ProcessFlowRevised, carrying the full state and a `version` that starts at 1 and grows by one per accepted change. Invariants: at least one stage; a pathId appears at most once; each processType is one of the closed set; each stage's pathId names an ACTIVE process path of this service's own catalogue (checked at write time, under the path's row lock). A RETIRED flow cannot be revised (422 `flow-retired`).
+
+
+<Heading
+  id={"request"}
+  as={"h2"}
+  className={"openapi-tabs__heading"}
+>
+  <Translate id="theme.openapi.request.title">Request</Translate>
+</Heading>
+
+<ParamsDetails
+  {...require("./put-process-flow.ParamsDetails.json")}
+>
+  
+</ParamsDetails>
+
+<RequestSchema
+  {...require("./put-process-flow.RequestSchema.json")}
+>
+  
+</RequestSchema>
+
+<StatusCodes
+  {...require("./put-process-flow.StatusCodes.json")}
+>
+  
+</StatusCodes>
+
+
+      

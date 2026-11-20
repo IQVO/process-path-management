@@ -39,6 +39,12 @@ type Server struct {
 	// use case field here is always populated by the composition root).
 	DefineCPTSchedule *usecases.DefineCPTSchedule
 	GetCPTSchedule    *usecases.GetCPTSchedule
+	// The process-flow surface (ADR 0042). PUT is idempotent by nature, so
+	// none of these routes sits behind RequireIdempotencyKey.
+	DefineProcessFlow *usecases.DefineProcessFlow
+	RetireProcessFlow *usecases.RetireProcessFlow
+	GetProcessFlow    *usecases.GetProcessFlow
+	ListProcessFlows  *usecases.ListProcessFlows
 	// IdempotencyPool wires RequireIdempotencyKey onto POST /process-paths
 	// (see idempotency.go). The shipped binary always sets it (Postgres is
 	// the only runtime, ADR 0037); it is nil only in handler unit tests
@@ -113,6 +119,11 @@ func NewRouter(s *Server, logger *slog.Logger, serviceName string) http.Handler 
 
 	r.Put("/sites/{siteId}/cpt-schedule", s.handleDefineCPTSchedule)
 	r.Get("/sites/{siteId}/cpt-schedule", s.handleGetCPTSchedule)
+
+	r.Get("/process-flows", s.handleListProcessFlows)
+	r.Get("/process-flows/{flowId}", s.handleGetProcessFlow)
+	r.Put("/process-flows/{flowId}", s.handlePutProcessFlow)
+	r.Delete("/process-flows/{flowId}", s.handleRetireProcessFlow)
 
 	// Unroutable requests (e.g. an empty path-id segment, which chi's
 	// trie never matches) get the same RFC 7807 shape as every other

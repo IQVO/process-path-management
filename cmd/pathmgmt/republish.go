@@ -37,6 +37,7 @@ func buildRepublishCatalogue(p *persistence, clock ports.Clock, metrics ports.Ca
 	return &usecases.RepublishCatalogue{
 		Repo:         p.repo,
 		CPTSchedules: p.scheduleRepo,
+		Flows:        p.flowRepo,
 		Publisher:    postgres.NewOutboxPublisher(p.pool, uuid.NewString, outboundkafka.IntegrationEncoder{}),
 		Clock:        clock,
 		UnitOfWork:   p.uow,
@@ -63,9 +64,9 @@ func republishCatalogueAtStartup(ctx context.Context, logger *slog.Logger, uc ca
 	}
 	if res.Omitted > 0 {
 		logger.Error("startup catalogue republish truncated: the topic is still incomplete",
-			"paths", res.Paths, "schedules", res.Schedules, "omitted", res.Omitted, "max_per_kind", usecases.MaxRepublishedPerKind)
+			"paths", res.Paths, "schedules", res.Schedules, "flows", res.Flows, "omitted", res.Omitted, "max_per_kind", usecases.MaxRepublishedPerKind)
 		return false
 	}
-	logger.Info("startup catalogue republished", "topic", outboundkafka.Topic, "paths", res.Paths, "schedules", res.Schedules)
+	logger.Info("startup catalogue republished", "topic", outboundkafka.Topic, "paths", res.Paths, "schedules", res.Schedules, "flows", res.Flows)
 	return true
 }

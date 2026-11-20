@@ -1,7 +1,7 @@
 ---
 title: Aggregates and Invariants
 sidebar_label: Aggregates and Invariants
-description: The ProcessPath and CPTSchedule aggregates and their invariants — lower-case matchPrefix, non-empty requiredCapabilities, positive cycleTimeP95, terminal/idempotent deactivation, and per-site CPT cutoffs that reference Active paths.
+description: The ProcessPath, CPTSchedule and ProcessFlow aggregates and their invariants — lower-case matchPrefix, non-empty requiredCapabilities, positive cycleTimeP95, terminal/idempotent deactivation, per-site CPT cutoffs that reference Active paths, and ordered process-flow stages with a published version.
 ---
 
 # Aggregates and Invariants
@@ -32,7 +32,7 @@ should be the single source of truth for what a path IS.
 
 ## The ProcessPath aggregate
 
-The first of this domain's two aggregate roots. Fields: `PathId`
+The first of this domain's three aggregate roots. Fields: `PathId`
 (immutable identity), `MatchPrefix` (revisable), `Direct` (immutable),
 `RequiredCapabilities` (revisable), `DestinationLocationRole` (optional,
 immutable — [ADR 0009](/docs/adr/0009-destination-location-role-on-process-path)),
@@ -165,3 +165,45 @@ A schedule is revised **wholesale** (`PUT /sites/{siteId}/cpt-schedule`
 replaces timezone and cutoffs together). `Revise` returns `changed`; an
 identical re-submission raises nothing, and a real change publishes a
 `CPTScheduleChanged` carrying the full schedule snapshot.
+
+## The ProcessFlow aggregate
+
+The third aggregate root, identity `FlowId`, introduced by
+[ADR 0042](/docs/adr/0042-process-flows). A `ProcessPath` is one stage of
+work; the flow says which stage follows which, so the floor's topology has one
+owner and warehouse-planning reads it instead of declaring its own. Fields:
+`Name`, ordered `Stages` (each a `Stage` of `pathId` and `processType`),
+`Status` (`ACTIVE`/`RETIRED`), `Version`, `CreatedAt`/`UpdatedAt`.
+
+Invariants enforced in the domain (`internal/domain/processflow`, one shared
+`validate` for `Define` and `Revise`):
+
+- `flowId` and `name` are non-empty (`ErrEmptyFlowId`, `ErrEmptyName`).
+- At least one stage (`ErrNoStages`); each stage has a non-empty `pathId`
+  (`ErrEmptyStagePathId`) and a `processType` from the closed set `PICK`,
+  `REBIN`, `PACK`, `SLAM`, `DISPATCH`, `ARRIVAL`, `RELOCATE`, `REPLENISH`
+  (`ErrInvalidProcessType`).
+- A `pathId` appears at most once in a flow (`ErrDuplicateStagePath`).
+- A `RETIRED` flow cannot be revised (`ErrFlowRetired`, 422).
+- `version` starts at 1 and grows by one per **accepted** change: a revision
+  that changes the name or the stages, or the retirement. A command that
+  changes nothing raises no event and keeps the version. Unlike the version
+  of the other aggregates, which is storage metadata, this one is published in
+  every flow event so consumers can apply a message only when its `version` is
+  greater than the one they hold.
+
+One cross-aggregate invariant lives in the `DefineProcessFlow` use case, not
+the domain, because it needs the `ProcessPathRepo`: every stage's `pathId`
+must reference an **Active** process path in this service's own store
+(`ErrIneligibleStagePath`, 422 `ineligible-stage-path`).
+
+It is kept true from the other side by `DeactivatePath`: a path that an
+ACTIVE flow has a stage on cannot be deactivated. The command is refused with
+`ErrPathInActiveFlow` (409 `path-in-active-flow`, naming the flows) and the
+operator revises or retires those flows first. Like ADR 0028 for schedules,
+`DefineProcessFlow` locks the named paths `FOR SHARE` (sorted by id) and
+`DeactivatePath` holds the path row `FOR UPDATE` before looking for flows, so
+the two serialise per path. A flow is revised **wholesale**
+(`PUT /process-flows/{flowId}` replaces name and stages together); the full
+state goes out on `ProcessFlowDefined`, `ProcessFlowRevised` or
+`ProcessFlowRetired`.

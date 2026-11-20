@@ -55,6 +55,8 @@ type envelope struct {
 type skillDTO struct {
 	ProcessPath  *processPathDTO  `json:"processPath,omitempty"`
 	ProcessPaths *processPathsDTO `json:"processPaths,omitempty"`
+	ProcessFlow  *processFlowDTO  `json:"processFlow,omitempty"`
+	ProcessFlows *processFlowsDTO `json:"processFlows,omitempty"`
 	summary      string
 }
 

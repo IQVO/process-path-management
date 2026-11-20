@@ -23,7 +23,7 @@ Every message is a CloudEvents 1.0 event in **structured content mode**
 | `id` | UUID minted once per occurrence (`uuid.NewString`), shared by the integration and analytics copies and stable across outbox redelivery |
 | `source` | `/warehouse/process-path-management` |
 | `type` | `com.warehouse.wes.process-path-management.<entity>.<EventName>` |
-| `subject` | aggregate id — `path_id` or `site_id`; equal to the Kafka key |
+| `subject` | aggregate id — `path_id`, `site_id` or `flow_id`; equal to the Kafka key |
 | `time` | the domain event's `At`, UTC |
 | `datacontenttype` | `application/json` |
 | `dataschema` | `urn:warehouse:process-path-management:events:<EventName>:v1` (integration) or `urn:warehouse:process-path-management:analytics:<EventName>:v1` (analytics) |
@@ -31,8 +31,11 @@ Every message is a CloudEvents 1.0 event in **structured content mode**
 
 Topics: `warehouse.process-path-management.events` (integration) and
 `warehouse.process-path-management.analytics` (analytics, ADR 0007). Every
-event is written to **both** — in one outbox transaction when
-`DATABASE_URL` is set, or by the `FanOutPublisher` from `NewSharedIdFanOut` direct to Kafka otherwise.
+event a use case raises through `DefinePath`, `RevisePath`, `DeactivatePath`,
+`DefineCPTSchedule`, `DefineProcessFlow` or `RetireProcessFlow` is written to **both**, in one outbox transaction (Postgres
+is mandatory, [ADR 0037](../adr/0037-postgres-and-kafka-are-the-only-runtime.md)).
+The start-up catalogue republish (`usecases.RepublishCatalogue`, ADR 0038) is
+the exception: it writes to the integration topic only.
 Writers use the `kafkago.Hash` balancer (ADR 0013), so all events with the
 same key land on the same partition.
 
@@ -41,9 +44,17 @@ same key land on the same partition.
 | Event | Full CloudEvents `type` | Partition key / `subject` | Producer use case | Known consumers |
 | --- | --- | --- | --- | --- |
 | ProcessPathCreated | `com.warehouse.wes.process-path-management.processpath.ProcessPathCreated` | `path_id` | `usecases.DefinePath` | fulfillment-execution, wes-work-planning, workforce-management, order-management, network-fulfillment; own `pathmgmt-projector` (analytics) |
-| ProcessPathUpdated | `com.warehouse.wes.process-path-management.processpath.ProcessPathUpdated` | `path_id` | `usecases.RevisePath` (only when `Revise` returns `changed=true`) | same five; own projector |
+| ProcessPathUpdated | `com.warehouse.wes.process-path-management.processpath.ProcessPathUpdated` | `path_id` | `usecases.RevisePath` (only when `Revise` returns `changed=true`); also `usecases.RepublishCatalogue`, one per ACTIVE path at every start, integration topic only | same five; own projector (not for the republished ones) |
 | ProcessPathDeactivated | `com.warehouse.wes.process-path-management.processpath.ProcessPathDeactivated` | `path_id` | `usecases.DeactivatePath` (only on an Active path) | same five; own projector |
-| CPTScheduleChanged | `com.warehouse.wes.process-path-management.cptschedule.CPTScheduleChanged` | `site_id` | `usecases.DefineCPTSchedule` (first define, or a revise with `changed=true`) | order-management, network-fulfillment; own projector skips it |
+| CPTScheduleChanged | `com.warehouse.wes.process-path-management.cptschedule.CPTScheduleChanged` | `site_id` | `usecases.DefineCPTSchedule` (first define, or a revise with `changed=true`); also `usecases.RepublishCatalogue`, one per site at every start, integration topic only | order-management, network-fulfillment, dock-scheduling, outbound-shipping; own projector skips it |
+| ProcessFlowDefined | `com.warehouse.wes.process-path-management.processflow.ProcessFlowDefined` | `flow_id` | `usecases.DefineProcessFlow` (first define, `version` 1) | warehouse-planning (the consumer named in [ADR 0042](../adr/0042-process-flows.md); its side is owned by that repo); own projector skips it |
+| ProcessFlowRevised | `com.warehouse.wes.process-path-management.processflow.ProcessFlowRevised` | `flow_id` | `usecases.DefineProcessFlow` (only when `Revise` returns `changed=true`); also `usecases.RepublishCatalogue`, one per ACTIVE flow at every start with the current state and version, integration topic only | same; own projector skips it |
+| ProcessFlowRetired | `com.warehouse.wes.process-path-management.processflow.ProcessFlowRetired` | `flow_id` | `usecases.RetireProcessFlow` (only on the first retirement) | same; own projector skips it |
+
+A `ProcessPathUpdated`, `CPTScheduleChanged` or `ProcessFlowRevised` on the integration topic can
+therefore be a republish of an unchanged path, schedule or flow (new CloudEvents
+`id`, same `type` and `data`); consumers upsert it, and nothing should count
+it as a revision. See [Use cases](./use-cases.md#republishcatalogue).
 
 ### ProcessPathCreated / ProcessPathUpdated — `data`
 
@@ -88,6 +99,26 @@ Go type `kafka.CPTScheduleData`; built from `cptschedule.ToSnapshot`.
 | `cutoffs[].ship_method` | string | |
 | `cutoffs[].eligible_path_ids` | string array | Active paths at write time |
 
+### ProcessFlowDefined / ProcessFlowRevised / ProcessFlowRetired — `data`
+
+Go type `kafka.ProcessFlowData`, the same shape for all three, built from
+`processflow.State`; schema in `apis/asyncapi.yaml`. Always the **full state**
+of the flow at one version, never a diff.
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `flow_id` | string | equals the Kafka key and the CloudEvents `subject` |
+| `name` | string | |
+| `stages[]` | array | in flow order; the array order IS the order of the stages |
+| `stages[].path_id` | string | an Active path of this catalogue at write time |
+| `stages[].process_type` | string | `PICK`, `REBIN`, `PACK`, `SLAM`, `DISPATCH`, `ARRIVAL`, `RELOCATE`, `REPLENISH` |
+| `status` | string | `ACTIVE`, or `RETIRED` on `ProcessFlowRetired` |
+| `version` | integer | 1 on `ProcessFlowDefined`, +1 per accepted change (a revision that changes something, or the retirement). A consumer applies a message only when its `version` is greater than the one it holds, so a republish and a redelivery are no-ops for a consumer that is caught up |
+
+Unlike the `version` column of the other aggregates, which is storage
+metadata, this `version` is part of the published contract
+([ADR 0042](../adr/0042-process-flows.md)).
+
 ## Events NOT raised
 
 - A no-op `PUT /process-paths/{pathId}` (identical `matchPrefix`,
@@ -95,7 +126,10 @@ Go type `kafka.CPTScheduleData`; built from `cptschedule.ToSnapshot`.
 - `DELETE` on an already-deactivated path raises nothing (204).
 - A `PUT /sites/{siteId}/cpt-schedule` identical to the stored schedule
   raises nothing.
-- Read operations (REST `GET`, every MCP tool) never raise events.
+- A `PUT /process-flows/{flowId}` that changes neither the name nor the
+  stages raises nothing and keeps the `version`; `DELETE` on an already
+  retired flow raises nothing (204).
+- Read operations (REST `GET`, every MCP tool and A2A skill) never raise events.
 
 ## Consumed events
 
@@ -109,7 +143,7 @@ This context consumes **no other context's events**. Its only consumer,
 | `...processpath.ProcessPathCreated` | `catalogue_growth_rollup.paths_defined += 1` for the UTC day bucket |
 | `...processpath.ProcessPathUpdated` | `paths_revised += 1` |
 | `...processpath.ProcessPathDeactivated` | `paths_deactivated += 1` |
-| `...cptschedule.CPTScheduleChanged` and any unknown type | committed and skipped |
+| `...cptschedule.CPTScheduleChanged`, the three `...processflow.ProcessFlow*` types and any unknown type | committed and skipped |
 | non-CloudEvents message | dead-lettered to `warehouse.process-path-management.analytics.dlq`, then committed |
 | projecting type whose claim+apply step still fails after `maxAnalyticsHandlerAttempts` (3) | dead-lettered to the same DLQ, then committed (ADR 0012, ADR 0032) |
 
@@ -133,6 +167,8 @@ the apply leaves no claim and the redelivery applies the event exactly once.
 
 Source: `internal/domain/shared/events.go`,
 `internal/domain/cptschedule/events.go`,
+`internal/domain/processflow/events.go`,
+`internal/adapters/outbound/kafka/process_flow_events.go`,
 `internal/adapters/outbound/kafka/publisher.go`,
 `internal/adapters/outbound/kafka/analytics_publisher.go`,
 `internal/adapters/outbound/kafka/writer_config.go`,

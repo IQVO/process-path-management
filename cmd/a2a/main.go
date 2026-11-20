@@ -154,12 +154,12 @@ func run() error {
 	migrationsDatabaseURL := getenv("MIGRATIONS_DATABASE_URL", databaseURL)
 	migrationsPath := getenv("MIGRATIONS_PATH", "migrations")
 
-	repo, closeAdapters, err := buildRepo(ctx, databaseURL, migrationsDatabaseURL, migrationsPath, logger)
+	repo, flows, closeAdapters, err := buildRepo(ctx, databaseURL, migrationsDatabaseURL, migrationsPath, logger)
 	if err != nil {
 		return err
 	}
 	defer closeAdapters()
-	handler := newAgent(repo, cfg.agentURL, getenv("SERVICE_VERSION", "dev"))
+	handler := newAgent(repo, flows, cfg.agentURL, getenv("SERVICE_VERSION", "dev"))
 
 	srv := &http.Server{
 		Addr:              a2aAddr,
@@ -204,11 +204,11 @@ func run() error {
 // buildPersistence, whose CPTScheduleRepo reuses it), because cmd/a2a's
 // two skills need only the ProcessPathRepo (ADR 0014's connection
 // arithmetic still counts ONE MaxConns=10 pool per pod).
-func buildRepo(ctx context.Context, databaseURL, migrationsDatabaseURL, migrationsPath string, logger *slog.Logger) (ports.ProcessPathRepo, func(), error) {
+func buildRepo(ctx context.Context, databaseURL, migrationsDatabaseURL, migrationsPath string, logger *slog.Logger) (ports.ProcessPathRepo, ports.ProcessFlowRepo, func(), error) {
 	noop := func() {}
 
 	if databaseURL == "" {
-		return nil, noop, errNoDatabase
+		return nil, nil, noop, errNoDatabase
 	}
 
 	// Retried, because in this fleet EVERY injected pod's first outbound
@@ -221,11 +221,11 @@ func buildRepo(ctx context.Context, databaseURL, migrationsDatabaseURL, migratio
 	if err := bootretry.Do(ctx, logger, "run migrations", func() error {
 		return postgres.RunMigrations(migrationsDatabaseURL, migrationsPath)
 	}); err != nil {
-		return nil, noop, err
+		return nil, nil, noop, err
 	}
 	pool, err := postgres.NewPool(ctx, databaseURL)
 	if err != nil {
-		return nil, noop, err
+		return nil, nil, noop, err
 	}
 	// ParseConfig/NewWithConfig do not themselves establish a connection,
 	// so without this the first real failure would surface inside a
@@ -234,9 +234,9 @@ func buildRepo(ctx context.Context, databaseURL, migrationsDatabaseURL, migratio
 		return pool.Ping(ctx)
 	}); err != nil {
 		pool.Close()
-		return nil, noop, err
+		return nil, nil, noop, err
 	}
-	return postgres.NewProcessPathRepo(pool), pool.Close, nil
+	return postgres.NewProcessPathRepo(pool), postgres.NewProcessFlowRepo(pool), pool.Close, nil
 }
 
 // newLogger builds the process-wide structured logger, wrapped so any

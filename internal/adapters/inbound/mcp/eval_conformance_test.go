@@ -92,19 +92,22 @@ func TestEvalConformance_ExtraArgumentsAreRejected(t *testing.T) {
 	}
 }
 
-// TestEvalConformance_NoResourceTemplatesOrResources pins that this
-// server's read surface is tools-only: it deliberately exposes no
-// resources and no resource templates, so discovery must return empty
-// lists (not errors) — a host mounting it sees a clean, honest surface.
-func TestEvalConformance_NoResourceTemplatesOrResources(t *testing.T) {
+// TestEvalConformance_ResourceTemplateSurface pins the AS-3 resource
+// surface (ADR 0041): exactly ONE resource template — the bounded
+// path-definition read model — and no concrete (non-template) resources,
+// so discovery stays a clean, honest list a host can mount.
+func TestEvalConformance_ResourceTemplateSurface(t *testing.T) {
 	h := newEvalHarness(t)
 
 	templates, err := h.session.ListResourceTemplates(t.Context(), nil)
 	if err != nil {
 		t.Fatalf("list resource templates: %v", err)
 	}
-	if len(templates.ResourceTemplates) != 0 {
-		t.Errorf("this server exposes no resource templates, got %+v", templates.ResourceTemplates)
+	if len(templates.ResourceTemplates) != 1 {
+		t.Fatalf("this server exposes exactly one resource template, got %+v", templates.ResourceTemplates)
+	}
+	if got := templates.ResourceTemplates[0].URITemplate; got != "warehouse://process-path-management/paths/{pathId}" {
+		t.Errorf("resource template URI = %q, want the warehouse://process-path-management/paths/{pathId} namespace", got)
 	}
 
 	resources, err := h.session.ListResources(t.Context(), nil)
@@ -112,21 +115,25 @@ func TestEvalConformance_NoResourceTemplatesOrResources(t *testing.T) {
 		t.Fatalf("list resources: %v", err)
 	}
 	if len(resources.Resources) != 0 {
-		t.Errorf("this server exposes no resources, got %+v", resources.Resources)
+		t.Errorf("this server exposes no concrete resources (the template is read by URI), got %+v", resources.Resources)
 	}
 }
 
-// TestEvalConformance_NoPrompts pins that this server exposes no prompts:
-// prompts/list must succeed with an empty list rather than error.
-func TestEvalConformance_NoPrompts(t *testing.T) {
+// TestEvalConformance_PromptSurface pins the AS-3 prompt surface
+// (ADR 0041): exactly ONE prompt — the review_path_definition operator
+// SOP — with typed arguments and no hidden writes.
+func TestEvalConformance_PromptSurface(t *testing.T) {
 	h := newEvalHarness(t)
 
 	prompts, err := h.session.ListPrompts(t.Context(), nil)
 	if err != nil {
 		t.Fatalf("list prompts: %v", err)
 	}
-	if len(prompts.Prompts) != 0 {
-		t.Errorf("this server exposes no prompts, got %+v", prompts.Prompts)
+	if len(prompts.Prompts) != 1 {
+		t.Fatalf("this server exposes exactly one prompt, got %+v", prompts.Prompts)
+	}
+	if prompts.Prompts[0].Name != "review_path_definition" {
+		t.Errorf("prompt name = %q, want review_path_definition", prompts.Prompts[0].Name)
 	}
 }
 

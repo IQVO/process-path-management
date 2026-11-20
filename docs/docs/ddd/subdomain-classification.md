@@ -26,7 +26,7 @@ differentiation 0.22) and the fleet table in warehouse-docs.
 | Does it decide anything that makes the warehouse faster or cheaper than a competitor's? | No. It declares what a path is (`matchPrefix`, capabilities, cycle time, eligibility) and when trucks leave (CPT cutoffs). Dispatch, release, staffing and the order promise are decided by its consumers. |
 | Is the model well understood in the industry? | Yes. Process-path / labour-path catalogues and carrier cutoff tables are standard configuration in commercial WMS/WES products. |
 | Why build it instead of keeping a file? | Several contexts need the same definition and none is its natural owner. It replaced a static YAML file that three services loaded at boot, with no owner, audit trail or way to change it without redeploying consumers ([ADR 0002](../adr/0002-yaml-to-kafka-cutover.md)). |
-| Is it complex? | Moderately: two aggregates (`ProcessPath`, `CPTSchedule`), one cross-aggregate rule enforced with row locks ([ADR 0028](../adr/0028-close-path-cpt-schedule-race-with-row-locks.md)), four event types. Most of the weight is infrastructure (outbox, idempotency keys, optimistic concurrency, analytics projector). Complexity does not make a subdomain Core. |
+| Is it complex? | Moderately: three aggregates (`ProcessPath`, `CPTSchedule`, `ProcessFlow`), two cross-aggregate rules enforced with row locks ([ADR 0028](../adr/0028-close-path-cpt-schedule-race-with-row-locks.md), [ADR 0042](../adr/0042-process-flows.md)), seven event types. Most of the weight is infrastructure (outbox, idempotency keys, optimistic concurrency, analytics projector). Complexity does not make a subdomain Core. |
 | Why not Supporting? | Supporting means fleet-specific logic that is still not a differentiator. The catalogue's rules are generic configuration rules; its fleet-specific part is only vocabulary (capability names, the `matchPrefix` convention). |
 
 ### What would change the verdict
@@ -40,7 +40,7 @@ ADR and a re-classification in warehouse-docs.
 
 Classifications copied from warehouse-docs
 `docs/strategic-design/subdomain-classification.md` (branch `main`, read
-2026-10-09). Do not edit them here; change them there.
+2026-10-09; the `dock-scheduling` and `outbound-shipping` rows read 2026-11-14). Do not edit them here; change them there.
 
 | Context | Relationship to this service | Classification | CloudEvents tier |
 | --- | --- | --- | --- |
@@ -50,6 +50,8 @@ Classifications copied from warehouse-docs
 | `order-management` | Consumes the events topic, including `CPTScheduleChanged` | Generic/Supporting | `wes` |
 | `network-fulfillment` | Consumes the events topic, including `CPTScheduleChanged` | Supporting | `wes` |
 | `warehouse-ops-agent` | Has an MCP client for this service, unused | Supporting | `wes` (publishes no events) |
+| `dock-scheduling` | Consumes only `CPTScheduleChanged`, to keep its copy of each site's cutoff times | Supporting | `wms` |
+| `outbound-shipping` | Consumes only `CPTScheduleChanged`, to keep its copy of each site's cutoff times | Supporting | `wms` |
 | `facility-layout` | Separate Ways: `DestinationLocationRole` and `SiteId` are copied by convention | Generic | `wms` |
 | `product-master` | Owns the handling vocabulary behind eligibility product attributes; not consumed | Supporting | `wms` |
 

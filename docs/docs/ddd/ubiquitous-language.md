@@ -2,7 +2,7 @@
 title: Ubiquitous Language
 sidebar_label: Ubiquitous Language
 sidebar_position: 2
-description: ProcessPath, PathId, Capability, MatchPrefix, Direct, DestinationLocationRole, CycleTimeP95, Eligibility, Status, CPTSchedule, Cutoff — each term mapped to the code identifier that implements it.
+description: ProcessPath, PathId, Capability, MatchPrefix, Direct, DestinationLocationRole, CycleTimeP95, Eligibility, Status, CPTSchedule, Cutoff, ProcessFlow, Stage — each term mapped to the code identifier that implements it.
 ---
 
 # Ubiquitous Language
@@ -10,6 +10,7 @@ description: ProcessPath, PathId, Capability, MatchPrefix, Direct, DestinationLo
 The definitions below are pulled directly from
 `internal/domain/processpath/process_path.go`,
 `internal/domain/cptschedule/cpt_schedule.go`,
+`internal/domain/processflow/process_flow.go`,
 `internal/domain/cptschedule/events.go`,
 `internal/domain/shared/shared.go`,
 `internal/domain/shared/eligibility.go` and
@@ -41,6 +42,11 @@ the [DDD artifact pack](./ddd-artifacts.md).
 | Cutoff Snapshot | `cptschedule.CutoffSnapshot` | Event payload part | `CutoffData` | Code-only name; the domain says "cutoff". |
 | Process Path Created / Updated / Deactivated | `shared.ProcessPathCreated`, `shared.ProcessPathUpdated`, `shared.ProcessPathDeactivated` | Domain events | `com.warehouse.wes.process-path-management.processpath.<Name>` | |
 | CPT Schedule Changed | `cptschedule.CPTScheduleChanged` | Domain event | `com.warehouse.wes.process-path-management.cptschedule.CPTScheduleChanged` | Full snapshot, raised on define AND revise. |
+| Process Flow | `processflow.ProcessFlow` | Aggregate root | `processFlowDTO` (MCP) / `ProcessFlowData` | The ordered stages a workload passes through; identity `processflow.FlowId` (`flowId` / `flow_id`); `status` `ACTIVE`/`RETIRED`; `version` is published ([ADR 0042](../adr/0042-process-flows.md)). A `ProcessPath` is one stage of work, a flow says which stage follows which. |
+| Stage | `processflow.Stage` | Value object | `stages[]` (`pathId`, `processType` / `path_id`, `process_type`) | Built by `processflow.NewStage`; a path appears at most once per flow. |
+| Process Type | `processflow.ProcessType` | Enumeration | `processType` / `process_type` | `PICK`, `REBIN`, `PACK`, `SLAM`, `DISPATCH`, `ARRIVAL`, `RELOCATE`, `REPLENISH`. |
+| Define / Revise / Retire (flow) | `processflow.Define`, `(*ProcessFlow).Revise`, `(*ProcessFlow).Retire` | Factory / commands | `PUT /process-flows/{flowId}` (define and revise), `DELETE /process-flows/{flowId}` (retire) | Use cases `usecases.DefineProcessFlow` (define AND revise), `RetireProcessFlow`. |
+| Process Flow Defined / Revised / Retired | `processflow.ProcessFlowDefined`, `processflow.ProcessFlowRevised`, `processflow.ProcessFlowRetired` | Domain events | `com.warehouse.wes.process-path-management.processflow.<Name>` | Full state with `version`; `ProcessFlowRevised` is also the start-up republish. |
 | Catalogue Growth report | `report.CatalogueReport`, `report.Row` | Read model | `GET /reports/catalogue-growth` | Analytics side, not part of the OLTP model. |
 
 **Terms whose code name differs:** "required capabilities" →
@@ -182,6 +188,21 @@ The second aggregate root, identified by `SiteId`. It holds an IANA
 the schedule), a `localTime` (`HH:MM`), `daysOfWeek` (`Mon`..`Sun`), a
 `shipMethod`, and the `eligiblePathIds` that can make it. Revised
 wholesale, never partially.
+
+## ProcessFlow, Stage, ProcessType
+
+> The ordered sequence of process-path stages a workload passes through.
+> A `ProcessPath` names one stage of work (`PICK`, `PACK`, `REBIN`, `SLAM`);
+> which stage feeds which is the flow's job, not the path's.
+> ([ADR 0042](../adr/0042-process-flows.md))
+
+The third aggregate root, identified by `FlowId`. It holds a `name`, one or
+more ordered **Stages** (each a `pathId` naming an Active path and a
+`processType` from the closed set `PICK`, `REBIN`, `PACK`, `SLAM`,
+`DISPATCH`, `ARRIVAL`, `RELOCATE`, `REPLENISH`), a `status`
+(`ACTIVE`/`RETIRED`) and a `version` that starts at 1 and grows by one per
+accepted change. A path appears at most once per flow. Revised wholesale,
+retired rather than deleted; a retired flow cannot be revised.
 
 ## Status (Active / Deactivated)
 

@@ -165,7 +165,11 @@ invocation/denial counters per call are not yet implemented (see Status).
      the two conditionally registered tools (`get_catalogue_growth_report`
      when a reports client is wired / `REPORTS_BASE_URL` is set,
      `get_cpt_schedule` when the schedule read port is wired) are pinned
-     separately by `TestEval_ConditionalToolsArePinned`.
+     separately by `TestEval_ConditionalToolsArePinned`. The two flow tools
+     (`get_process_flow`, `list_process_flows`, ADR 0042) are conditional the
+     same way, each registered only when its read use case is wired;
+     `cmd/mcp` always wires both, and they are exercised by
+     `process_flow_tools_test.go` and `process_flow_wire_test.go`.
    - **E2 — wire conformance** (`eval_conformance_test.go`): over the real
      Streamable HTTP handler — initialize handshake carries server info
      and non-empty instructions; unknown tools, wrong-typed arguments,
@@ -201,8 +205,9 @@ invocation/denial counters per call are not yet implemented (see Status).
 
 ### Status in this repository
 
-`process-path-management-mcp` exposes 3 tools by default
-(`get_process_path`, `list_process_paths`, `get_cpt_schedule`) plus
+`process-path-management-mcp` exposes 5 tools by default
+(`get_process_path`, `list_process_paths`, `get_cpt_schedule`,
+`get_process_flow`, `list_process_flows`) plus
 `get_catalogue_growth_report` when `REPORTS_BASE_URL` is set, **no
 resources and no prompts**. Each tool call gets an OTel span
 (`mcp.tool <name>`). Not yet implemented here: a dedicated audit record per

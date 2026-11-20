@@ -38,8 +38,8 @@ The site above is built from `docs/` (Docusaurus). The pages, by task:
 | Upstreams, downstreams, event contract, failure behaviour | [Integration](docs/docs/ecosystem/integration.md), [Context Map](docs/docs/ecosystem/context-map.md) |
 | Use cases: trigger, inputs, invariants, events | [Use cases](docs/docs/ddd/use-cases.md) |
 | Why Generic, neighbour classes | [Subdomain classification](docs/docs/ddd/subdomain-classification.md) |
-| MCP tools and their inputs | [MCP tools](docs/docs/mcp/tools.md), [Governance charter](docs/docs/mcp/governance-charter.md) |
-| A2A skills (read-only agent) | [A2A inbound adapter (ADR 0039)](docs/docs/adr/0039-a2a-inbound-adapter.md) |
+| MCP tools, resource and prompt | [MCP tools](docs/docs/mcp/tools.md), [Governance charter](docs/docs/mcp/governance-charter.md) |
+| A2A skills (read-only agent) | [A2A inbound adapter (ADR 0039)](docs/docs/adr/0039-a2a-inbound-adapter.md), [Agent authority and complete MCP surface (ADR 0041)](docs/docs/adr/0041-agent-authority-levels-and-complete-mcp-surface.md) |
 | Vocabulary, aggregates, the ddd-crew pack | [Ubiquitous language](docs/docs/ddd/ubiquitous-language.md), [Aggregates and invariants](docs/docs/ddd/aggregates-and-invariants.md), [DDD artifacts](docs/docs/ddd/ddd-artifacts.md) |
 | Decisions | [ADR index](docs/docs/adr/about.md) |
 | REST contract | [`apis/openapi.yaml`](apis/openapi.yaml) (rendered under API Reference on the site); reports API: [`apis/openapi-reports.yaml`](apis/openapi-reports.yaml) (Reports API Reference) |
@@ -65,7 +65,8 @@ MCP call** to any other service (enforced by
 `internal/architecture/fitness_test.go`'s `TestNoSiblingContextOutboundCalls`).
 Its only Kafka consumer is its own analytics projector, which reads this
 service's own analytics topic (ADR 0007). It publishes `ProcessPathCreated`
-/ `ProcessPathUpdated` / `ProcessPathDeactivated` / `CPTScheduleChanged`
+/ `ProcessPathUpdated` / `ProcessPathDeactivated` / `CPTScheduleChanged` /
+`ProcessFlowDefined` / `ProcessFlowRevised` / `ProcessFlowRetired`
 onto `warehouse.process-path-management.events`. `fulfillment-execution`,
 `wes-work-planning` and
 `workforce-management` each consume that topic into a local catalogue
@@ -97,15 +98,16 @@ internal/
   domain/
     processpath/                  ProcessPath aggregate
     cptschedule/                  CPTSchedule aggregate (per-site CPT cutoffs, ADR 0010)
+    processflow/                  ProcessFlow aggregate (ordered stages of paths, ADR 0042)
     shared/                       PathId, Capability, SiteId, DestinationLocationRole, Eligibility, domain events
   application/
-    ports/                        OUT: ProcessPathRepo, CPTScheduleRepo, EventPublisher, UnitOfWork, Clock, PathMetrics
-    usecases/                     DefinePath, RevisePath, DeactivatePath, GetPath, ListPaths, DefineCPTSchedule, GetCPTSchedule
+    ports/                        OUT: ProcessPathRepo, CPTScheduleRepo, ProcessFlowRepo, EventPublisher, UnitOfWork, Clock, PathMetrics
+    usecases/                     DefinePath, RevisePath, DeactivatePath, GetPath, ListPaths, DefineCPTSchedule, GetCPTSchedule, DefineProcessFlow, RetireProcessFlow, GetProcessFlow, ListProcessFlows
   analytics/report/               catalogue-growth read model + ports
   adapters/
     inbound/http/                 chi handlers, DTOs, RFC 7807 error mapping; reports router
     inbound/mcp/                  MCP tools over the read use cases
-    inbound/a2a/                  A2A skills over the read use cases: get_process_path, list_process_paths (ADR 0039)
+    inbound/a2a/                  A2A skills over the read use cases: get_process_path, list_process_paths, get_process_flow, list_process_flows (ADR 0039, ADR 0042)
     inbound/kafka/                analytics consumer (this service's OWN analytics topic only)
     outbound/postgres/            pgxpool repos, unit of work, outbox publisher + relay, golang-migrate runner
     outbound/memory/              in-memory repos, TEST DOUBLES only (no cmd/** binary imports them: ADR 0037)
@@ -115,8 +117,8 @@ internal/
     outbound/analyticsstore/      analytics projection/report store (Postgres + in-memory test double)
     outbound/telemetry/           OTel traces/metrics/logs
   architecture/                   arch-go + fitness tests
-migrations/                       golang-migrate SQL files (0001–0009); migrations/analytics/ for the report DB
-apis/openapi.yaml                 This service's OWN REST API (9 operations, including /healthz and /readyz)
+migrations/                       golang-migrate SQL files (0001–0010); migrations/analytics/ for the report DB
+apis/openapi.yaml                 This service's OWN REST API (13 operations, including /healthz and /readyz)
 apis/asyncapi.yaml                What this service PUBLISHES (integration + analytics topics)
 features/                         godog/Gherkin BDD acceptance tests
 web/                              process_path_mfe Module Federation remote (operator SPA)
@@ -177,11 +179,14 @@ Port `9092` is also what the kind cluster's Kafka publishes on the host: stop
 one of the two, or map the compose broker elsewhere and advertise the same
 address.
 
-Every event is published to BOTH the integration topic and the analytics
-topic (`warehouse.process-path-management.analytics`, ADR 0007): the use cases
-write one `outbox_events` row per topic inside the same transaction as the
-aggregate change, and the always-on relay goroutine drains that table onto
-Kafka. `GET /readyz` is 200 only while Postgres answers a ping and a Kafka
+Every event a use case raises is published to BOTH the integration topic and
+the analytics topic (`warehouse.process-path-management.analytics`, ADR 0007):
+the use cases write one `outbox_events` row per topic inside the same
+transaction as the aggregate change, and the always-on relay goroutine drains
+that table onto Kafka. At every start the service also re-enqueues the whole
+current catalogue (`ProcessPathUpdated` per ACTIVE path, `CPTScheduleChanged`
+per site, `ProcessFlowRevised` per ACTIVE flow with its current state and
+version) on the integration topic only (ADR 0038, ADR 0042). `GET /readyz` is 200 only while Postgres answers a ping and a Kafka
 broker answers a metadata request (topics are never required: the broker
 auto-creates them on first write).
 
@@ -263,7 +268,7 @@ The other binaries read:
 
 ## API
 
-Nine routes on `cmd/pathmgmt`, all nine operations in
+Thirteen routes on `cmd/pathmgmt`, all thirteen operations in
 [`apis/openapi.yaml`](apis/openapi.yaml) (the full contract, including the
 RFC 7807 error schema).
 
@@ -276,6 +281,10 @@ RFC 7807 error schema).
 | `DELETE` | `/process-paths/{pathId}` | DeactivatePath |
 | `PUT` | `/sites/{siteId}/cpt-schedule` | DefineCPTSchedule (define or wholesale revise) |
 | `GET` | `/sites/{siteId}/cpt-schedule` | GetCPTSchedule |
+| `PUT` | `/process-flows/{flowId}` | DefineProcessFlow (define or wholesale revise; `201` when new, `200` after; idempotent, no `Idempotency-Key`; ADR 0042) |
+| `GET` | `/process-flows/{flowId}` | GetProcessFlow (retired flows too) |
+| `GET` | `/process-flows` | ListProcessFlows (`?all=true` includes RETIRED; keyset-paged `{items,nextCursor}` via `limit` and `cursor`) |
+| `DELETE` | `/process-flows/{flowId}` | RetireProcessFlow (`204`, idempotent; a retired flow cannot be revised) |
 | `GET` | `/healthz` | Liveness probe |
 | `GET` | `/readyz` | Readiness probe — 200 only while Postgres and a Kafka broker answer; `503` `dependency-unavailable` while one does not, `503 {"status":"not_ready"}` once graceful shutdown starts (ADR 0012, ADR 0037) |
 
@@ -285,7 +294,8 @@ in [`apis/openapi-reports.yaml`](apis/openapi-reports.yaml) (ADR 0031):
 `GET /reports/catalogue-growth/freshness`, and `GET /healthz`.
 
 The MCP server (`cmd/mcp`) exposes read-only tools: `get_process_path`,
-`list_process_paths`, `get_cpt_schedule`, and — only when
+`list_process_paths`, `get_cpt_schedule`, `get_process_flow`,
+`list_process_flows` (ADR 0042), and — only when
 `REPORTS_BASE_URL` is set — `get_catalogue_growth_report`.
 
 ### A2A agent (`cmd/a2a`)
@@ -301,13 +311,18 @@ probes; the Agent Card is at `/.well-known/agent-card.json` and the JSON-RPC
 endpoint is mounted at both `/` and `/a2a`.
 
 It is **read-only**, exactly like the MCP server: it writes nothing, needs no
-Kafka, calls no other context and contains no outbound A2A client. Two skills,
+Kafka, calls no other context and contains no outbound A2A client. Four skills,
 called as a `SendMessage` data part `{"skill": "<id>", "arguments": {...}}`:
 
 - `get_process_path`: `{pathId}` returns the full definition of one path
   (deactivated paths too); an unknown id is an in-band `404` problem.
 - `list_process_paths`: `{[activeOnly]}` returns the catalogue, active paths by
   default.
+- `get_process_flow`: `{flowId}` returns one process flow (ADR 0042): name,
+  ordered stages (`pathId`, `processType`), status, version; retired flows too;
+  an unknown id is an in-band `404` problem.
+- `list_process_flows`: `{[activeOnly]}` returns the flows in id order, ACTIVE
+  ones by default.
 
 Domain rejections come back as an in-band RFC 7807 `problem`, with the REST
 adapter's type namespace and status classification. A2A carries delegation
@@ -381,21 +396,37 @@ curl -s localhost:8080/sites/sp1/cpt-schedule
 
 ```bash
 curl -s -X DELETE localhost:8080/process-paths/PICK
-# 204 No Content
+# 204 No Content (409 path-in-active-flow while an ACTIVE flow has a stage on the path)
+```
+
+**Define a process flow (ADR 0042):**
+
+```bash
+curl -s -X PUT localhost:8080/process-flows/single-unit-outbound \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"Single-unit outbound","stages":[{"pathId":"PICK","processType":"PICK"},{"pathId":"PACK","processType":"PACK"}]}'
+# 201 Created, version 1 (every stage's pathId must be an Active path, else 422 ineligible-stage-path)
+curl -s localhost:8080/process-flows/single-unit-outbound
 ```
 
 ## Domain events (Published Language)
 
-`ProcessPathCreated`, `ProcessPathUpdated`, `ProcessPathDeactivated` and
-`CPTScheduleChanged` are published through the transactional outbox to
+`ProcessPathCreated`, `ProcessPathUpdated`, `ProcessPathDeactivated`,
+`CPTScheduleChanged`, `ProcessFlowDefined`, `ProcessFlowRevised` and
+`ProcessFlowRetired` are published through the transactional outbox to
 `warehouse.process-path-management.events` (integration) and
 `warehouse.process-path-management.analytics`. Every message is a CloudEvents
 1.0 event in structured content mode; the type convention is
 `com.warehouse.wes.process-path-management.<entity>.<EventName>`, e.g.
-`com.warehouse.wes.process-path-management.processpath.ProcessPathCreated` and
-`com.warehouse.wes.process-path-management.cptschedule.CPTScheduleChanged`.
-`order-management` consumes the CPT schedule for promise-date computation;
-`workforce-management` replays the path catalogue from the integration topic.
+`com.warehouse.wes.process-path-management.processpath.ProcessPathCreated`,
+`com.warehouse.wes.process-path-management.cptschedule.CPTScheduleChanged` and
+`com.warehouse.wes.process-path-management.processflow.ProcessFlowDefined`.
+The three flow events carry the flow's full state (`flow_id`, `name`,
+`stages`, `status`, `version`), keyed by `flow_id`; a consumer applies a
+message only when its `version` is greater than the one it holds (ADR 0042).
+`order-management` consumes the CPT schedule for promise-date computation
+(`network-fulfillment`, `dock-scheduling` and `outbound-shipping` consume it
+too); `workforce-management` replays the path catalogue from the integration topic.
 
 ## Analytics data product (Catalogue Growth report)
 
@@ -409,8 +440,19 @@ the catalogue-growth report read-only over REST
 `cmd/mcp` is the read-only MCP inbound surface (Streamable HTTP on `:8090`,
 `GET /healthz` backs the probes; no authentication — the in-cluster ClusterIP
 boundary is the access control). Tools: `list_process_paths`,
-`get_process_path`, `get_cpt_schedule` and the curated report tool
-`get_catalogue_growth_report`.
+`get_process_path`, `get_cpt_schedule`, `get_process_flow`,
+`list_process_flows` and the curated report tool
+`get_catalogue_growth_report`; one resource template
+(`warehouse://process-path-management/paths/{pathId}`) and one prompt
+(`review_path_definition`) complete the agent surface. The handler is
+stateless ([ADR 0041](docs/docs/adr/0041-agent-authority-levels-and-complete-mcp-surface.md)).
+
+### Agent authority
+
+Every MCP tool and A2A skill declares one authority level in its `Meta` key
+`com.warehouse/authority` / skill tag `authority:L<n>` — all `L1` here: the
+charter is read-only, catalogue changes stay on the REST API
+([ADR 0041](docs/docs/adr/0041-agent-authority-levels-and-complete-mcp-surface.md)).
 
 ## Observability
 
@@ -452,7 +494,7 @@ make check-all   # check + coverage (90% gate) + arch-test + bdd
 Additional verification surfaces, each with its own CI job:
 
 ```bash
-go test ./... -run TestFeatures -v                  # BDD (godog/Gherkin) — 32 scenarios in 6 feature files
+go test ./... -run TestFeatures -v                  # BDD (godog/Gherkin) — 153 Scenario/Scenario Outline definitions in 20 feature files (268 executed)
 go test ./internal/architecture/... -v               # arch-fitness (arch-go)
 go test -tags=integration ./... -race -count=1       # Postgres + Kafka integration (testcontainers)
 gremlins unleash ./internal/domain --workers 1 --timeout-coefficient 30   # mutation testing

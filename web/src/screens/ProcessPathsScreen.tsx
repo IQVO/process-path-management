@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from "react";
-import { Card, DataTable, StatusPill, useFetch } from "@warehouse/ui-kit";
+import { Card, DataTable, StatusPill } from "@warehouse/ui-kit";
+import { useFetchAll } from "../useFetchAll";
 import { apiPost, apiPut, apiDelete, ApiError } from "../api";
 import { PROCESS_PATH_API_BASE } from "../config";
 import type { Eligibility, ProcessPath } from "../types";
@@ -115,7 +116,7 @@ export function ProcessPathsScreen() {
     data: paths,
     loading,
     error: listError,
-  } = useFetch<ProcessPath[]>(`${PROCESS_PATH_API_BASE}/process-paths?_r=${refreshKey}`);
+  } = useFetchAll<ProcessPath>(`${PROCESS_PATH_API_BASE}/process-paths?all=true`, refreshKey);
 
   // Define form state
   const [pathId, setPathId] = useState("");
@@ -333,7 +334,7 @@ export function ProcessPathsScreen() {
           rowKey={(p) => p.pathId}
           rows={paths ?? []}
           loading={loading}
-          emptyState={<span>No process paths defined yet.</span>}
+          emptyState={<span>{listError ? "Could not load the process paths." : "No process paths defined yet."}</span>}
           columns={[
             { key: "pathId", header: "Path ID", render: (p) => p.pathId },
             {
