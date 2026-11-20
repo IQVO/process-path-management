@@ -159,11 +159,15 @@ func run(ctx context.Context) error {
 	server := &inboundhttp.Server{
 		DefinePath:        &usecases.DefinePath{Repo: repo, Publisher: publisher, Clock: clock, UnitOfWork: persistence.uow, Metrics: pathMetrics},
 		RevisePath:        &usecases.RevisePath{Repo: repo, Publisher: publisher, Clock: clock, UnitOfWork: persistence.uow},
-		DeactivatePath:    &usecases.DeactivatePath{Repo: repo, Publisher: publisher, Clock: clock, UnitOfWork: persistence.uow, CPTSchedules: persistence.scheduleRepo},
+		DeactivatePath:    &usecases.DeactivatePath{Repo: repo, Publisher: publisher, Clock: clock, UnitOfWork: persistence.uow, CPTSchedules: persistence.scheduleRepo, Flows: persistence.flowRepo},
 		GetPath:           &usecases.GetPath{Repo: repo},
 		ListPaths:         &usecases.ListPaths{Repo: repo},
 		DefineCPTSchedule: &usecases.DefineCPTSchedule{Repo: persistence.scheduleRepo, ProcessPathRepo: repo, Publisher: publisher, Clock: clock, UnitOfWork: persistence.uow},
 		GetCPTSchedule:    &usecases.GetCPTSchedule{Repo: persistence.scheduleRepo},
+		DefineProcessFlow: &usecases.DefineProcessFlow{Repo: persistence.flowRepo, ProcessPathRepo: repo, Publisher: publisher, Clock: clock, UnitOfWork: persistence.uow},
+		RetireProcessFlow: &usecases.RetireProcessFlow{Repo: persistence.flowRepo, Publisher: publisher, Clock: clock, UnitOfWork: persistence.uow},
+		GetProcessFlow:    &usecases.GetProcessFlow{Repo: persistence.flowRepo},
+		ListProcessFlows:  &usecases.ListProcessFlows{Repo: persistence.flowRepo},
 		// IdempotencyPool is the SAME pool buildPersistence opened against
 		// DATABASE_URL: the Idempotency-Key check on POST /process-paths is
 		// always on (see Server.IdempotencyPool and ADR 0011).
@@ -326,6 +330,7 @@ func serviceVersion() string {
 type persistence struct {
 	repo         ports.ProcessPathRepo
 	scheduleRepo ports.CPTScheduleRepo
+	flowRepo     ports.ProcessFlowRepo
 	pool         *pgxpool.Pool
 	uow          ports.UnitOfWork
 	close        func()
@@ -389,6 +394,7 @@ func buildPersistence(ctx context.Context, databaseURL, migrationsDatabaseURL, m
 	return &persistence{
 		repo:         postgres.NewProcessPathRepo(pool),
 		scheduleRepo: postgres.NewCPTScheduleRepo(pool),
+		flowRepo:     postgres.NewProcessFlowRepo(pool),
 		pool:         pool,
 		uow:          postgres.NewUnitOfWork(pool),
 		close:        pool.Close,

@@ -13,6 +13,9 @@ import (
 
 // statusFor maps a typed domain/application error to an HTTP status code.
 func statusFor(err error) int {
+	if status, ok := flowStatusFor(err); ok {
+		return status
+	}
 	switch {
 	case errors.Is(err, usecases.ErrPathNotFound),
 		errors.Is(err, usecases.ErrCPTScheduleNotFound):
@@ -126,6 +129,9 @@ func problemFor(err error) problemInfo {
 		if errors.Is(err, entry.err) {
 			return entry.info
 		}
+	}
+	if info, ok := flowProblemFor(err); ok {
+		return info
 	}
 	return problemInfo{"internal-error", "An unexpected internal error occurred"}
 }

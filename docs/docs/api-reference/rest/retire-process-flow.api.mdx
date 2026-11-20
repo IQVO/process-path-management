@@ -1,0 +1,71 @@
+---
+id: retire-process-flow
+title: "Retire a process flow"
+description: "Idempotent: retiring an already retired flow is a 204 again and does NOT republish. The first retirement raises ProcessFlowRetired, the full state with status RETIRED and the next version. A retired flow cannot be revised, and its paths may be deactivated again."
+sidebar_label: "Retire a process flow"
+hide_title: true
+hide_table_of_contents: true
+api: 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
+sidebar_class_name: "delete api-method"
+info_path: docs/api-reference/rest/process-path-management-api
+custom_edit_url: null
+hide_send_button: true
+---
+
+import MethodEndpoint from "@theme/ApiExplorer/MethodEndpoint";
+import ParamsDetails from "@theme/ParamsDetails";
+import RequestSchema from "@theme/RequestSchema";
+import StatusCodes from "@theme/StatusCodes";
+import OperationTabs from "@theme/OperationTabs";
+import TabItem from "@theme/TabItem";
+import Heading from "@theme/Heading";
+import Translate from "@docusaurus/Translate";
+
+<Heading
+  as={"h1"}
+  className={"openapi__heading"}
+  children={"Retire a process flow"}
+>
+</Heading>
+
+<MethodEndpoint
+  method={"delete"}
+  path={"/process-flows/{flowId}"}
+  context={"endpoint"}
+>
+  
+</MethodEndpoint>
+
+
+
+Idempotent: retiring an already retired flow is a 204 again and does NOT republish. The first retirement raises ProcessFlowRetired, the full state with status RETIRED and the next version. A retired flow cannot be revised, and its paths may be deactivated again.
+
+
+<Heading
+  id={"request"}
+  as={"h2"}
+  className={"openapi-tabs__heading"}
+>
+  <Translate id="theme.openapi.request.title">Request</Translate>
+</Heading>
+
+<ParamsDetails
+  {...require("./retire-process-flow.ParamsDetails.json")}
+>
+  
+</ParamsDetails>
+
+<RequestSchema
+  {...require("./retire-process-flow.RequestSchema.json")}
+>
+  
+</RequestSchema>
+
+<StatusCodes
+  {...require("./retire-process-flow.StatusCodes.json")}
+>
+  
+</StatusCodes>
+
+
+      

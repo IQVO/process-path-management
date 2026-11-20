@@ -50,3 +50,33 @@ func pageOf[T, D any](rows []T, limit int, at func(T) page.Position, toDTO func(
 	}
 	return out
 }
+
+// listQuery reads the query of a collection GET whose one filter is the
+// boolean `all` (include the retired/deactivated members): the page size, the
+// active-only narrowing (the default; ?all=true opts out) and the id the
+// cursor points after ("" on the first page). On a bad value it has already
+// written the 400 problem and reports ok == false. A cursor whose sort key is
+// not its id was not issued by an id-ordered collection.
+func listQuery(w http.ResponseWriter, r *http.Request) (limit int, activeOnly bool, after string, ok bool) {
+	limit, pos, ok := pageParams(w, r, "all")
+	if !ok {
+		return 0, false, "", false
+	}
+	activeOnly = true
+	if vals, present := r.URL.Query()["all"]; present {
+		all, err := parseStrictBool(vals[0])
+		if err != nil {
+			writeProblem(w, http.StatusBadRequest, problemInfo{"invalid-query-parameter", "The 'all' query parameter must be a boolean (true or false)"}, "could not parse 'all' as a boolean: "+vals[0], r.URL.Path)
+			return 0, false, "", false
+		}
+		activeOnly = !all
+	}
+	if pos == nil {
+		return limit, activeOnly, "", true
+	}
+	if pos.Sort != pos.ID {
+		writeInvalidCursor(w, r)
+		return 0, false, "", false
+	}
+	return limit, activeOnly, pos.ID, true
+}
