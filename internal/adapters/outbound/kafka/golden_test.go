@@ -2,11 +2,13 @@ package kafka_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
 	outboundkafka "github.com/claudioed/process-path-management/internal/adapters/outbound/kafka"
 	"github.com/claudioed/process-path-management/internal/domain/cptschedule"
+	"github.com/claudioed/process-path-management/internal/domain/processflow"
 	"github.com/claudioed/process-path-management/internal/domain/shared"
 )
 
@@ -20,7 +22,46 @@ const goldenId = "4f1c2a7e-9d31-4a6b-8f0e-6b2c1d5e7a90"
 
 var goldenAt = time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)
 
-func goldenEvents() []struct {
+type goldenEvent = struct {
+	name  string
+	event shared.DomainEvent
+	key   string
+	data  string
+}
+
+// goldenEvents is every published event: the ProcessPath* and CPTScheduleChanged
+// ones, then the ProcessFlow* ones (ADR 0042).
+func goldenEvents() []goldenEvent {
+	return append(goldenPathEvents(), goldenFlowEvents()...)
+}
+
+// goldenFlowEvents: the three flow events carry the FULL state: flow_id, name,
+// the stages in order, status and version. The key and subject are the flow_id.
+func goldenFlowEvents() []goldenEvent {
+	stages := []processflow.StageSnapshot{{PathId: "PICK", ProcessType: "PICK"}, {PathId: "PACK", ProcessType: "PACK"}}
+	return []goldenEvent{
+		{
+			name:  "ProcessFlowDefined",
+			event: processflow.ProcessFlowDefined{State: processflow.State{FlowId: "single-unit", Name: "Single unit", Stages: stages, Status: processflow.StatusActive, Version: 1}, At: goldenAt},
+			key:   "single-unit",
+			data:  `{"flow_id":"single-unit","name":"Single unit","stages":[{"path_id":"PICK","process_type":"PICK"},{"path_id":"PACK","process_type":"PACK"}],"status":"ACTIVE","version":1}`,
+		},
+		{
+			name:  "ProcessFlowRevised",
+			event: processflow.ProcessFlowRevised{State: processflow.State{FlowId: "single-unit", Name: "Single unit v2", Stages: stages[:1], Status: processflow.StatusActive, Version: 2}, At: goldenAt},
+			key:   "single-unit",
+			data:  `{"flow_id":"single-unit","name":"Single unit v2","stages":[{"path_id":"PICK","process_type":"PICK"}],"status":"ACTIVE","version":2}`,
+		},
+		{
+			name:  "ProcessFlowRetired",
+			event: processflow.ProcessFlowRetired{State: processflow.State{FlowId: "single-unit", Name: "Single unit v2", Stages: stages[:1], Status: processflow.StatusRetired, Version: 3}, At: goldenAt},
+			key:   "single-unit",
+			data:  `{"flow_id":"single-unit","name":"Single unit v2","stages":[{"path_id":"PICK","process_type":"PICK"}],"status":"RETIRED","version":3}`,
+		},
+	}
+}
+
+func goldenPathEvents() []struct {
 	name  string
 	event shared.DomainEvent
 	key   string
@@ -82,8 +123,11 @@ func goldenEvents() []struct {
 }
 
 func goldenEntity(name string) string {
-	if name == "CPTScheduleChanged" {
+	switch {
+	case name == "CPTScheduleChanged":
 		return "cptschedule"
+	case strings.HasPrefix(name, "ProcessFlow"):
+		return "processflow"
 	}
 	return "processpath"
 }

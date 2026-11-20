@@ -27,6 +27,9 @@ func TestPublishedTypeCatalogue(t *testing.T) {
 		cloudevents.TypeProcessPathUpdated:     cloudevents.Type(cloudevents.EntityProcessPath, "ProcessPathUpdated"),
 		cloudevents.TypeProcessPathDeactivated: cloudevents.Type(cloudevents.EntityProcessPath, "ProcessPathDeactivated"),
 		cloudevents.TypeCPTScheduleChanged:     cloudevents.Type(cloudevents.EntityCPTSchedule, "CPTScheduleChanged"),
+		cloudevents.TypeProcessFlowDefined:     cloudevents.Type(cloudevents.EntityProcessFlow, "ProcessFlowDefined"),
+		cloudevents.TypeProcessFlowRevised:     cloudevents.Type(cloudevents.EntityProcessFlow, "ProcessFlowRevised"),
+		cloudevents.TypeProcessFlowRetired:     cloudevents.Type(cloudevents.EntityProcessFlow, "ProcessFlowRetired"),
 	}
 	for literal, built := range cases {
 		if literal != built {

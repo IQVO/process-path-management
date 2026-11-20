@@ -403,7 +403,7 @@ func decodeAnalyticsEvent(raw []byte) (analyticsEvent, error) {
 
 // isProjectingEventType reports whether the full CloudEvents `type` is one
 // this consumer applies to the projection — every other type on this
-// topic (e.g. CPTScheduleChanged) is silently skipped (and never marked
+// topic (e.g. CPTScheduleChanged, or the ProcessFlow* types of ADR 0042) is silently skipped (and never marked
 // processed) for forward compatibility.
 func isProjectingEventType(eventType string) bool {
 	switch eventType {
