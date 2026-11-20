@@ -298,15 +298,20 @@ func runFreshRequest(w http.ResponseWriter, r *http.Request, ctx context.Context
 		return
 	}
 	txCtx := pgtx.WithTx(ctx, tx)
-	rec := httptest.NewRecorder()
+	rec := &keyCapture{ResponseRecorder: httptest.NewRecorder()}
 	next.ServeHTTP(rec, r.WithContext(txCtx))
 
-	// A server error is not a deterministic answer (guideline 2.5): roll the
-	// whole transaction back — the key row with it — and answer the client,
-	// so a retry with the same key executes again instead of replaying a 5xx.
-	if rec.Code >= http.StatusInternalServerError {
+	// An answer that is not final for this request is RELEASED: roll the
+	// whole transaction back — the key row with it — and answer the
+	// client, so a retry with the same key executes again instead of
+	// replaying an answer that depends on state which may have changed.
+	// That is a 5xx (never stored, guideline 2.5), a refusal whose
+	// problem type declares RETRYABLE, and a refusal that declared no
+	// class at all — the safe fallback, released rather than pinned
+	// (ADR 0043).
+	if !rec.storable() {
 		_ = tx.Rollback(ctx)
-		writeRecorded(w, rec)
+		writeRecorded(w, rec.ResponseRecorder)
 		return
 	}
 
@@ -320,9 +325,11 @@ func runFreshRequest(w http.ResponseWriter, r *http.Request, ctx context.Context
 			writeProblem(w, http.StatusInternalServerError, problemInternalError, err.Error(), r.URL.Path)
 			return
 		}
-		if rec.Code < http.StatusBadRequest {
+		if rec.Code < http.StatusBadRequest || rec.class == classOutcome {
 			// A success answer whose writes cannot be committed must
-			// neither be returned nor cached: fail so the key retries.
+			// neither be returned nor cached, and neither must an
+			// OUTCOME refusal, whose whole point is that its writes
+			// commit with it: fail so the key retries.
 			_ = tx.Rollback(ctx)
 			writeProblem(w, http.StatusInternalServerError, problemInternalError, err.Error(), r.URL.Path)
 			return
@@ -360,7 +367,7 @@ func runFreshRequest(w http.ResponseWriter, r *http.Request, ctx context.Context
 
 	// Only after a successful commit does the real client see anything —
 	// the recorder's headers, then status, then body, VERBATIM.
-	writeRecorded(w, rec)
+	writeRecorded(w, rec.ResponseRecorder)
 }
 
 // writeRecorded copies a captured response onto the real writer: headers,

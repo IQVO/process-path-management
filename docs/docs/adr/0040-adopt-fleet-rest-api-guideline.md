@@ -15,6 +15,11 @@ Accepted (2026-11-01). Amends [ADR 0011](./0011-idempotency-key-middleware.md)
 deployed together with the other services' cutover PRs, because the key
 contract and the list envelope are breaking for clients.
 
+> Amended by [ADR 0043](./0043-every-problem-type-has-a-replay-class.md)
+> (2026-11-20): the guideline's replay behaviour is refined per problem type —
+> a refusal is replayed only when its replay class is FINAL or OUTCOME; a
+> RETRYABLE refusal releases the key. Slugs, titles and statuses are unchanged.
+
 ## Context
 
 The 2026-10-30 portfolio assessment found two spellings of the replay header,

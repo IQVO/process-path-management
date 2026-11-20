@@ -81,7 +81,7 @@ entry is safe (proved by probe in `TestOutcomeBranchCommitsTheWritesWithTheStore
 | Slug | Status | Class | Reason |
 |---|---|---|---|
 | `path-not-found` | 404 | RETRYABLE | the PathId is CALLER-supplied, not minted here; another request can define it later (the 404 rule: FINAL only if this service mints the ids and nothing is ever deleted) |
-| `cpt-schedule-not-found` | 404 | RETRYABLE | the schedule is created by another request (PUT /sites/{siteId}/cpt-schedule); a retry after it exists can succeed |
+| `cpt-schedule-not-found` | 404 | RETRYABLE | the schedule is created by another request (`PUT /sites/{siteId}/cpt-schedule`); a retry after it exists can succeed |
 | `flow-not-found` | 404 | RETRYABLE | the FlowId is caller-supplied and flows are delivered by other requests; nothing here mints flow ids |
 | `path-already-exists` | 409 | FINAL | a taken PathId is taken forever: deactivation keeps the row (the slug's own text: "active or deactivated"), there is no reactivate use case and no delete — a retry can never succeed, so the stored 409 is stable |
 | `path-referenced-by-cpt-schedule` | 409 | RETRYABLE | the referencing schedule can be revised first (another request), then the deactivation succeeds |
