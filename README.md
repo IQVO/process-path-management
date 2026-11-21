@@ -338,7 +338,14 @@ shape every other service in this fleet emits.
 hitting a natural-key `409`; the same key with a different request gets
 `409` `idempotency-key-reused` (ADR 0040; it was `422`); a replay carries
 `Idempotency-Replayed: true`; a missing header gets `400`, and a key that is not
-1-128 printable ASCII characters gets `400 idempotency-key-invalid`. The middleware runs on the Postgres pool,
+1-128 printable ASCII characters gets `400 idempotency-key-invalid`. Which
+answers are stored is decided per problem type by its replay class
+(ADR 0043): a success and a FINAL or OUTCOME refusal are stored and
+replayed; a RETRYABLE refusal (nothing committed, the cause can change — a
+`404 path-not-found` for an id the caller chose, a referenced path not
+defined yet) and any 5xx are never stored — the key is released and a retry
+executes the work again, so a different body under a released key is a new
+request. The middleware runs on the Postgres pool,
 which every deployment has, so it is never skipped (ADR 0037). A NUL
 (U+0000) in the path (`404`) or in a body (`400 malformed-request-body`) is
 refused before the key is recorded: Postgres text cannot hold it.

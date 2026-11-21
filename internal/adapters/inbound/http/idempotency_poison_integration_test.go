@@ -50,16 +50,17 @@ func countRows(t *testing.T, pool *pgxpool.Pool, sql string) int {
 
 // TestIdempotency_AbortedTxMapped409CommitsTheOutcome: a handler that loses a
 // unique-index race answers 409, not 500, and that 409 is cached and replayed
-// without ever re-running the handler.
+// without ever re-running the handler. The refusal goes through the
+// production error writer with a FINAL problem type (path-already-exists:
+// the mapped 409 of a lost natural-key race, ADR 0043) — the class the
+// middleware reads.
 func TestIdempotency_AbortedTxMapped409CommitsTheOutcome(t *testing.T) {
 	pool := idempotencyDB(t)
 	var calls atomic.Int64
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
 		poisonTx(t, r)
-		w.Header().Set("Content-Type", "application/problem+json")
-		w.WriteHeader(http.StatusConflict)
-		_, _ = w.Write([]byte(`{"title":"Conflict","status":409}`))
+		inboundhttp.RefuseForTest(w, r, "path-already-exists", http.StatusConflict)
 	})
 	mw := inboundhttp.RequireIdempotencyKey(pool)(handler)
 
@@ -120,5 +121,37 @@ func TestIdempotency_AbortedTx2xxIsNeverCached(t *testing.T) {
 	}
 	if calls.Load() != 2 {
 		t.Fatalf("handler ran %d times, want 2", calls.Load())
+	}
+}
+
+// TestIdempotency_AbortedTxRetryable409IsReleased (ADR 0043): a RETRYABLE
+// refusal is never stored, even when a statement died inside the handler and
+// the transaction is aborted — the release is the same whole-transaction
+// rollback the 5xx branch does, so the same key executes the work again.
+func TestIdempotency_AbortedTxRetryable409IsReleased(t *testing.T) {
+	pool := idempotencyDB(t)
+	var calls atomic.Int64
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		poisonTx(t, r)
+		inboundhttp.RefuseForTest(w, r, "concurrent-modification", http.StatusConflict)
+	})
+	mw := inboundhttp.RequireIdempotencyKey(pool)(handler)
+
+	first := httptest.NewRecorder()
+	mw.ServeHTTP(first, keyedRequest("k-poison-retryable"))
+	if first.Code != http.StatusConflict {
+		t.Fatalf("first = %d %s, want the truthful 409", first.Code, first.Body.String())
+	}
+	if n := countRows(t, pool, `SELECT count(*) FROM idempotency_keys WHERE key = 'k-poison-retryable'`); n != 0 {
+		t.Fatalf("a RETRYABLE refusal left %d key rows: the key must be released", n)
+	}
+	second := httptest.NewRecorder()
+	mw.ServeHTTP(second, keyedRequest("k-poison-retryable"))
+	if second.Code != http.StatusConflict || second.Header().Get(inboundhttp.IdempotencyReplayedHeader) != "" {
+		t.Fatalf("retry = %d replayed=%q, want the refusal re-executed", second.Code, second.Header().Get(inboundhttp.IdempotencyReplayedHeader))
+	}
+	if calls.Load() != 2 {
+		t.Fatalf("handler ran %d times, want 2 (a released key re-executes)", calls.Load())
 	}
 }

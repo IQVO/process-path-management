@@ -7,12 +7,6 @@ import (
 )
 
 // The 400 problems of a paginated collection GET (REST API guideline 3.2, 3.4, 4.2).
-var (
-	problemInvalidLimit  = problemInfo{"invalid-limit", "limit must be an integer between 1 and 500"}
-	problemInvalidCursor = problemInfo{"invalid-cursor", "cursor is not a valid page token"}
-	problemUnknownParam  = problemInfo{"unknown-query-parameter", "the collection does not declare this query parameter"}
-)
-
 // pageParams reads `limit` and `cursor`; filters lists the other query parameters the
 // collection declares, and any further one is a 400 (a retired paging parameter such as
 // `after` must fail loudly, not read page one forever). On a bad value it has already
@@ -66,7 +60,7 @@ func listQuery(w http.ResponseWriter, r *http.Request) (limit int, activeOnly bo
 	if vals, present := r.URL.Query()["all"]; present {
 		all, err := parseStrictBool(vals[0])
 		if err != nil {
-			writeProblem(w, http.StatusBadRequest, problemInfo{"invalid-query-parameter", "The 'all' query parameter must be a boolean (true or false)"}, "could not parse 'all' as a boolean: "+vals[0], r.URL.Path)
+			writeProblem(w, http.StatusBadRequest, problemInvalidQueryParam, "could not parse 'all' as a boolean: "+vals[0], r.URL.Path)
 			return 0, false, "", false
 		}
 		activeOnly = !all
