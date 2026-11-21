@@ -40,6 +40,25 @@ var (
 
 const replayTemplateDB = "pathmgmt_replay_template"
 
+// replayDatabaseURL rewrites the container's base connection string to name
+// db in the URL PATH (postgres://user:***@host:port/db?...), not as a
+// `database=` query parameter: the path form selects the same database for
+// pgx AND for golang-migrate's driver, which do not agree on the query
+// parameter (the template was intermittently migrated into the container's
+// default database instead — every clone came out empty).
+func replayDatabaseURL(ctx context.Context, db string) (string, error) {
+	base, err := replayContainer.ConnectionString(ctx, "sslmode=disable")
+	if err != nil {
+		return "", err
+	}
+	slash := strings.LastIndex(base, "/")
+	question := strings.Index(base, "?")
+	if slash < 0 || question < slash {
+		return "", fmt.Errorf("unexpected connection string %q", base)
+	}
+	return base[:slash+1] + db + base[question:], nil
+}
+
 func replayStore(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	ctx := context.Background()
@@ -68,7 +87,7 @@ func replayStore(t *testing.T) *pgxpool.Pool {
 			replayContainerErr = err
 			return
 		}
-		turl, err := replayContainer.ConnectionString(ctx, "sslmode=disable&database="+replayTemplateDB)
+		turl, err := replayDatabaseURL(ctx, replayTemplateDB)
 		if err != nil {
 			replayContainerErr = err
 			return
@@ -79,6 +98,12 @@ func replayStore(t *testing.T) *pgxpool.Pool {
 				replayContainerErr = fmt.Errorf("migrations: %w", err)
 				return
 			}
+		}
+		// The template is the source of every clean store below: prove it
+		// really carries the schema before anyone clones it.
+		if _, err := admin.Exec(ctx, "SELECT 1 FROM "+replayTemplateDB+".idempotency_keys LIMIT 1"); err != nil {
+			replayContainerErr = fmt.Errorf("the template database has no idempotency_keys: %w", err)
+			return
 		}
 	})
 	if replayContainerErr != nil {
@@ -99,7 +124,7 @@ func replayStore(t *testing.T) *pgxpool.Pool {
 	if _, err := admin.Exec(ctx, "CREATE DATABASE "+db+" TEMPLATE "+replayTemplateDB); err != nil {
 		t.Fatalf("clone a clean store: %v", err)
 	}
-	durl, err := replayContainer.ConnectionString(ctx, "sslmode=disable&database="+db)
+	durl, err := replayDatabaseURL(ctx, db)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,6 +133,11 @@ func replayStore(t *testing.T) *pgxpool.Pool {
 		t.Fatal(err)
 	}
 	t.Cleanup(pool.Close)
+	// A broken clone must fail HERE with a clear message, not as 48 cryptic
+	// per-entry failures.
+	if _, err := pool.Exec(ctx, "SELECT 1 FROM idempotency_keys LIMIT 1"); err != nil {
+		t.Fatalf("the clean store %s has no idempotency_keys (broken template clone): %v", db, err)
+	}
 	return pool
 }
 
