@@ -26,11 +26,14 @@ import (
 // transaction, the handler behind a savepoint (ADR 0011, design A).
 //
 // ONE container is booted per test binary (the reference test asks for a
-// clean store once per catalogue entry); every newReplayOps call gets a
-// FRESH DATABASE cloned from a template that already carries the
-// migrations, which is the cheap equivalent of the throwaway Postgres the
-// other suites of this package boot per test (idempotencyDB). The container
-// is reaped by testcontainers' ryuk when the binary exits.
+// clean store once per catalogue entry); every newReplayOps call gets its
+// own FRESH DATABASE with the migrations applied — the exact recipe of the
+// throwaway Postgres the other suites of this package boot per test
+// (idempotencyDB), minus one container per test. The container is reaped by
+// testcontainers' ryuk when the binary exits. (A template-clone variant was
+// tried first and the template came out empty on some CI runs while
+// RunMigrations returned nil; per-database migrations are the boring,
+// already-proven path.)
 var (
 	replayContainerOnce sync.Once
 	replayContainer     *tcpostgres.PostgresContainer
@@ -38,14 +41,10 @@ var (
 	replayDBSeq         int
 )
 
-const replayTemplateDB = "pathmgmt_replay_template"
-
 // replayDatabaseURL rewrites the container's base connection string to name
 // db in the URL PATH (postgres://user:***@host:port/db?...), not as a
 // `database=` query parameter: the path form selects the same database for
-// pgx AND for golang-migrate's driver, which do not agree on the query
-// parameter (the template was intermittently migrated into the container's
-// default database instead — every clone came out empty).
+// every driver in play here (pgx's pools, golang-migrate's).
 func replayDatabaseURL(ctx context.Context, db string) (string, error) {
 	base, err := replayContainer.ConnectionString(ctx, "sslmode=disable")
 	if err != nil {
@@ -69,42 +68,6 @@ func replayStore(t *testing.T) *pgxpool.Pool {
 			tcpostgres.WithPassword("pathmgmt"),
 			tcpostgres.BasicWaitStrategies(),
 		)
-		if replayContainerErr != nil {
-			return
-		}
-		url, err := replayContainer.ConnectionString(ctx, "sslmode=disable")
-		if err != nil {
-			replayContainerErr = err
-			return
-		}
-		admin, err := postgres.NewPool(ctx, url)
-		if err != nil {
-			replayContainerErr = err
-			return
-		}
-		defer admin.Close()
-		if _, err := admin.Exec(ctx, "CREATE DATABASE "+replayTemplateDB); err != nil {
-			replayContainerErr = err
-			return
-		}
-		turl, err := replayDatabaseURL(ctx, replayTemplateDB)
-		if err != nil {
-			replayContainerErr = err
-			return
-		}
-		// Twice: the second run must be a no-op (the repo's own convention).
-		for range 2 {
-			if err := postgres.RunMigrations(turl, "../../../../migrations"); err != nil {
-				replayContainerErr = fmt.Errorf("migrations: %w", err)
-				return
-			}
-		}
-		// The template is the source of every clean store below: prove it
-		// really carries the schema before anyone clones it.
-		if _, err := admin.Exec(ctx, "SELECT 1 FROM "+replayTemplateDB+".idempotency_keys LIMIT 1"); err != nil {
-			replayContainerErr = fmt.Errorf("the template database has no idempotency_keys: %w", err)
-			return
-		}
 	})
 	if replayContainerErr != nil {
 		t.Fatalf("the shared replay Postgres: %v", replayContainerErr)
@@ -121,22 +84,29 @@ func replayStore(t *testing.T) *pgxpool.Pool {
 		t.Fatal(err)
 	}
 	defer admin.Close()
-	if _, err := admin.Exec(ctx, "CREATE DATABASE "+db+" TEMPLATE "+replayTemplateDB); err != nil {
-		t.Fatalf("clone a clean store: %v", err)
+	if _, err := admin.Exec(ctx, "CREATE DATABASE "+db); err != nil {
+		t.Fatalf("create the clean store: %v", err)
 	}
 	durl, err := replayDatabaseURL(ctx, db)
 	if err != nil {
 		t.Fatal(err)
+	}
+	// The idempotencyDB recipe, verbatim: every migration, twice (the second
+	// run must be a no-op).
+	for range 2 {
+		if err := postgres.RunMigrations(durl, "../../../../migrations"); err != nil {
+			t.Fatalf("migrations for the clean store %s: %v", db, err)
+		}
 	}
 	pool, err := postgres.NewPool(ctx, durl)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(pool.Close)
-	// A broken clone must fail HERE with a clear message, not as 48 cryptic
+	// A broken store must fail HERE with a clear message, not as 48 cryptic
 	// per-entry failures.
 	if _, err := pool.Exec(ctx, "SELECT 1 FROM idempotency_keys LIMIT 1"); err != nil {
-		t.Fatalf("the clean store %s has no idempotency_keys (broken template clone): %v", db, err)
+		t.Fatalf("the clean store %s has no idempotency_keys after its migrations: %v", db, err)
 	}
 	return pool
 }
