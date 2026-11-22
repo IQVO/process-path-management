@@ -60,15 +60,11 @@ type Server struct {
 	Readiness *Readiness
 }
 
-// NewRouter builds the chi router for this service's REST API. A nil
-// logger defaults to slog.Default(); an empty serviceName defaults to
+// NewRouter builds the chi router for this service's REST API: the
+// standard middleware stack (newChiRouter), the health/readiness probes,
+// the operation routes and the RFC 7807 not-found handler. A nil logger
+// defaults to slog.Default(); an empty serviceName defaults to
 // DefaultServiceName.
-//
-// Middleware order matters here (standard-metrics convention, ADR 0019, Tier 1 item
-// 2): otelchi runs before RequestLogger so the request context already
-// carries a span by the time a line is logged. WithChiRoutes resolves
-// the route pattern up front, so spans/metrics are labeled
-// "/process-paths/{pathId}" rather than one distinct name per path id.
 func NewRouter(s *Server, logger *slog.Logger, serviceName string) http.Handler {
 	if logger == nil {
 		logger = slog.Default()
@@ -77,19 +73,7 @@ func NewRouter(s *Server, logger *slog.Logger, serviceName string) http.Handler 
 		serviceName = DefaultServiceName
 	}
 
-	r := chi.NewRouter()
-	r.Use(middleware.RequestID)
-	r.Use(otelchi.Middleware(serviceName, otelchi.WithChiRoutes(r)))
-	// Emits http.server.request.duration (seconds) per OTel HTTP semantic
-	// conventions; no hand-rolled histogram needed.
-	r.Use(otelchimetric.NewServerRequestDuration(otelchimetric.NewBaseConfig(serviceName)))
-	r.Use(RequestLogger(logger))
-	r.Use(middleware.Recoverer)
-	r.Use(corsMiddleware())
-	// A NUL (U+0000) in the path or a body is a client error here, never a
-	// Postgres 22021 -> 500 (ADR 0037); it runs before the route-scoped
-	// idempotency middleware so a rejected request never records its key.
-	r.Use(rejectNUL)
+	r := newChiRouter(logger, serviceName)
 
 	r.Get("/healthz", s.handleHealthz)
 	r.Get("/readyz", s.handleReadyz)
@@ -132,6 +116,32 @@ func NewRouter(s *Server, logger *slog.Logger, serviceName string) http.Handler 
 	// is application/problem+json.
 	r.NotFound(writeRouteNotFound)
 
+	return r
+}
+
+// newChiRouter builds the chi router with the service's standard
+// middleware stack.
+//
+// Middleware order matters here (standard-metrics convention, ADR 0019,
+// Tier 1 item 2): otelchi runs before RequestLogger so the request
+// context already carries a span by the time a line is logged.
+// WithChiRoutes resolves the route pattern up front, so spans/metrics
+// are labeled "/process-paths/{pathId}" rather than one distinct name
+// per path id.
+func newChiRouter(logger *slog.Logger, serviceName string) *chi.Mux {
+	r := chi.NewRouter()
+	r.Use(middleware.RequestID)
+	r.Use(otelchi.Middleware(serviceName, otelchi.WithChiRoutes(r)))
+	// Emits http.server.request.duration (seconds) per OTel HTTP semantic
+	// conventions; no hand-rolled histogram needed.
+	r.Use(otelchimetric.NewServerRequestDuration(otelchimetric.NewBaseConfig(serviceName)))
+	r.Use(RequestLogger(logger))
+	r.Use(middleware.Recoverer)
+	r.Use(corsMiddleware())
+	// A NUL (U+0000) in the path or a body is a client error here, never a
+	// Postgres 22021 -> 500 (ADR 0037); it runs before the route-scoped
+	// idempotency middleware so a rejected request never records its key.
+	r.Use(rejectNUL)
 	return r
 }
 

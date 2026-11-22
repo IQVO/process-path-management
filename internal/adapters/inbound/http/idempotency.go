@@ -129,21 +129,13 @@ func RequireIdempotencyKey(pool *pgxpool.Pool) func(http.Handler) http.Handler {
 				return
 			}
 
-			// The body is read into memory once, HASHED, and then restored
-			// (io.NopCloser over a bytes.Reader) so downstream JSON decoding
-			// in the real handler is completely unaffected — it sees the
-			// exact same bytes it would have without this middleware.
-			bodyBytes, err := io.ReadAll(r.Body)
-			if err != nil {
-				writeProblem(w, http.StatusBadRequest,
-					problemBodyUnreadable,
-					err.Error(), r.URL.Path)
+			// The body is read into memory once, hashed and restored
+			// (see readFingerprint) so downstream JSON decoding in
+			// the real handler is unaffected.
+			requestHash, ok := readFingerprint(w, r)
+			if !ok {
 				return
 			}
-			_ = r.Body.Close()
-			r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
-			sum := sha256.Sum256(bodyBytes)
-			requestHash := hex.EncodeToString(sum[:])
 
 			ctx := r.Context()
 			tx, err := pool.Begin(ctx)
@@ -254,6 +246,26 @@ func replayCachedResponse(w http.ResponseWriter, r *http.Request, pool *pgxpool.
 	_, _ = w.Write(responseBody)
 }
 
+// readFingerprint reads the request body once, hashes it (the fingerprint
+// is method + path + SHA-256(body), REST API guideline 2.3) and restores
+// it (io.NopCloser over a bytes.Reader) so downstream JSON decoding in
+// the real handler is completely unaffected — it sees the exact same
+// bytes it would have without the middleware. A body that cannot be read
+// is a 400 problemBodyUnreadable; ok reports whether to continue.
+func readFingerprint(w http.ResponseWriter, r *http.Request) (requestHash string, ok bool) {
+	bodyBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeProblem(w, http.StatusBadRequest,
+			problemBodyUnreadable,
+			err.Error(), r.URL.Path)
+		return "", false
+	}
+	_ = r.Body.Close()
+	r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+	sum := sha256.Sum256(bodyBytes)
+	return hex.EncodeToString(sum[:]), true
+}
+
 // runFreshRequest handles the "genuinely new key" path: it calls next
 // with a CAPTURING recorder (rather than the real http.ResponseWriter),
 // persists the outcome and commits, and ONLY THEN copies the captured
@@ -276,21 +288,12 @@ func replayCachedResponse(w http.ResponseWriter, r *http.Request, pool *pgxpool.
 // RETRYABLE or unclassified refusal never reaches the release: it is rolled
 // back whole, key row included (ADR 0043).
 func runFreshRequest(w http.ResponseWriter, r *http.Request, ctx context.Context, tx pgx.Tx, key string, next http.Handler) {
-	// A panic from the wrapped handler must roll back this transaction —
-	// so neither the idempotency row nor any domain write it made
-	// visible-if-committed (the ProcessPath Save, the outbox insert — see
-	// the tx-join mechanism this ctx now carries) survives — and then
-	// re-panic so the outer chi Recoverer middleware still produces the
-	// service's normal 500 response. A panic's outcome is deliberately
-	// never cached: it is not a "normal" response (see the type doc), so
-	// a retry after a panic must re-attempt the real work, not replay a
-	// stored 500.
-	defer func() {
-		if p := recover(); p != nil {
-			_ = tx.Rollback(ctx)
-			panic(p)
-		}
-	}()
+	// A panic from the wrapped handler must roll back this transaction
+	// (rollbackOnPanic) — neither the idempotency row nor any domain
+	// write survives — and re-panic so the outer chi Recoverer
+	// middleware still produces the service's normal 500 response. A
+	// panic's outcome is deliberately never cached (see the type doc).
+	defer rollbackOnPanic(ctx, tx)
 
 	if _, err := tx.Exec(ctx, "SAVEPOINT handler_run"); err != nil {
 		_ = tx.Rollback(ctx)
@@ -304,11 +307,8 @@ func runFreshRequest(w http.ResponseWriter, r *http.Request, ctx context.Context
 	// An answer that is not final for this request is RELEASED: roll the
 	// whole transaction back — the key row with it — and answer the
 	// client, so a retry with the same key executes again instead of
-	// replaying an answer that depends on state which may have changed.
-	// That is a 5xx (never stored, guideline 2.5), a refusal whose
-	// problem type declares RETRYABLE, and a refusal that declared no
-	// class at all — the safe fallback, released rather than pinned
-	// (ADR 0043).
+	// replaying an answer that depends on state which may have changed
+	// (a 5xx, a RETRYABLE or unclassified refusal, ADR 0043).
 	if !rec.storable() {
 		_ = tx.Rollback(ctx)
 		writeRecorded(w, rec.ResponseRecorder)
@@ -336,13 +336,27 @@ func runFreshRequest(w http.ResponseWriter, r *http.Request, ctx context.Context
 		}
 	}
 
-	// Every answer that is final for the request is cached here — a 2xx,
-	// and a refusal whose problem type declares FINAL or OUTCOME (ADR
-	// 0043): a client retrying the exact same key+body deterministically
-	// gets the exact same answer. An OUTCOME refusal's handler writes are
-	// committed by the same transaction (the savepoint above was
-	// released), which is what makes the stored answer true. A caller
-	// wanting a different outcome must use a new Idempotency-Key.
+	// Every answer that is final for the request is cached by
+	// commitStoredOutcome — a 2xx, and a refusal whose problem type
+	// declares FINAL or OUTCOME (ADR 0043): a client retrying the exact
+	// same key+body deterministically gets the exact same answer. An
+	// OUTCOME refusal's handler writes are committed by the same
+	// transaction (the savepoint above was released), which is what makes
+	// the stored answer true. A caller wanting a different outcome must
+	// use a new Idempotency-Key.
+	commitStoredOutcome(w, r, ctx, tx, rec, key)
+}
+
+// commitStoredOutcome persists the captured answer on the key row,
+// commits, and only then — after a successful commit — copies the
+// recorder's response onto the real http.ResponseWriter, VERBATIM
+// (headers, then status, then body). This ordering — capture,
+// persist+commit, THEN write to the real client — is what guarantees the
+// no-null-status-code-ever-committed invariant documented on
+// RequireIdempotencyKey. Any failure along the way rolls the transaction
+// back and answers a 500, so the key is released and the same key
+// retries the real work.
+func commitStoredOutcome(w http.ResponseWriter, r *http.Request, ctx context.Context, tx pgx.Tx, rec *keyCapture, key string) {
 	headersJSON, err := json.Marshal(rec.Header())
 	if err != nil {
 		_ = tx.Rollback(ctx)
@@ -365,9 +379,23 @@ func runFreshRequest(w http.ResponseWriter, r *http.Request, ctx context.Context
 		return
 	}
 
-	// Only after a successful commit does the real client see anything —
-	// the recorder's headers, then status, then body, VERBATIM.
 	writeRecorded(w, rec.ResponseRecorder)
+}
+
+// rollbackOnPanic is deferred by runFreshRequest: a panic from the
+// wrapped handler rolls the transaction back — so neither the
+// idempotency row nor any domain write it made visible-if-committed (the
+// ProcessPath Save, the outbox insert — see the tx-join mechanism the
+// request ctx carries) survives — and then re-panics, so the outer chi
+// Recoverer middleware still produces the service's normal 500 response.
+// A panic's outcome is deliberately never cached: it is not a "normal"
+// response (see RequireIdempotencyKey's doc), so a retry after a panic
+// must re-attempt the real work, not replay a stored 500.
+func rollbackOnPanic(ctx context.Context, tx pgx.Tx) {
+	if p := recover(); p != nil {
+		_ = tx.Rollback(ctx)
+		panic(p)
+	}
 }
 
 // writeRecorded copies a captured response onto the real writer: headers,
