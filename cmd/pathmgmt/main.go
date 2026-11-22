@@ -87,93 +87,36 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	defer func() {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if err := shutdownTelemetry(shutdownCtx); err != nil {
-			logger.Warn("telemetry shutdown did not flush cleanly", "error", err)
-		}
-	}()
+	defer telemetryFlush(logger, shutdownTelemetry)()
 
 	httpAddr := getenv("HTTP_ADDR", ":8080")
-	// cfg.migrationsDatabaseURL is MIGRATIONS_DATABASE_URL, a DIRECT
-	// (non-pooled, session-mode) Postgres connection string used ONLY for
-	// the golang-migrate startup step below — everything else (the pgxpool
-	// this process serves requests through) keeps using cfg.databaseURL
-	// unchanged. See buildPersistence's doc comment for the full "why":
-	// golang-migrate's postgres driver takes a session-scoped
-	// `SELECT pg_advisory_lock($1)` to serialize concurrent migration
-	// runs, which PgBouncer's transaction-pooling mode does not support
-	// (warehouse-infra's PgBouncer rollout, PR #43; this fallback closes
-	// the fleet-wide bug that rollout introduced — see ADR
-	// 0015-migrations-direct-postgres-connection.md). It falls back to
-	// DATABASE_URL when unset.
+	// cfg.migrationsDatabaseURL is MIGRATIONS_DATABASE_URL: a DIRECT
+	// (non-pooled) Postgres DSN used only for the golang-migrate boot
+	// step. See buildPersistence's doc comment for the full "why" (ADR
+	// 0015-migrations-direct-postgres-connection.md).
 	persistence, err := buildPersistence(ctx, cfg.databaseURL, cfg.migrationsDatabaseURL, cfg.migrationsPath, logger)
 	if err != nil {
 		return err
 	}
 	defer persistence.close()
-	repo := persistence.repo
 
 	publisher, relay, closePublisher := buildEventPublisher(persistence, cfg.kafkaBrokers, logger)
 	defer closePublisher()
 	clock := system.Clock{}
 
 	// Outbox lag gauge (ADR 0018): the age of the oldest unpublished
-	// outbox_events row, 0 when drained — the operational signal for
-	// "the relay is behind", closing ADR 0003's deferred follow-up. The
-	// registration is unregistered before the pool closes (deferred
-	// here runs before buildPersistence's pool.Close below it).
-	reg, err := postgres.RegisterOutboxLagGauge(persistence.pool)
-	if err != nil {
-		// A failed metric registration must never take the
-		// service down; the gauge is observability, not a
-		// dependency.
-		logger.Warn("outbox lag gauge registration failed", "error", err)
-	} else {
-		defer func() { _ = reg.Unregister() }()
-	}
-
-	// Housekeeping sweeper (ADR 0018): bounds the two append-only tables
-	// (idempotency_keys, published outbox_events) so they do not grow
-	// without limit. Runs alongside the HTTP server in the same process
-	// and stops with the same signal context.
-	sweeper := buildSweeper(persistence.pool, logger)
+	// outbox_events row, 0 when drained. The unregister runs before the
+	// pool closes (defer LIFO puts it ahead of buildPersistence's
+	// pool.Close below it).
+	defer registerOutboxLagGauge(persistence.pool, logger)()
 
 	pathMetrics, err := telemetry.NewPathMetrics()
 	if err != nil {
 		return err
 	}
 
-	// readiness gates GET /readyz (ADR-0012 §graceful shutdown, ADR 0037,
-	// mirroring order-management's ADR-0025): the drain gate, flipped to
-	// not-ready as the FIRST step of the shutdown sequence below, before
-	// the HTTP server itself stops accepting connections, AND a Postgres
-	// ping AND a Kafka metadata check, so a Kubernetes readinessProbe only
-	// routes traffic to a pod whose dependencies answer.
-	readiness := inboundhttp.NewReadiness(0, 0,
-		inboundhttp.Dependency{Name: "postgres", Check: persistence.pool.Ping},
-		inboundhttp.Dependency{Name: "kafka", Check: outboundkafka.NewBrokerCheck(cfg.kafkaBrokers).Check},
-	)
-
-	server := &inboundhttp.Server{
-		DefinePath:        &usecases.DefinePath{Repo: repo, Publisher: publisher, Clock: clock, UnitOfWork: persistence.uow, Metrics: pathMetrics},
-		RevisePath:        &usecases.RevisePath{Repo: repo, Publisher: publisher, Clock: clock, UnitOfWork: persistence.uow},
-		DeactivatePath:    &usecases.DeactivatePath{Repo: repo, Publisher: publisher, Clock: clock, UnitOfWork: persistence.uow, CPTSchedules: persistence.scheduleRepo, Flows: persistence.flowRepo},
-		GetPath:           &usecases.GetPath{Repo: repo},
-		ListPaths:         &usecases.ListPaths{Repo: repo},
-		DefineCPTSchedule: &usecases.DefineCPTSchedule{Repo: persistence.scheduleRepo, ProcessPathRepo: repo, Publisher: publisher, Clock: clock, UnitOfWork: persistence.uow},
-		GetCPTSchedule:    &usecases.GetCPTSchedule{Repo: persistence.scheduleRepo},
-		DefineProcessFlow: &usecases.DefineProcessFlow{Repo: persistence.flowRepo, ProcessPathRepo: repo, Publisher: publisher, Clock: clock, UnitOfWork: persistence.uow},
-		RetireProcessFlow: &usecases.RetireProcessFlow{Repo: persistence.flowRepo, Publisher: publisher, Clock: clock, UnitOfWork: persistence.uow},
-		GetProcessFlow:    &usecases.GetProcessFlow{Repo: persistence.flowRepo},
-		ListProcessFlows:  &usecases.ListProcessFlows{Repo: persistence.flowRepo},
-		// IdempotencyPool is the SAME pool buildPersistence opened against
-		// DATABASE_URL: the Idempotency-Key check on POST /process-paths is
-		// always on (see Server.IdempotencyPool and ADR 0011).
-		IdempotencyPool: persistence.pool,
-		Readiness:       readiness,
-	}
+	readiness := newReadiness(persistence.pool, cfg.kafkaBrokers)
+	server := buildInboundServer(persistence, publisher, clock, pathMetrics, readiness)
 
 	httpServer := &http.Server{
 		Addr:              httpAddr,
@@ -187,7 +130,61 @@ func run(ctx context.Context) error {
 	// soon as serveHTTP starts it. Never fatal.
 	republishCatalogueAtStartup(ctx, logger, buildRepublishCatalogue(persistence, clock, pathMetrics))
 
-	return serveHTTP(ctx, logger, httpServer, relay, sweeper, readiness)
+	return serveHTTP(ctx, logger, httpServer, relay, persistence.pool, readiness)
+}
+
+// buildInboundServer wires the use-case handlers the HTTP router serves.
+// Every command use case shares the same repo, publisher, clock and
+// UnitOfWork buildPersistence opened; IdempotencyPool is the SAME pool
+// buildPersistence opened against DATABASE_URL: the Idempotency-Key
+// check on POST /process-paths is always on (see Server.IdempotencyPool
+// and ADR 0011).
+func buildInboundServer(p *persistence, publisher ports.EventPublisher, clock system.Clock, pathMetrics *telemetry.PathMetrics, readiness *inboundhttp.Readiness) *inboundhttp.Server {
+	repo := p.repo
+	return &inboundhttp.Server{
+		DefinePath:        &usecases.DefinePath{Repo: repo, Publisher: publisher, Clock: clock, UnitOfWork: p.uow, Metrics: pathMetrics},
+		RevisePath:        &usecases.RevisePath{Repo: repo, Publisher: publisher, Clock: clock, UnitOfWork: p.uow},
+		DeactivatePath:    &usecases.DeactivatePath{Repo: repo, Publisher: publisher, Clock: clock, UnitOfWork: p.uow, CPTSchedules: p.scheduleRepo, Flows: p.flowRepo},
+		GetPath:           &usecases.GetPath{Repo: repo},
+		ListPaths:         &usecases.ListPaths{Repo: repo},
+		DefineCPTSchedule: &usecases.DefineCPTSchedule{Repo: p.scheduleRepo, ProcessPathRepo: repo, Publisher: publisher, Clock: clock, UnitOfWork: p.uow},
+		GetCPTSchedule:    &usecases.GetCPTSchedule{Repo: p.scheduleRepo},
+		DefineProcessFlow: &usecases.DefineProcessFlow{Repo: p.flowRepo, ProcessPathRepo: repo, Publisher: publisher, Clock: clock, UnitOfWork: p.uow},
+		RetireProcessFlow: &usecases.RetireProcessFlow{Repo: p.flowRepo, Publisher: publisher, Clock: clock, UnitOfWork: p.uow},
+		GetProcessFlow:    &usecases.GetProcessFlow{Repo: p.flowRepo},
+		ListProcessFlows:  &usecases.ListProcessFlows{Repo: p.flowRepo},
+		IdempotencyPool:   p.pool,
+		Readiness:         readiness,
+	}
+}
+
+// newReadiness gates GET /readyz (ADR-0012 §graceful shutdown, ADR 0037,
+// mirroring order-management's ADR-0025): the drain gate, flipped to
+// not-ready as the FIRST step of the shutdown sequence, before the HTTP
+// server itself stops accepting connections, AND a Postgres ping AND a
+// Kafka metadata check, so a Kubernetes readinessProbe only routes
+// traffic to a pod whose dependencies answer.
+func newReadiness(pool *pgxpool.Pool, brokers []string) *inboundhttp.Readiness {
+	return inboundhttp.NewReadiness(0, 0,
+		inboundhttp.Dependency{Name: "postgres", Check: pool.Ping},
+		inboundhttp.Dependency{Name: "kafka", Check: outboundkafka.NewBrokerCheck(brokers).Check},
+	)
+}
+
+// registerOutboxLagGauge registers the outbox lag gauge (ADR 0018): the
+// age of the oldest unpublished outbox_events row, 0 when drained — the
+// operational signal for "the relay is behind", closing ADR 0003's
+// deferred follow-up. A failed metric registration must never take the
+// service down; the gauge is observability, not a dependency, so on
+// failure the returned closure is a no-op. run defers the returned
+// closure, which runs before buildPersistence's pool.Close below it.
+func registerOutboxLagGauge(pool *pgxpool.Pool, logger *slog.Logger) func() {
+	reg, err := postgres.RegisterOutboxLagGauge(pool)
+	if err != nil {
+		logger.Warn("outbox lag gauge registration failed", "error", err)
+		return func() {}
+	}
+	return func() { _ = reg.Unregister() }
 }
 
 // setupTelemetry configures OTel traces/metrics/logs and emits the
@@ -211,13 +208,27 @@ func setupTelemetry(ctx context.Context, logger *slog.Logger) (string, func(cont
 	return serviceName, shutdown, nil
 }
 
+// telemetryFlush adapts a telemetry shutdown function into the no-arg
+// closure run defers, so the flush — bounded by a 5s budget, a failure
+// only warned about — runs after every adapter close registered later in
+// run's defer stack.
+func telemetryFlush(logger *slog.Logger, shutdown func(context.Context) error) func() {
+	return func() {
+		flushCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := shutdown(flushCtx); err != nil {
+			logger.Warn("telemetry shutdown did not flush cleanly", "error", err)
+		}
+	}
+}
+
 // serveHTTP runs the HTTP server, the outbox relay and the housekeeping
 // sweeper until SIGINT or SIGTERM (or until ctx is cancelled), then shuts
 // them down: the server drains in-flight requests within a 10s budget while
 // the relay is allowed to finish its in-flight pass. It returns the first
 // listener/relay error, or the HTTP shutdown error after a
 // signal-triggered stop.
-func serveHTTP(ctx context.Context, logger *slog.Logger, httpServer *http.Server, relay *postgres.OutboxRelay, sweeper *postgres.Sweeper, readiness *inboundhttp.Readiness) error {
+func serveHTTP(ctx context.Context, logger *slog.Logger, httpServer *http.Server, relay *postgres.OutboxRelay, pool *pgxpool.Pool, readiness *inboundhttp.Readiness) error {
 	errCh := make(chan error, 1)
 	go func() {
 		logger.Info("http server listening", "addr", httpServer.Addr)
@@ -243,11 +254,15 @@ func serveHTTP(ctx context.Context, logger *slog.Logger, httpServer *http.Server
 		}
 	}()
 
-	// The housekeeping sweeper (ADR 0018) runs on the same signal
-	// context. Unlike the relay it never returns a non-nil error (a
-	// failed pass is logged and retried on the next tick), so it does
-	// not feed errCh; it just needs to stop touching the pool before
-	// the deferred pool.Close runs, which the shared stopCtx gives us.
+	// Housekeeping sweeper (ADR 0018): bounds the two append-only tables
+	// (idempotency_keys, published outbox_events) so they do not grow
+	// without limit. It runs alongside the HTTP server in the same
+	// process and on the same signal context; unlike the relay it never
+	// returns a non-nil error (a failed pass is logged and retried on the
+	// next tick), so it does not feed errCh; it just needs to stop
+	// touching the pool before the deferred pool.Close runs, which the
+	// shared stopCtx gives us.
+	sweeper := buildSweeper(pool, logger)
 	go func() {
 		logger.Info("housekeeping sweeper running")
 		_ = sweeper.Run(stopCtx)
@@ -259,28 +274,35 @@ func serveHTTP(ctx context.Context, logger *slog.Logger, httpServer *http.Server
 	case <-stopCtx.Done():
 	}
 
+	// Graceful shutdown (ADR-0012 §graceful shutdown, mirroring
+	// order-management's ADR-0025) — see shutdownGracefully.
+	return shutdownGracefully(logger, httpServer, readiness, stopRelay, relayDone)
+}
+
+// shutdownGracefully runs the fleet's graceful shutdown order
+// (ADR-0012 §graceful shutdown, mirroring order-management's ADR-0025),
+// once serveHTTP has observed a stop signal or a worker error:
+//
+//  1. Flip readiness to not-ready FIRST, before anything else
+//     stops — a Kubernetes readinessProbe polling /readyz needs a
+//     window to observe this and stop routing NEW traffic to this
+//     pod before step 2 below ever closes the listener.
+//  2. Stop accepting new HTTP connections and drain in-flight
+//     requests, bounded by shutdownCtx.
+//  3. Stop the outbox relay cleanly: cancel its context (no new
+//     row is picked up after this) and wait, bounded by the SAME
+//     shutdownCtx, for its goroutine to actually finish its
+//     in-flight pass rather than merely asking it to stop and
+//     moving on.
+//  4. Only THEN do the deferred closePublisher/persistence.close
+//     calls (registered earlier in run, so by defer's LIFO order
+//     closePublisher runs first and persistence.close — which
+//     closes the pgx pool — runs LAST of all, after the relay has
+//     already stopped touching it).
+func shutdownGracefully(logger *slog.Logger, httpServer *http.Server, readiness *inboundhttp.Readiness, stopRelay context.CancelFunc, relayDone <-chan struct{}) error {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// Graceful shutdown (ADR-0012 §graceful shutdown, mirroring
-	// order-management's ADR-0025), in order:
-	//
-	//  1. Flip readiness to not-ready FIRST, before anything else
-	//     stops — a Kubernetes readinessProbe polling /readyz needs a
-	//     window to observe this and stop routing NEW traffic to this
-	//     pod before step 2 below ever closes the listener.
-	//  2. Stop accepting new HTTP connections and drain in-flight
-	//     requests, bounded by shutdownCtx.
-	//  3. Stop the outbox relay cleanly: cancel its context (no new
-	//     row is picked up after this) and wait, bounded by the SAME
-	//     shutdownCtx, for its goroutine to actually finish its
-	//     in-flight pass rather than merely asking it to stop and
-	//     moving on.
-	//  4. Only THEN do the deferred closePublisher/persistence.close
-	//     calls (registered earlier in this function, so by defer's
-	//     LIFO order closePublisher runs first and persistence.close
-	//     — which closes the pgx pool — runs LAST of all, after the
-	//     relay has already stopped touching it).
 	readiness.SetNotReady()
 
 	err := httpServer.Shutdown(shutdownCtx)
