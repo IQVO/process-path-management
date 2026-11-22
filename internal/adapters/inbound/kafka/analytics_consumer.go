@@ -280,7 +280,7 @@ func (c *AnalyticsConsumer) handleFetchedMessage(ctx context.Context, msg kafkag
 	env, decodeErr := decodeAnalyticsEvent(msg.Value)
 	if decodeErr != nil {
 		c.Logger.WarnContext(ctx, "analytics: rejecting non-CloudEvents kafka message",
-			"topic", msg.Topic, "partition", msg.Partition, "offset", msg.Offset, "error", decodeErr)
+			"topic", msg.Topic, "partition", msg.Partition, "offset", msg.Offset, "error", sanitizeErr(decodeErr))
 		return c.deadLetterAndCommit(ctx, msg, analyticsEvent{}, decodeErr)
 	}
 	if !isProjectingEventType(env.Type) {
@@ -339,7 +339,7 @@ func (c *AnalyticsConsumer) retryBounded(ctx context.Context, fn func() error) e
 func (c *AnalyticsConsumer) deadLetterAndCommit(ctx context.Context, msg kafkago.Message, env analyticsEvent, cause error) error {
 	c.Logger.ErrorContext(ctx, "analytics: sending message to dead-letter topic",
 		"dlq_topic", c.dlqTopic(),
-		"ce_id", env.Id, "ce_type", env.Type, "error", cause)
+		"ce_id", sanitizeLog(env.Id), "ce_type", sanitizeLog(env.Type), "error", sanitizeErr(cause))
 	if dlqErr := c.dlqPublish(ctx, msg, cause); dlqErr != nil {
 		return fmt.Errorf("analytics: publish to dead-letter topic: %w", dlqErr)
 	}
