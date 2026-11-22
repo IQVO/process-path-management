@@ -215,7 +215,7 @@ func problemFromUseCase(err error, pathId string) *problem {
 	case errors.Is(err, usecases.ErrPathNotFound):
 		return &problem{Type: problemTypeBase + "/path-not-found", Title: "No process path exists with this id", Detail: fmt.Sprintf("no process path exists with pathId %q", pathId), Status: 404}
 	default:
-		slog.Error("a2a skill failed", "error", err)
+		slog.Error("a2a skill failed", "error", logReplacer.Replace(err.Error()))
 		return &problem{Type: problemTypeBase + "/internal-error", Title: "An unexpected internal error occurred", Detail: "the skill failed; see server logs (trace id in the response metadata)", Status: 500}
 	}
 }
