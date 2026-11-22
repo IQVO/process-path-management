@@ -51,7 +51,7 @@ func TestDurationEnv_RelayIntervalStillRejectsZero(t *testing.T) {
 // without ever touching the pool (nil here: a sweep would panic).
 func TestBuildSweeper_ZeroIntervalDisablesTheJob(t *testing.T) {
 	t.Setenv("HOUSEKEEPING_INTERVAL", "0")
-	sweeper := buildSweeper(nil, quietLogger())
+	sweeper := buildSweeper(nil, quietLogger(), 0)
 
 	done := make(chan error, 1)
 	go func() { done <- sweeper.Run(context.Background()) }()
@@ -62,5 +62,30 @@ func TestBuildSweeper_ZeroIntervalDisablesTheJob(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("HOUSEKEEPING_INTERVAL=0 must disable the sweeper, but Run kept running")
+	}
+}
+
+// TestIdempotencyGuardTTL pins the ONE-knob rule of ADR 0043's addendum:
+// the replay read's age guard follows the IDEMPOTENCY_KEY_TTL housekeeping
+// value verbatim, and a disabled retention (<= 0: nothing is ever swept)
+// disables the guard too — the pre-addendum replay-forever behaviour —
+// so the read and the purge can never disagree.
+func TestIdempotencyGuardTTL(t *testing.T) {
+	tests := []struct {
+		name string
+		in   time.Duration
+		want time.Duration
+	}{
+		{"the fleet default passes through", 24 * time.Hour, 24 * time.Hour},
+		{"an operator window passes through", time.Hour, time.Hour},
+		{"zero retention disables the guard", 0, -1},
+		{"negative retention disables the guard", -time.Second, -1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := idempotencyGuardTTL(tt.in); got != tt.want {
+				t.Fatalf("idempotencyGuardTTL(%v) = %v, want %v", tt.in, got, tt.want)
+			}
+		})
 	}
 }

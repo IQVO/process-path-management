@@ -138,7 +138,12 @@ func run(ctx context.Context) error {
 	// (idempotency_keys, published outbox_events) so they do not grow
 	// without limit. Runs alongside the HTTP server in the same process
 	// and stops with the same signal context.
-	sweeper := buildSweeper(persistence.pool, logger)
+	// ONE resolved TTL drives BOTH sides of idempotency-key retention
+	// (ADR 0043's 2026-11-22 addendum): the sweeper's purge below and the
+	// replay read's age guard on the Server. The env is read once, here,
+	// so the two can never disagree.
+	idempotencyKeyTTL := housekeepingDurationEnv("IDEMPOTENCY_KEY_TTL", postgres.DefaultIdempotencyKeyTTL)
+	sweeper := buildSweeper(persistence.pool, logger, idempotencyKeyTTL)
 
 	pathMetrics, err := telemetry.NewPathMetrics()
 	if err != nil {
@@ -172,7 +177,12 @@ func run(ctx context.Context) error {
 		// DATABASE_URL: the Idempotency-Key check on POST /process-paths is
 		// always on (see Server.IdempotencyPool and ADR 0011).
 		IdempotencyPool: persistence.pool,
-		Readiness:       readiness,
+		// The replay read's age guard uses the SAME resolved TTL the
+		// sweeper got above (ADR 0043's 2026-11-22 addendum): an expired
+		// key row never answers a replay, even before the sweep deletes
+		// it. A disabled retention (<= 0) disables the guard too.
+		IdempotencyKeyTTL: idempotencyGuardTTL(idempotencyKeyTTL),
+		Readiness:         readiness,
 	}
 
 	httpServer := &http.Server{
@@ -479,14 +489,26 @@ func housekeepingDurationEnv(key string, fallback time.Duration) time.Duration {
 	return d
 }
 
+// idempotencyGuardTTL maps the housekeeping IDEMPOTENCY_KEY_TTL knob onto
+// the middleware's age guard: a positive window passes through unchanged;
+// a disabled retention (<= 0, nothing is ever swept) disables the guard
+// too — ONE knob, both sides, so the read and the purge never disagree.
+func idempotencyGuardTTL(ttl time.Duration) time.Duration {
+	if ttl <= 0 {
+		return -1
+	}
+	return ttl
+}
+
 // buildSweeper wires the housekeeping sweeper (ADR 0018) from the
 // environment. Env vars are read HERE, in the composition root, never in
 // the adapter. A 0/negative HOUSEKEEPING_INTERVAL disables the job; a
 // 0/negative TTL disables the corresponding half. Safe across replicas
-// (each DELETE targets explicitly-eligible rows only).
-func buildSweeper(pool *pgxpool.Pool, logger *slog.Logger) *postgres.Sweeper {
+// (each DELETE targets explicitly-eligible rows only). idempotencyTTL
+// comes in resolved (shared with the replay read's age guard) so the env
+// is read exactly once.
+func buildSweeper(pool *pgxpool.Pool, logger *slog.Logger, idempotencyTTL time.Duration) *postgres.Sweeper {
 	interval := housekeepingDurationEnv("HOUSEKEEPING_INTERVAL", postgres.DefaultSweepInterval)
-	idempotencyTTL := housekeepingDurationEnv("IDEMPOTENCY_KEY_TTL", postgres.DefaultIdempotencyKeyTTL)
 	outboxRetention := housekeepingDurationEnv("OUTBOX_RETENTION", postgres.DefaultOutboxRetention)
 	logger.Info("housekeeping sweeper configured",
 		"interval", interval.String(), "enabled", interval > 0,
