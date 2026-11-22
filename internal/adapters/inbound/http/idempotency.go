@@ -6,9 +6,11 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -58,6 +60,12 @@ func validIdempotencyKey(key string) bool {
 //     with the same fingerprint replays the stored answer (status, body and
 //     headers, plus Idempotency-Replayed: true), the same key with a different
 //     fingerprint is 409 idempotency-key-reused;
+//   - a stored answer only replays while it is younger than the retention
+//     TTL (the SAME constant the ADR 0018 sweeper purges on, ADR 0043's
+//     2026-11-22 addendum): a key whose row has expired EXECUTES again —
+//     the middleware takes the key over (deletes the expired row, inserts
+//     a fresh one, one transaction) and runs the real handler — so a row
+//     can never answer between its expiry and the next sweep;
 //   - a 2xx is stored, and so is a refusal that is final for the request:
 //     the replay class its problem type declares (replay_class.go, ADR 0043)
 //     — FINAL and OUTCOME are stored and replayed, RETRYABLE is released. A
@@ -110,22 +118,15 @@ func validIdempotencyKey(key string) bool {
 // behind to conflict with. Either way, no polling loop, no lock-retry
 // budget, and no timeout are needed — the database's own MVCC/locking
 // semantics ARE the synchronization primitive.
-func RequireIdempotencyKey(pool *pgxpool.Pool) func(http.Handler) http.Handler {
+func RequireIdempotencyKey(pool *pgxpool.Pool, opts ...IdempotencyOption) func(http.Handler) http.Handler {
+	cfg := defaultIdempotencyConfig()
+	for _, opt := range opts {
+		opt(&cfg)
+	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			key := r.Header.Get(IdempotencyKeyHeader)
-			if key == "" {
-				writeProblem(w, http.StatusBadRequest,
-					problemIdempotencyKeyRequired,
-					"This endpoint changes state and requires a caller-supplied "+IdempotencyKeyHeader+" header so a retried request is never applied twice.",
-					r.URL.Path)
-				return
-			}
-			if !validIdempotencyKey(key) {
-				writeProblem(w, http.StatusBadRequest,
-					problemIdempotencyKeyInvalid,
-					"The "+IdempotencyKeyHeader+" header must be 1-128 printable ASCII characters (a client-generated UUID per logical submit).",
-					r.URL.Path)
+			key, ok := requireValidKey(w, r)
+			if !ok {
 				return
 			}
 
@@ -162,7 +163,7 @@ func RequireIdempotencyKey(pool *pgxpool.Pool) func(http.Handler) http.Handler {
 				// call's own transaction never wrote anything, so it is
 				// rolled back before the plain, non-transactional read.
 				_ = tx.Rollback(ctx)
-				replayCachedResponse(w, r, pool, key, requestHash)
+				replayOrTakeOverExpired(w, r, pool, cfg, key, requestHash, next)
 				return
 			}
 
@@ -188,33 +189,39 @@ type storedResponseHeaders = http.Header
 // or rollback — by the time this function runs, so a plain read (no
 // transaction of its own) is sufficient and cannot race a half-written
 // row.
-func replayCachedResponse(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, key, requestHash string) {
+//
+// The read carries the retention age guard (ADR 0043's 2026-11-22
+// addendum): only a row younger than ttl — the SAME TTL the ADR 0018
+// sweeper purges on — may answer. A row older than that is invisible
+// here even though it still physically exists (the sweep runs hourly, so
+// there is always a window between expiry and the next pass), and the
+// caller takes the key over and executes instead. ttl <= 0 disables the
+// guard (retention disabled), which is the pre-addendum behaviour. It
+// reports whether a row answered; false means no LIVE row exists for
+// this key (expired or already swept).
+func replayCachedResponse(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, key, requestHash string, ttl time.Duration) bool {
 	ctx := r.Context()
 
-	var storedMethod, storedPath, storedHash string
-	var statusCode *int
-	var responseBody []byte
-	var responseHeadersRaw []byte
-	err := pool.QueryRow(ctx, `
-		SELECT method, path, request_hash, status_code, response_body, response_headers
-		FROM idempotency_keys WHERE key = $1
-	`, key).Scan(&storedMethod, &storedPath, &storedHash, &statusCode, &responseBody, &responseHeadersRaw)
+	row, err := readStoredResponse(ctx, pool, key, ttl)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false
+	}
 	if err != nil {
 		writeProblem(w, http.StatusInternalServerError, problemInternalError, err.Error(), r.URL.Path)
-		return
+		return true
 	}
 
 	// The fingerprint is method + path + SHA-256(body) (REST API guideline
 	// 2.3): the same key on another route, or with another body, is a client
 	// bug and NOT a retry. It is 409 — distinguishable from a business 409 by
 	// the problem type — and it never executes anything.
-	if storedMethod != r.Method || storedPath != r.URL.Path || storedHash != requestHash {
+	if row.method != r.Method || row.path != r.URL.Path || row.hash != requestHash {
 		writeProblem(w, http.StatusConflict,
 			problemIdempotencyKeyReused,
 			"The Idempotency-Key header on this request was already used with a different method, path or body. "+
 				"Use a new Idempotency-Key for a genuinely different request.",
 			r.URL.Path)
-		return
+		return true
 	}
 
 	// The fingerprints match, so this row belongs to a PRIOR call with the
@@ -223,17 +230,17 @@ func replayCachedResponse(w http.ResponseWriter, r *http.Request, pool *pgxpool.
 	// no-null-status-code-ever-committed invariant): this row could only
 	// have become visible to this plain read via a transaction that
 	// populated it before committing.
-	if statusCode == nil {
+	if row.statusCode == nil {
 		// Unreachable given the invariant above; a defensive 500 rather
 		// than a panic or a fabricated response if it is ever violated.
 		writeProblem(w, http.StatusInternalServerError, problemInternalError,
 			"idempotency row committed with no recorded outcome — this should be impossible", r.URL.Path)
-		return
+		return true
 	}
 
-	if len(responseHeadersRaw) > 0 {
+	if len(row.headersRaw) > 0 {
 		var headers storedResponseHeaders
-		if err := json.Unmarshal(responseHeadersRaw, &headers); err == nil {
+		if err := json.Unmarshal(row.headersRaw, &headers); err == nil {
 			for k, vs := range headers {
 				for _, v := range vs {
 					w.Header().Add(k, v)
@@ -242,8 +249,66 @@ func replayCachedResponse(w http.ResponseWriter, r *http.Request, pool *pgxpool.
 		}
 	}
 	w.Header().Set(IdempotencyReplayedHeader, "true")
-	w.WriteHeader(*statusCode)
-	_, _ = w.Write(responseBody)
+	w.WriteHeader(*row.statusCode)
+	_, _ = w.Write(row.body)
+	return true
+}
+
+// storedRow is one idempotency_keys answer row as read by
+// readStoredResponse.
+type storedRow struct {
+	method, path, hash string
+	statusCode         *int
+	body               []byte
+	headersRaw         []byte
+}
+
+// readStoredResponse reads the stored answer row for key. When ttl > 0
+// the read carries the retention age guard (ADR 0043's 2026-11-22
+// addendum): only a row younger than ttl — the SAME TTL the ADR 0018
+// sweeper purges on — may answer, and the predicate is the exact
+// complement of the sweeper's delete (created_at < now() - ttl) and of
+// the takeover's delete (created_at <= now() - ttl). A row older than
+// that is invisible here even though it still physically exists (the
+// sweep runs hourly, so there is always a window between expiry and the
+// next pass). ttl <= 0 disables the guard (retention disabled), which is
+// the pre-addendum read — a stored answer replays until swept.
+func readStoredResponse(ctx context.Context, pool *pgxpool.Pool, key string, ttl time.Duration) (*storedRow, error) {
+	var row storedRow
+	if ttl > 0 {
+		return &row, pool.QueryRow(ctx, `
+			SELECT method, path, request_hash, status_code, response_body, response_headers
+			FROM idempotency_keys
+			WHERE key = $1 AND created_at > now() - ($2 * interval '1 second')
+		`, key, ttl.Seconds()).Scan(&row.method, &row.path, &row.hash, &row.statusCode, &row.body, &row.headersRaw)
+	}
+	return &row, pool.QueryRow(ctx, `
+		SELECT method, path, request_hash, status_code, response_body, response_headers
+		FROM idempotency_keys WHERE key = $1
+	`, key).Scan(&row.method, &row.path, &row.hash, &row.statusCode, &row.body, &row.headersRaw)
+}
+
+// requireValidKey reads and validates the Idempotency-Key header: a
+// missing key is a 400 idempotency-key-required, a key that is not 1-128
+// printable ASCII characters a 400 idempotency-key-invalid. ok reports
+// whether to continue.
+func requireValidKey(w http.ResponseWriter, r *http.Request) (key string, ok bool) {
+	key = r.Header.Get(IdempotencyKeyHeader)
+	if key == "" {
+		writeProblem(w, http.StatusBadRequest,
+			problemIdempotencyKeyRequired,
+			"This endpoint changes state and requires a caller-supplied "+IdempotencyKeyHeader+" header so a retried request is never applied twice.",
+			r.URL.Path)
+		return "", false
+	}
+	if !validIdempotencyKey(key) {
+		writeProblem(w, http.StatusBadRequest,
+			problemIdempotencyKeyInvalid,
+			"The "+IdempotencyKeyHeader+" header must be 1-128 printable ASCII characters (a client-generated UUID per logical submit).",
+			r.URL.Path)
+		return "", false
+	}
+	return key, true
 }
 
 // readFingerprint reads the request body once, hashes it (the fingerprint

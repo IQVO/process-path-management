@@ -115,22 +115,31 @@ func run(ctx context.Context) error {
 		return err
 	}
 
-	readiness := newReadiness(persistence.pool, cfg.kafkaBrokers)
-	server := buildInboundServer(persistence, publisher, clock, pathMetrics, readiness)
+	// ONE resolved TTL drives BOTH sides of idempotency-key retention
+	// (ADR 0043's 2026-11-22 addendum): the sweeper's purge (wired in
+	// serveHTTP) and the replay read's age guard on the Server — the env
+	// is read once, here, so the two can never disagree.
+	idempotencyKeyTTL := housekeepingDurationEnv("IDEMPOTENCY_KEY_TTL", postgres.DefaultIdempotencyKeyTTL)
 
-	httpServer := &http.Server{
-		Addr:              httpAddr,
+	readiness := newReadiness(persistence.pool, cfg.kafkaBrokers)
+	server := buildInboundServer(persistence, publisher, clock, pathMetrics, idempotencyKeyTTL, readiness)
+
+	httpServer := newHTTPServer(httpAddr, serviceName, server, logger)
+
+	// Re-enqueue the current catalogue once (ADR 0038) so a consumer
+	// replaying the topic never depends on Kafka retention; never fatal.
+	republishCatalogueAtStartup(ctx, logger, buildRepublishCatalogue(persistence, clock, pathMetrics))
+
+	return serveHTTP(ctx, logger, httpServer, relay, persistence.pool, idempotencyKeyTTL, readiness)
+}
+
+// newHTTPServer builds the process's HTTP server over the API router.
+func newHTTPServer(addr, serviceName string, server *inboundhttp.Server, logger *slog.Logger) *http.Server {
+	return &http.Server{
+		Addr:              addr,
 		Handler:           inboundhttp.NewRouter(server, logger, serviceName),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
-
-	// Re-enqueue the current catalogue once (ADR 0038) so a consumer that
-	// rebuilds its cache by replaying the topic never depends on Kafka
-	// retention. The relay is not running yet; it drains these rows as
-	// soon as serveHTTP starts it. Never fatal.
-	republishCatalogueAtStartup(ctx, logger, buildRepublishCatalogue(persistence, clock, pathMetrics))
-
-	return serveHTTP(ctx, logger, httpServer, relay, persistence.pool, readiness)
 }
 
 // buildInboundServer wires the use-case handlers the HTTP router serves.
@@ -139,7 +148,7 @@ func run(ctx context.Context) error {
 // buildPersistence opened against DATABASE_URL: the Idempotency-Key
 // check on POST /process-paths is always on (see Server.IdempotencyPool
 // and ADR 0011).
-func buildInboundServer(p *persistence, publisher ports.EventPublisher, clock system.Clock, pathMetrics *telemetry.PathMetrics, readiness *inboundhttp.Readiness) *inboundhttp.Server {
+func buildInboundServer(p *persistence, publisher ports.EventPublisher, clock system.Clock, pathMetrics *telemetry.PathMetrics, idempotencyKeyTTL time.Duration, readiness *inboundhttp.Readiness) *inboundhttp.Server {
 	repo := p.repo
 	return &inboundhttp.Server{
 		DefinePath:        &usecases.DefinePath{Repo: repo, Publisher: publisher, Clock: clock, UnitOfWork: p.uow, Metrics: pathMetrics},
@@ -154,6 +163,11 @@ func buildInboundServer(p *persistence, publisher ports.EventPublisher, clock sy
 		GetProcessFlow:    &usecases.GetProcessFlow{Repo: p.flowRepo},
 		ListProcessFlows:  &usecases.ListProcessFlows{Repo: p.flowRepo},
 		IdempotencyPool:   p.pool,
+		// The replay read's age guard uses the SAME resolved TTL the
+		// sweeper got (ADR 0043's 2026-11-22 addendum): an expired key
+		// row never answers a replay, even before the sweep deletes it.
+		// A disabled retention (<= 0) disables the guard too.
+		IdempotencyKeyTTL: idempotencyGuardTTL(idempotencyKeyTTL),
 		Readiness:         readiness,
 	}
 }
@@ -228,7 +242,7 @@ func telemetryFlush(logger *slog.Logger, shutdown func(context.Context) error) f
 // the relay is allowed to finish its in-flight pass. It returns the first
 // listener/relay error, or the HTTP shutdown error after a
 // signal-triggered stop.
-func serveHTTP(ctx context.Context, logger *slog.Logger, httpServer *http.Server, relay *postgres.OutboxRelay, pool *pgxpool.Pool, readiness *inboundhttp.Readiness) error {
+func serveHTTP(ctx context.Context, logger *slog.Logger, httpServer *http.Server, relay *postgres.OutboxRelay, pool *pgxpool.Pool, idempotencyKeyTTL time.Duration, readiness *inboundhttp.Readiness) error {
 	errCh := make(chan error, 1)
 	go func() {
 		logger.Info("http server listening", "addr", httpServer.Addr)
@@ -262,7 +276,7 @@ func serveHTTP(ctx context.Context, logger *slog.Logger, httpServer *http.Server
 	// next tick), so it does not feed errCh; it just needs to stop
 	// touching the pool before the deferred pool.Close runs, which the
 	// shared stopCtx gives us.
-	sweeper := buildSweeper(pool, logger)
+	sweeper := buildSweeper(pool, logger, idempotencyKeyTTL)
 	go func() {
 		logger.Info("housekeeping sweeper running")
 		_ = sweeper.Run(stopCtx)
@@ -501,14 +515,26 @@ func housekeepingDurationEnv(key string, fallback time.Duration) time.Duration {
 	return d
 }
 
+// idempotencyGuardTTL maps the housekeeping IDEMPOTENCY_KEY_TTL knob onto
+// the middleware's age guard: a positive window passes through unchanged;
+// a disabled retention (<= 0, nothing is ever swept) disables the guard
+// too — ONE knob, both sides, so the read and the purge never disagree.
+func idempotencyGuardTTL(ttl time.Duration) time.Duration {
+	if ttl <= 0 {
+		return -1
+	}
+	return ttl
+}
+
 // buildSweeper wires the housekeeping sweeper (ADR 0018) from the
 // environment. Env vars are read HERE, in the composition root, never in
 // the adapter. A 0/negative HOUSEKEEPING_INTERVAL disables the job; a
 // 0/negative TTL disables the corresponding half. Safe across replicas
-// (each DELETE targets explicitly-eligible rows only).
-func buildSweeper(pool *pgxpool.Pool, logger *slog.Logger) *postgres.Sweeper {
+// (each DELETE targets explicitly-eligible rows only). idempotencyTTL
+// comes in resolved (shared with the replay read's age guard) so the env
+// is read exactly once.
+func buildSweeper(pool *pgxpool.Pool, logger *slog.Logger, idempotencyTTL time.Duration) *postgres.Sweeper {
 	interval := housekeepingDurationEnv("HOUSEKEEPING_INTERVAL", postgres.DefaultSweepInterval)
-	idempotencyTTL := housekeepingDurationEnv("IDEMPOTENCY_KEY_TTL", postgres.DefaultIdempotencyKeyTTL)
 	outboxRetention := housekeepingDurationEnv("OUTBOX_RETENTION", postgres.DefaultOutboxRetention)
 	logger.Info("housekeeping sweeper configured",
 		"interval", interval.String(), "enabled", interval > 0,

@@ -164,3 +164,42 @@ entry is safe (proved by probe in `TestOutcomeBranchCommitsTheWritesWithTheStore
   against the real middleware over a real Postgres, per class.
 - Retention is unchanged and enforced: the sweeper (ADR 0018, 24h TTL) purges expired
   `idempotency_keys` rows.
+
+## Addendum (2026-11-22): a replay never answers from an expired key row
+
+The "Retention is unchanged and enforced" consequence above told only half the story:
+ADR 0018's sweeper purges `idempotency_keys` rows past the 24h TTL hourly, but nothing
+guarded the replay READ. Between a row's expiry and the next sweep — a window of up to
+an hour — a retry was still answered from the expired row, so the documented 24-hour
+window was not actually enforced on the read side.
+
+The fix keeps the purge untouched and moves the boundary to the read:
+
+- The replay SELECT now carries `created_at > now() - TTL` — a row older than the TTL is
+  invisible to replays even though it still physically exists. The TTL is the ONE
+  constant `internal/idempotency.KeyTTL` (aliased as the sweeper's
+  `postgres.DefaultIdempotencyKeyTTL`), so the guard and the purge cannot drift apart;
+  `cmd/pathmgmt` resolves `IDEMPOTENCY_KEY_TTL` once and passes the same value to both.
+  A disabled retention (`IDEMPOTENCY_KEY_TTL <= 0`) disables the guard too, which is
+  the pre-addendum behaviour.
+- A key whose row the guard rejects EXECUTES instead of answering: the middleware takes
+  the key over — it deletes the expired row and inserts a fresh one in ONE transaction —
+  and runs the real handler through the existing `runFreshRequest` path. An expired key
+  with a DIFFERENT body is a new request, not `idempotency-key-reused`, exactly like a
+  RETRYABLE-released key.
+- The takeover deletes and re-INSERTS rather than updating the old row in place,
+  deliberately: the sweeper's DELETE targets rows by ctid from its own snapshot, and an
+  in-place `created_at = now()` refresh could let a sweep that had already selected the
+  old row delete the refreshed answer right after it commits. A new row is invisible to
+  that sweep by construction, which is why the purge needed no change.
+- Concurrency is the same argument as the fresh-key race (ADR 0011): the unique-index
+  insert conflict serializes same-key writers, so a takeover that loses the race rolls
+  back having written nothing and replays the winner's committed row — which, per the
+  no-null-status-code invariant, always carries a complete answer. A bounded retry
+  (3 attempts, unreachable in practice) guarantees the request can never spin.
+
+Pinned by `idempotency_age_guard_integration_test.go` (real router, real Postgres, row
+aged 30h past the 24h TTL): the retry under an expired key executes and stores the
+handler's truthful answer instead of replaying the stale one, and the taken-over row is
+live again for later retries. `apis/openapi.yaml` documents no retention window, so the
+spec needed no change.

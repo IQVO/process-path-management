@@ -240,7 +240,7 @@ refuses to render, naming the value, without a database source
 | `OUTBOX_RELAY_INTERVAL` | `1s` | How long the (always-on) outbox relay sleeps between empty passes. |
 | `OUTBOX_MAX_ATTEMPTS` | `20` | Failed sends after which the relay stops claiming an outbox row (ADR 0030); `0` = unlimited. Re-arm with `UPDATE outbox_events SET attempts = 0 WHERE id = ...`. |
 | `HOUSEKEEPING_INTERVAL` | `1h` | Housekeeping sweeper interval (ADR 0018); `0` disables the sweeper. |
-| `IDEMPOTENCY_KEY_TTL` | `24h` | Age after which the sweeper deletes `idempotency_keys` rows; `0` keeps them. |
+| `IDEMPOTENCY_KEY_TTL` | `24h` | How long a stored answer may answer a replay; after this age the replay re-executes and the sweeper (ADR 0018) deletes the row. `0` keeps rows and replays them forever (ADR 0043 addendum). |
 | `OUTBOX_RETENTION` | `168h` | Age after which the sweeper deletes **published** `outbox_events` rows; `0` keeps them. |
 | `CORS_ALLOWED_ORIGINS` | `http://localhost:5173,http://localhost:5189` | Comma-separated allowed origins. |
 | `OTEL_SERVICE_NAME` | `process-path-management` | OTel `service.name` resource attribute. |

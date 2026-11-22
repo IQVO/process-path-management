@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/claudioed/process-path-management/internal/idempotency"
 )
 
 // Housekeeping defaults (ADR 0018). cmd/pathmgmt reads the matching
@@ -15,8 +17,12 @@ const (
 	DefaultSweepInterval = time.Hour
 	// DefaultIdempotencyKeyTTL is how long an idempotency_keys row is kept.
 	// It bounds how late a client retry can still be replayed from cache
-	// rather than treated as a brand-new request (ADR 0011).
-	DefaultIdempotencyKeyTTL = 24 * time.Hour
+	// rather than treated as a brand-new request (ADR 0011). It is an alias
+	// of internal/idempotency.KeyTTL — the ONE constant the purge here and
+	// the replay read's age guard (inbound/http) both use, so a row can
+	// never answer a replay between its expiry and this sweeper's next
+	// pass (ADR 0043's 2026-11-22 addendum).
+	DefaultIdempotencyKeyTTL = idempotency.KeyTTL
 	// DefaultOutboxRetention is how long a PUBLISHED outbox_events row is
 	// kept for forensics before deletion (ADR 0003). Unpublished rows are
 	// never swept, however old.
