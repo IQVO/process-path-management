@@ -60,7 +60,7 @@ reported as 409 `concurrent-modification`.
 
 | Symptom | Cause | Fix |
 | --- | --- | --- |
-| A retried `POST` returns the same 422 or 409 as the first attempt even after fixing the data | Every non-panic response is cached under its key, including 4xx ([ADR 0011](../adr/0011-idempotency-key-middleware.md)) | Send a new `Idempotency-Key`. |
+| A retried `POST` returns the same 422 or 409 as the first attempt even after fixing the data | The refusal's problem type is FINAL (or OUTCOME), so its answer is cached under the key ([ADR 0043](../adr/0043-every-problem-type-has-a-replay-class.md)): e.g. `path-already-exists` (a taken pathId is taken forever), the field-validation 422s, `malformed-request-body` | Send a new `Idempotency-Key`. A RETRYABLE refusal (nothing committed; the cause can change) is never stored — the same key can simply be retried. |
 | An old key is accepted again as new | The sweeper deletes keys older than `IDEMPOTENCY_KEY_TTL` (24 h) | Expected; keys are only remembered for the TTL. |
 | `POST` works locally without the header but fails in the cluster | The middleware is only wired when `DATABASE_URL` is set | Always send the header. |
 | A retry hangs until the first request finishes | Concurrent requests with the same key serialise on the `idempotency_keys` primary key | Expected; the second request then replays the first's response. |

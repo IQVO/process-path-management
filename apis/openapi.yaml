@@ -19,7 +19,13 @@ info:
     retry replays the stored answer with the response header
     `Idempotency-Replayed: true`; the same key with a different method, path
     or body is 409 `idempotency-key-reused`; a missing key is 400
-    `idempotency-key-required`), `PUT` and `DELETE` are idempotent by method
+    `idempotency-key-required`). Which answers are stored is decided per
+    problem type by its replay class (ADR 0043): a success and a FINAL or
+    OUTCOME refusal are stored and replayed; a RETRYABLE refusal (nothing
+    committed, the cause can change) and any 5xx or panic are never stored —
+    the key is released, a retry executes the work again, and a different
+    body under a released key is a NEW request, not
+    `idempotency-key-reused`. `PUT` and `DELETE` are idempotent by method
     and take no key, and the collection `GET /process-paths` is
     keyset-paginated as `{items, nextCursor}` with `limit` and `cursor`.
   version: "1.0.0"
@@ -173,10 +179,12 @@ paths:
             be a string — or a NUL character U+0000 anywhere in the body),
             all `malformed-request-body`, or the Idempotency-Key header is
             absent (`idempotency-key-required`) or not 1-128 printable ASCII
-            characters (`idempotency-key-invalid`). A 4xx answer produced
-            after the key was accepted is stored like a success, so a retry
-            with the same key, method, path and body replays it with
-            `Idempotency-Replayed: true`.
+            characters (`idempotency-key-invalid`). These 400s are functions
+            of the request alone (class FINAL, ADR 0043): once the key is
+            accepted they are stored, and a retry with the same key, method,
+            path and body replays them with `Idempotency-Replayed: true`. A
+            RETRYABLE refusal is never stored: the key is released and a
+            retry executes again.
           headers:
             Idempotency-Replayed:
               $ref: "#/components/headers/IdempotencyReplayed"
@@ -190,7 +198,11 @@ paths:
             deactivated), or the Idempotency-Key header was already used
             with a different method, path or body (`idempotency-key-reused`,
             distinguishable from the business conflict by the problem type).
-            A replayed business conflict carries `Idempotency-Replayed: true`.
+            Both 409s of this route are final for the request (class FINAL,
+            ADR 0043: a taken pathId is taken forever — deactivation keeps
+            the row and there is no reactivate — and the reuse conflict is
+            the store's own answer), so a retry under the same key replays
+            them with `Idempotency-Replayed: true`.
           headers:
             Idempotency-Replayed:
               $ref: "#/components/headers/IdempotencyReplayed"
@@ -221,7 +233,9 @@ paths:
             requiredCapabilities is empty, cycleTimeP95 is not a positive
             Go duration string, destinationLocationRole is not one of
             Drop/WorkCenter/Shipping, or intake holds an unknown or repeated
-            demand source (invalid-intake). A replayed 422 carries
+            demand source (invalid-intake). These 422s are functions of the
+            request's own fields (class FINAL, ADR 0043): a retry with the
+            same key, method, path and body replays the stored 422 with
             `Idempotency-Replayed: true`.
           headers:
             Idempotency-Replayed:
@@ -746,14 +760,19 @@ components:
       description: >-
         Caller-generated unique key (a UUID per logical submit; a retry
         reuses it, a new user action mints a new one) that makes a retried
-        request safe (ADR 0011, REST guideline section 2): 1-128 printable
-        ASCII characters. Postgres is the only runtime (ADR 0037), so the
-        check is on in every deployment: a missing key is answered with 400
-        `idempotency-key-required`, a malformed one with 400
-        `idempotency-key-invalid`; a replay with the same key and the same
-        method, path and body returns the original response plus
-        `Idempotency-Replayed: true`, while the same key with a different
-        method, path or body is 409 `idempotency-key-reused`.
+        request safe (ADR 0011 and ADR 0043, REST guideline section 2):
+        1-128 printable ASCII characters. Postgres is the only runtime
+        (ADR 0037), so the check is on in every deployment: a missing key
+        is answered with 400 `idempotency-key-required`, a malformed one
+        with 400 `idempotency-key-invalid`; a replay with the same key and
+        the same method, path and body returns the original response plus
+        `Idempotency-Replayed: true` when that answer was stored (a success
+        and a FINAL or OUTCOME refusal), while the same key with a
+        different method, path or body is 409 `idempotency-key-reused`. A
+        RETRYABLE refusal (nothing committed; the cause — a conflicting
+        write, a not-yet-existing referenced fact — can change) is never
+        stored: the key is released, so the same key can be retried and a
+        different body under it is a new request.
       example: 0b6b1f1e-4a5c-4c1e-9f2a-7d3c8e5f9a01
     Limit:
       name: limit

@@ -84,6 +84,15 @@ Fully qualified name of the A2A agent Deployment/Service (<release>-a2a, ADR 003
 {{- include "process-path-management.fullname" . }}-a2a
 {{- end }}
 
+{{/* agents.colocate (warehouse-infra ADR 0012): "true" iff colocate, mcp and a2a are all on; else empty. */}}
+{{- define "process-path-management.agentsColocated" -}}
+{{- if and (.Values.agents | default dict).colocate .Values.mcp.enabled .Values.a2a.enabled }}true{{ end -}}
+{{- end }}
+
+{{- define "process-path-management.agentsFullname" -}}
+{{- printf "%s-agents" (include "process-path-management.fullname" .) | trunc 63 | trimSuffix "-" }}
+{{- end }}
+
 {{/*
 MANDATORY (ADR 0037: Postgres is the only runtime). cmd/pathmgmt and cmd/mcp exit
 at boot without DATABASE_URL; there is no in-memory mode.

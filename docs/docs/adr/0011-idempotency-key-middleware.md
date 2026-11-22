@@ -11,6 +11,7 @@ description: "ADR 0011 — POST /process-paths requires a caller-supplied Idempo
 ## Status
 
 > Amended by [ADR 0040](./0040-adopt-fleet-rest-api-guideline.md): key reuse is now `409`, the replay header is `Idempotency-Replayed`, the key is validated (1-128 printable ASCII).
+> Amended by [ADR 0043](./0043-every-problem-type-has-a-replay-class.md) (2026-11-20): not every 4xx is stored any more. Which refusal is stored and replayed is decided per problem type by its replay class (FINAL and OUTCOME stored; RETRYABLE, any 5xx and a panic released with the key row). The transactional design on this page is unchanged.
 
 Accepted — implemented in the same change that introduced this record.
 *Amended by [ADR 0037](./0037-postgres-and-kafka-are-the-only-runtime.md):

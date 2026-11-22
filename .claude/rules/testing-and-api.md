@@ -29,7 +29,10 @@ router (`readiness.go`) but is not in the spec:
 | `GET` | `/readyz` | Readiness probe — 503 once graceful shutdown starts (ADR 0012) |
 
 `POST /process-paths` is wrapped by the Idempotency-Key middleware (ADR
-0011) only when a Postgres pool is wired (`DATABASE_URL` set).
+0011) only when a Postgres pool is wired (`DATABASE_URL` set). Which
+refusal the middleware stores and replays is decided per problem type by
+its replay class (ADR 0043): FINAL and OUTCOME are stored, RETRYABLE
+releases the key so a retry executes again.
 
 `POST`/`PUT /process-paths*` require `cycleTimeP95` (Go duration string,
 > 0; 422 otherwise). The separate `cmd/pathmgmt-reports` binary serves

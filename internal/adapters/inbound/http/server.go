@@ -142,7 +142,7 @@ func NewRouter(s *Server, logger *slog.Logger, serviceName string) http.Handler 
 // but the contract (SiteIdPathParam minLength 1, defineCPTSchedule 404) says it
 // is no route.
 func writeRouteNotFound(w http.ResponseWriter, r *http.Request) {
-	writeProblem(w, http.StatusNotFound, problemInfo{"route-not-found", "No route matches this request"}, "the request path does not match any operation in this API", r.URL.Path)
+	writeProblem(w, http.StatusNotFound, problemRouteNotFound, "the request path does not match any operation in this API", r.URL.Path)
 }
 
 func (s *Server) handleHealthz(w http.ResponseWriter, _ *http.Request) {
@@ -264,7 +264,7 @@ func (s *Server) handleGetCPTSchedule(w http.ResponseWriter, r *http.Request) {
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, dest any) bool {
 	if err := json.NewDecoder(r.Body).Decode(dest); err != nil {
-		writeProblem(w, http.StatusBadRequest, problemInfo{problemMalformedRequestBody, "The request body is not valid JSON"}, err.Error(), r.URL.Path)
+		writeProblem(w, http.StatusBadRequest, problemBodyInvalidJSON, err.Error(), r.URL.Path)
 		return false
 	}
 	return true
@@ -276,7 +276,14 @@ func writeError(w http.ResponseWriter, r *http.Request, err error) {
 	writeProblem(w, statusFor(err), problemFor(err), err.Error(), r.URL.Path)
 }
 
+// writeProblem is the service's one RFC 7807 writer: it also marks the
+// idempotency middleware's capturing writer with the problem type's replay
+// class (replay_class.go), so the middleware knows — from the class alone,
+// no slug list and no status range beyond 2xx/5xx — whether the answer is
+// stored and replayed (FINAL, OUTCOME) or released (RETRYABLE). Every other
+// writer is a no-op mark: there is nothing to mark outside the middleware.
 func writeProblem(w http.ResponseWriter, status int, info problemInfo, detail, instance string) {
+	markReplayClass(w, info.class)
 	w.Header().Set("Content-Type", "application/problem+json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(problemDetails{
