@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -52,6 +53,14 @@ type Server struct {
 	// skipped because it needs a real pgxpool.Pool to begin its own
 	// transaction.
 	IdempotencyPool *pgxpool.Pool
+	// IdempotencyKeyTTL bounds how old a stored answer may be and still
+	// answer a replay (the age guard of ADR 0043's 2026-11-22 addendum;
+	// the same TTL the ADR 0018 sweeper purges on). Zero means the shared
+	// default, internal/idempotency.KeyTTL (24h); negative disables the
+	// guard, which cmd/pathmgmt passes exactly when the
+	// IDEMPOTENCY_KEY_TTL housekeeping knob is <= 0 (retention disabled —
+	// the pre-addendum behaviour, one knob for both sides).
+	IdempotencyKeyTTL time.Duration
 	// Readiness backs GET /readyz: the drain gate flipped to not-ready as
 	// the FIRST step of shutdown (ADR-0012) plus the Postgres and Kafka
 	// checks (NewReadiness, ADR 0037), distinct from /healthz (liveness,
@@ -108,7 +117,7 @@ func NewRouter(s *Server, logger *slog.Logger, serviceName string) http.Handler 
 	// so the Idempotency-Key check is always on there; a nil pool exists
 	// only so handler unit tests can build a Server without a database.
 	if s.IdempotencyPool != nil {
-		r.With(RequireIdempotencyKey(s.IdempotencyPool)).Post("/process-paths", s.handleDefinePath)
+		r.With(RequireIdempotencyKey(s.IdempotencyPool, s.idempotencyOptions()...)).Post("/process-paths", s.handleDefinePath)
 	} else {
 		r.Post("/process-paths", s.handleDefinePath)
 	}
