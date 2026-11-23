@@ -128,20 +128,11 @@ func run() error {
 	// Same non-blocking telemetry setup as cmd/pathmgmt: an unreachable
 	// Collector degrades to dropped telemetry, never a server that won't
 	// start.
-	serviceName := getenv("OTEL_SERVICE_NAME", "process-path-management-a2a")
-	otlpEndpoint := getenv("OTEL_EXPORTER_OTLP_ENDPOINT", telemetry.DefaultOTLPEndpoint)
-	shutdownTelemetry, err := telemetry.Setup(ctx, serviceName, getenv("SERVICE_VERSION", "dev"), otlpEndpoint)
+	flushTelemetry, err := setupTelemetry(ctx, logger)
 	if err != nil {
 		return err
 	}
-	defer func() {
-		flushCtx, cancel := context.WithTimeout(context.Background(), telemetryFlushTimeout)
-		defer cancel()
-		if err := shutdownTelemetry(flushCtx); err != nil {
-			logger.Warn("telemetry flush failed on shutdown", "error", err)
-		}
-	}()
-	logger.Info("telemetry configured", "service_name", serviceName, "otlp_endpoint", otlpEndpoint)
+	defer flushTelemetry()
 
 	a2aAddr := getenv("A2A_ADDR", ":8093")
 	databaseURL := cfg.databaseURL
@@ -161,19 +152,7 @@ func run() error {
 	defer closeAdapters()
 	handler := newAgent(repo, flows, cfg.agentURL, getenv("SERVICE_VERSION", "dev"))
 
-	srv := &http.Server{
-		Addr:              a2aAddr,
-		Handler:           handler,
-		ReadHeaderTimeout: 5 * time.Second,
-	}
-
-	errCh := make(chan error, 1)
-	go func() {
-		logger.Info("a2a agent listening (JSON-RPC over HTTP)", "addr", a2aAddr)
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			errCh <- err
-		}
-	}()
+	srv, errCh := startHTTPServer(logger, a2aAddr, handler)
 
 	stopCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -187,6 +166,42 @@ func run() error {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	return srv.Shutdown(shutdownCtx)
+}
+
+// setupTelemetry configures OTel exactly like cmd/pathmgmt: an unreachable
+// Collector degrades to dropped telemetry, never a server that won't
+// start. It emits the "telemetry configured" startup line and returns the
+// flush closure run defers, bounded by telemetryFlushTimeout.
+func setupTelemetry(ctx context.Context, logger *slog.Logger) (func(), error) {
+	serviceName := getenv("OTEL_SERVICE_NAME", "process-path-management-a2a")
+	otlpEndpoint := getenv("OTEL_EXPORTER_OTLP_ENDPOINT", telemetry.DefaultOTLPEndpoint)
+	shutdownTelemetry, err := telemetry.Setup(ctx, serviceName, getenv("SERVICE_VERSION", "dev"), otlpEndpoint)
+	if err != nil {
+		return nil, err
+	}
+	logger.Info("telemetry configured", "service_name", serviceName, "otlp_endpoint", otlpEndpoint)
+	return func() {
+		flushCtx, cancel := context.WithTimeout(context.Background(), telemetryFlushTimeout)
+		defer cancel()
+		if err := shutdownTelemetry(flushCtx); err != nil {
+			logger.Warn("telemetry flush failed on shutdown", "error", err)
+		}
+	}, nil
+}
+
+// startHTTPServer builds srv and starts it listening in the background,
+// returning it with the channel that carries a listener error (nil on a
+// graceful Shutdown).
+func startHTTPServer(logger *slog.Logger, addr string, handler http.Handler) (*http.Server, <-chan error) {
+	srv := &http.Server{Addr: addr, Handler: handler, ReadHeaderTimeout: 5 * time.Second}
+	errCh := make(chan error, 1)
+	go func() {
+		logger.Info("a2a agent listening (JSON-RPC over HTTP)", "addr", addr)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			errCh <- err
+		}
+	}()
+	return srv, errCh
 }
 
 // buildRepo wires the Postgres ProcessPathRepo, exactly the selection

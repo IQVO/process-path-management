@@ -24,6 +24,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	inboundhttp "github.com/claudioed/process-path-management/internal/adapters/inbound/http"
 	"github.com/claudioed/process-path-management/internal/adapters/outbound/analyticsstore"
 	"github.com/claudioed/process-path-management/internal/adapters/outbound/bootretry"
@@ -73,26 +75,12 @@ func run() error {
 	}
 
 	// Read-only pool: even a bug in the reader cannot mutate the read
-	// model, on top of the read-only database role
-	// ANALYTICS_DATABASE_URL should use.
-	pool, err := analyticsstore.NewReadOnlyPool(rootCtx, analyticsURL)
+	// model — see openReadOnlyPool.
+	pool, err := openReadOnlyPool(rootCtx, logger, analyticsURL)
 	if err != nil {
 		return err
 	}
 	defer pool.Close()
-	// NewReadOnlyPool does not itself establish a connection, so without
-	// this the first real failure would surface inside a request rather
-	// than at boot. Retried because in this fleet EVERY injected pod's
-	// first outbound TCP dial (Postgres here) fails with "read:
-	// connection reset by peer" ~10s after the app starts (Istio 1.30
-	// native sidecars still warming up their outbound listener). This
-	// does not weaken the fail-closed rule: once the budget is exhausted
-	// it still refuses to boot, reporting the real cause.
-	if err := bootretry.Do(rootCtx, logger, "ping analytics database", func() error {
-		return pool.Ping(rootCtx)
-	}); err != nil {
-		return err
-	}
 
 	handlers := &inboundhttp.ReportsHandlers{Store: analyticsstore.NewPostgresReport(pool)}
 	router := inboundhttp.NewReportsRouter(handlers, logger)
@@ -113,6 +101,32 @@ func run() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	return srv.Shutdown(ctx)
+}
+
+// openReadOnlyPool opens the read-only analytics pool (even a bug in the
+// reader cannot mutate the read model, on top of the read-only database
+// role ANALYTICS_DATABASE_URL should use) and pings it at boot.
+//
+// NewReadOnlyPool does not itself establish a connection, so without the
+// ping the first real failure would surface inside a request rather than
+// at boot. Retried because in this fleet EVERY injected pod's first
+// outbound TCP dial (Postgres here) fails with "read: connection reset
+// by peer" ~10s after the app starts (Istio 1.30 native sidecars still
+// warming up their outbound listener). This does not weaken the
+// fail-closed rule: once the budget is exhausted it still refuses to
+// boot, reporting the real cause.
+func openReadOnlyPool(ctx context.Context, logger *slog.Logger, analyticsURL string) (*pgxpool.Pool, error) {
+	pool, err := analyticsstore.NewReadOnlyPool(ctx, analyticsURL)
+	if err != nil {
+		return nil, err
+	}
+	if err := bootretry.Do(ctx, logger, "ping analytics database", func() error {
+		return pool.Ping(ctx)
+	}); err != nil {
+		pool.Close()
+		return nil, err
+	}
+	return pool, nil
 }
 
 // setupTelemetry configures OTel exactly like cmd/pathmgmt (gap fix D21)
