@@ -67,20 +67,11 @@ func run() error {
 	// Same non-blocking telemetry setup as cmd/pathmgmt: an unreachable
 	// Collector degrades to dropped telemetry, never a server that won't
 	// start.
-	serviceName := getenv("OTEL_SERVICE_NAME", "process-path-management-mcp")
-	otlpEndpoint := getenv("OTEL_EXPORTER_OTLP_ENDPOINT", telemetry.DefaultOTLPEndpoint)
-	shutdownTelemetry, err := telemetry.Setup(ctx, serviceName, getenv("SERVICE_VERSION", "dev"), otlpEndpoint)
+	flushTelemetry, err := setupTelemetry(ctx, logger)
 	if err != nil {
 		return err
 	}
-	defer func() {
-		flushCtx, cancel := context.WithTimeout(context.Background(), telemetryFlushTimeout)
-		defer cancel()
-		if err := shutdownTelemetry(flushCtx); err != nil {
-			logger.Warn("telemetry flush failed on shutdown", "error", err)
-		}
-	}()
-	logger.Info("telemetry configured", "service_name", serviceName, "otlp_endpoint", otlpEndpoint)
+	defer flushTelemetry()
 
 	mcpAddr := getenv("MCP_ADDR", ":8090")
 	databaseURL := os.Getenv("DATABASE_URL")
@@ -98,43 +89,8 @@ func run() error {
 		return err
 	}
 	defer closeAdapters()
-	scheduleRepo := postgres.NewCPTScheduleRepo(pool)
-	flowRepo := postgres.NewProcessFlowRepo(pool)
-	// The MCP adapter reuses the SAME read use cases the HTTP adapter
-	// uses: GetPath and ListPaths. It never writes, so no
-	// EventPublisher/UnitOfWork/Clock is needed here.
-	deps := inboundmcp.Deps{
-		GetPath:        &usecases.GetPath{Repo: repo},
-		ListPaths:      &usecases.ListPaths{Repo: repo},
-		GetCPTSchedule: &usecases.GetCPTSchedule{Repo: scheduleRepo},
-		// ADR 0042: the two read-only flow tools over the same flow repo.
-		GetProcessFlow:   &usecases.GetProcessFlow{Repo: flowRepo},
-		ListProcessFlows: &usecases.ListProcessFlows{Repo: flowRepo},
-	}
-	// When REPORTS_BASE_URL is set, the curated catalogue-growth report
-	// tool is additionally registered, calling the pathmgmt-reports REST
-	// service. Left unset, the MCP server serves only the two existing
-	// read-only tools, unchanged.
-	if reportsURL := os.Getenv("REPORTS_BASE_URL"); reportsURL != "" {
-		deps.Reports = inboundmcp.NewReportsRESTClient(reportsURL, nil)
-	}
-	server := inboundmcp.NewServer(deps)
 
-	handler := newRouter(inboundmcp.Handler(server))
-
-	srv := &http.Server{
-		Addr:              mcpAddr,
-		Handler:           handler,
-		ReadHeaderTimeout: 5 * time.Second,
-	}
-
-	errCh := make(chan error, 1)
-	go func() {
-		logger.Info("mcp server listening (Streamable HTTP)", "addr", mcpAddr)
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			errCh <- err
-		}
-	}()
+	srv, errCh := startHTTPServer(logger, mcpAddr, buildMCPServerHandler(repo, pool))
 
 	stopCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -148,6 +104,65 @@ func run() error {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	return srv.Shutdown(shutdownCtx)
+}
+
+// setupTelemetry configures OTel exactly like cmd/pathmgmt: an unreachable
+// Collector degrades to dropped telemetry, never a server that won't
+// start. It emits the "telemetry configured" startup line and returns the
+// flush closure run defers, bounded by telemetryFlushTimeout.
+func setupTelemetry(ctx context.Context, logger *slog.Logger) (func(), error) {
+	serviceName := getenv("OTEL_SERVICE_NAME", "process-path-management-mcp")
+	otlpEndpoint := getenv("OTEL_EXPORTER_OTLP_ENDPOINT", telemetry.DefaultOTLPEndpoint)
+	shutdownTelemetry, err := telemetry.Setup(ctx, serviceName, getenv("SERVICE_VERSION", "dev"), otlpEndpoint)
+	if err != nil {
+		return nil, err
+	}
+	logger.Info("telemetry configured", "service_name", serviceName, "otlp_endpoint", otlpEndpoint)
+	return func() {
+		flushCtx, cancel := context.WithTimeout(context.Background(), telemetryFlushTimeout)
+		defer cancel()
+		if err := shutdownTelemetry(flushCtx); err != nil {
+			logger.Warn("telemetry flush failed on shutdown", "error", err)
+		}
+	}, nil
+}
+
+// buildMCPServerHandler wires the MCP tools and wraps the server in the
+// process's HTTP surface (newRouter). The MCP adapter reuses the SAME
+// read use cases the HTTP adapter uses: GetPath and ListPaths. It never
+// writes, so no EventPublisher/UnitOfWork/Clock is needed here. When
+// REPORTS_BASE_URL is set, the curated catalogue-growth report tool is
+// additionally registered, calling the pathmgmt-reports REST service;
+// left unset, the MCP server serves only the existing read-only tools,
+// unchanged.
+func buildMCPServerHandler(repo ports.ProcessPathRepo, pool *pgxpool.Pool) http.Handler {
+	deps := inboundmcp.Deps{
+		GetPath:        &usecases.GetPath{Repo: repo},
+		ListPaths:      &usecases.ListPaths{Repo: repo},
+		GetCPTSchedule: &usecases.GetCPTSchedule{Repo: postgres.NewCPTScheduleRepo(pool)},
+		// ADR 0042: the two read-only flow tools over the same flow repo.
+		GetProcessFlow:   &usecases.GetProcessFlow{Repo: postgres.NewProcessFlowRepo(pool)},
+		ListProcessFlows: &usecases.ListProcessFlows{Repo: postgres.NewProcessFlowRepo(pool)},
+	}
+	if reportsURL := os.Getenv("REPORTS_BASE_URL"); reportsURL != "" {
+		deps.Reports = inboundmcp.NewReportsRESTClient(reportsURL, nil)
+	}
+	return newRouter(inboundmcp.Handler(inboundmcp.NewServer(deps)))
+}
+
+// startHTTPServer builds srv and starts it listening in the background,
+// returning it with the channel that carries a listener error (nil on a
+// graceful Shutdown).
+func startHTTPServer(logger *slog.Logger, addr string, handler http.Handler) (*http.Server, <-chan error) {
+	srv := &http.Server{Addr: addr, Handler: handler, ReadHeaderTimeout: 5 * time.Second}
+	errCh := make(chan error, 1)
+	go func() {
+		logger.Info("mcp server listening (Streamable HTTP)", "addr", addr)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			errCh <- err
+		}
+	}()
+	return srv, errCh
 }
 
 // newRouter wraps the MCP handler in the process's HTTP surface:

@@ -125,37 +125,18 @@ func RequireIdempotencyKey(pool *pgxpool.Pool, opts ...IdempotencyOption) func(h
 	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			key := r.Header.Get(IdempotencyKeyHeader)
-			if key == "" {
-				writeProblem(w, http.StatusBadRequest,
-					problemIdempotencyKeyRequired,
-					"This endpoint changes state and requires a caller-supplied "+IdempotencyKeyHeader+" header so a retried request is never applied twice.",
-					r.URL.Path)
-				return
-			}
-			if !validIdempotencyKey(key) {
-				writeProblem(w, http.StatusBadRequest,
-					problemIdempotencyKeyInvalid,
-					"The "+IdempotencyKeyHeader+" header must be 1-128 printable ASCII characters (a client-generated UUID per logical submit).",
-					r.URL.Path)
+			key, ok := requireValidKey(w, r)
+			if !ok {
 				return
 			}
 
-			// The body is read into memory once, HASHED, and then restored
-			// (io.NopCloser over a bytes.Reader) so downstream JSON decoding
-			// in the real handler is completely unaffected — it sees the
-			// exact same bytes it would have without this middleware.
-			bodyBytes, err := io.ReadAll(r.Body)
-			if err != nil {
-				writeProblem(w, http.StatusBadRequest,
-					problemBodyUnreadable,
-					err.Error(), r.URL.Path)
+			// The body is read into memory once, hashed and restored
+			// (see readFingerprint) so downstream JSON decoding in
+			// the real handler is unaffected.
+			requestHash, ok := readFingerprint(w, r)
+			if !ok {
 				return
 			}
-			_ = r.Body.Close()
-			r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
-			sum := sha256.Sum256(bodyBytes)
-			requestHash := hex.EncodeToString(sum[:])
 
 			ctx := r.Context()
 			tx, err := pool.Begin(ctx)
@@ -221,29 +202,7 @@ type storedResponseHeaders = http.Header
 func replayCachedResponse(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, key, requestHash string, ttl time.Duration) bool {
 	ctx := r.Context()
 
-	var storedMethod, storedPath, storedHash string
-	var statusCode *int
-	var responseBody []byte
-	var responseHeadersRaw []byte
-	var err error
-	if ttl > 0 {
-		// The age guard is the exact complement of the sweeper's delete
-		// predicate (created_at < now() - ttl) and of the takeover's
-		// delete (created_at <= now() - ttl): everything a replay may
-		// still answer.
-		err = pool.QueryRow(ctx, `
-			SELECT method, path, request_hash, status_code, response_body, response_headers
-			FROM idempotency_keys
-			WHERE key = $1 AND created_at > now() - ($2 * interval '1 second')
-		`, key, ttl.Seconds()).Scan(&storedMethod, &storedPath, &storedHash, &statusCode, &responseBody, &responseHeadersRaw)
-	} else {
-		// Retention disabled (IDEMPOTENCY_KEY_TTL <= 0): the pre-addendum
-		// read — a stored answer replays until swept.
-		err = pool.QueryRow(ctx, `
-			SELECT method, path, request_hash, status_code, response_body, response_headers
-			FROM idempotency_keys WHERE key = $1
-		`, key).Scan(&storedMethod, &storedPath, &storedHash, &statusCode, &responseBody, &responseHeadersRaw)
-	}
+	row, err := readStoredResponse(ctx, pool, key, ttl)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false
 	}
@@ -256,7 +215,7 @@ func replayCachedResponse(w http.ResponseWriter, r *http.Request, pool *pgxpool.
 	// 2.3): the same key on another route, or with another body, is a client
 	// bug and NOT a retry. It is 409 — distinguishable from a business 409 by
 	// the problem type — and it never executes anything.
-	if storedMethod != r.Method || storedPath != r.URL.Path || storedHash != requestHash {
+	if row.method != r.Method || row.path != r.URL.Path || row.hash != requestHash {
 		writeProblem(w, http.StatusConflict,
 			problemIdempotencyKeyReused,
 			"The Idempotency-Key header on this request was already used with a different method, path or body. "+
@@ -271,7 +230,7 @@ func replayCachedResponse(w http.ResponseWriter, r *http.Request, pool *pgxpool.
 	// no-null-status-code-ever-committed invariant): this row could only
 	// have become visible to this plain read via a transaction that
 	// populated it before committing.
-	if statusCode == nil {
+	if row.statusCode == nil {
 		// Unreachable given the invariant above; a defensive 500 rather
 		// than a panic or a fabricated response if it is ever violated.
 		writeProblem(w, http.StatusInternalServerError, problemInternalError,
@@ -279,9 +238,9 @@ func replayCachedResponse(w http.ResponseWriter, r *http.Request, pool *pgxpool.
 		return true
 	}
 
-	if len(responseHeadersRaw) > 0 {
+	if len(row.headersRaw) > 0 {
 		var headers storedResponseHeaders
-		if err := json.Unmarshal(responseHeadersRaw, &headers); err == nil {
+		if err := json.Unmarshal(row.headersRaw, &headers); err == nil {
 			for k, vs := range headers {
 				for _, v := range vs {
 					w.Header().Add(k, v)
@@ -290,9 +249,86 @@ func replayCachedResponse(w http.ResponseWriter, r *http.Request, pool *pgxpool.
 		}
 	}
 	w.Header().Set(IdempotencyReplayedHeader, "true")
-	w.WriteHeader(*statusCode)
-	_, _ = w.Write(responseBody)
+	w.WriteHeader(*row.statusCode)
+	_, _ = w.Write(row.body)
 	return true
+}
+
+// storedRow is one idempotency_keys answer row as read by
+// readStoredResponse.
+type storedRow struct {
+	method, path, hash string
+	statusCode         *int
+	body               []byte
+	headersRaw         []byte
+}
+
+// readStoredResponse reads the stored answer row for key. When ttl > 0
+// the read carries the retention age guard (ADR 0043's 2026-11-22
+// addendum): only a row younger than ttl — the SAME TTL the ADR 0018
+// sweeper purges on — may answer, and the predicate is the exact
+// complement of the sweeper's delete (created_at < now() - ttl) and of
+// the takeover's delete (created_at <= now() - ttl). A row older than
+// that is invisible here even though it still physically exists (the
+// sweep runs hourly, so there is always a window between expiry and the
+// next pass). ttl <= 0 disables the guard (retention disabled), which is
+// the pre-addendum read — a stored answer replays until swept.
+func readStoredResponse(ctx context.Context, pool *pgxpool.Pool, key string, ttl time.Duration) (*storedRow, error) {
+	var row storedRow
+	if ttl > 0 {
+		return &row, pool.QueryRow(ctx, `
+			SELECT method, path, request_hash, status_code, response_body, response_headers
+			FROM idempotency_keys
+			WHERE key = $1 AND created_at > now() - ($2 * interval '1 second')
+		`, key, ttl.Seconds()).Scan(&row.method, &row.path, &row.hash, &row.statusCode, &row.body, &row.headersRaw)
+	}
+	return &row, pool.QueryRow(ctx, `
+		SELECT method, path, request_hash, status_code, response_body, response_headers
+		FROM idempotency_keys WHERE key = $1
+	`, key).Scan(&row.method, &row.path, &row.hash, &row.statusCode, &row.body, &row.headersRaw)
+}
+
+// requireValidKey reads and validates the Idempotency-Key header: a
+// missing key is a 400 idempotency-key-required, a key that is not 1-128
+// printable ASCII characters a 400 idempotency-key-invalid. ok reports
+// whether to continue.
+func requireValidKey(w http.ResponseWriter, r *http.Request) (key string, ok bool) {
+	key = r.Header.Get(IdempotencyKeyHeader)
+	if key == "" {
+		writeProblem(w, http.StatusBadRequest,
+			problemIdempotencyKeyRequired,
+			"This endpoint changes state and requires a caller-supplied "+IdempotencyKeyHeader+" header so a retried request is never applied twice.",
+			r.URL.Path)
+		return "", false
+	}
+	if !validIdempotencyKey(key) {
+		writeProblem(w, http.StatusBadRequest,
+			problemIdempotencyKeyInvalid,
+			"The "+IdempotencyKeyHeader+" header must be 1-128 printable ASCII characters (a client-generated UUID per logical submit).",
+			r.URL.Path)
+		return "", false
+	}
+	return key, true
+}
+
+// readFingerprint reads the request body once, hashes it (the fingerprint
+// is method + path + SHA-256(body), REST API guideline 2.3) and restores
+// it (io.NopCloser over a bytes.Reader) so downstream JSON decoding in
+// the real handler is completely unaffected — it sees the exact same
+// bytes it would have without the middleware. A body that cannot be read
+// is a 400 problemBodyUnreadable; ok reports whether to continue.
+func readFingerprint(w http.ResponseWriter, r *http.Request) (requestHash string, ok bool) {
+	bodyBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeProblem(w, http.StatusBadRequest,
+			problemBodyUnreadable,
+			err.Error(), r.URL.Path)
+		return "", false
+	}
+	_ = r.Body.Close()
+	r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+	sum := sha256.Sum256(bodyBytes)
+	return hex.EncodeToString(sum[:]), true
 }
 
 // runFreshRequest handles the "genuinely new key" path: it calls next
@@ -317,21 +353,12 @@ func replayCachedResponse(w http.ResponseWriter, r *http.Request, pool *pgxpool.
 // RETRYABLE or unclassified refusal never reaches the release: it is rolled
 // back whole, key row included (ADR 0043).
 func runFreshRequest(w http.ResponseWriter, r *http.Request, ctx context.Context, tx pgx.Tx, key string, next http.Handler) {
-	// A panic from the wrapped handler must roll back this transaction —
-	// so neither the idempotency row nor any domain write it made
-	// visible-if-committed (the ProcessPath Save, the outbox insert — see
-	// the tx-join mechanism this ctx now carries) survives — and then
-	// re-panic so the outer chi Recoverer middleware still produces the
-	// service's normal 500 response. A panic's outcome is deliberately
-	// never cached: it is not a "normal" response (see the type doc), so
-	// a retry after a panic must re-attempt the real work, not replay a
-	// stored 500.
-	defer func() {
-		if p := recover(); p != nil {
-			_ = tx.Rollback(ctx)
-			panic(p)
-		}
-	}()
+	// A panic from the wrapped handler must roll back this transaction
+	// (rollbackOnPanic) — neither the idempotency row nor any domain
+	// write survives — and re-panic so the outer chi Recoverer
+	// middleware still produces the service's normal 500 response. A
+	// panic's outcome is deliberately never cached (see the type doc).
+	defer rollbackOnPanic(ctx, tx)
 
 	if _, err := tx.Exec(ctx, "SAVEPOINT handler_run"); err != nil {
 		_ = tx.Rollback(ctx)
@@ -345,11 +372,8 @@ func runFreshRequest(w http.ResponseWriter, r *http.Request, ctx context.Context
 	// An answer that is not final for this request is RELEASED: roll the
 	// whole transaction back — the key row with it — and answer the
 	// client, so a retry with the same key executes again instead of
-	// replaying an answer that depends on state which may have changed.
-	// That is a 5xx (never stored, guideline 2.5), a refusal whose
-	// problem type declares RETRYABLE, and a refusal that declared no
-	// class at all — the safe fallback, released rather than pinned
-	// (ADR 0043).
+	// replaying an answer that depends on state which may have changed
+	// (a 5xx, a RETRYABLE or unclassified refusal, ADR 0043).
 	if !rec.storable() {
 		_ = tx.Rollback(ctx)
 		writeRecorded(w, rec.ResponseRecorder)
@@ -377,13 +401,27 @@ func runFreshRequest(w http.ResponseWriter, r *http.Request, ctx context.Context
 		}
 	}
 
-	// Every answer that is final for the request is cached here — a 2xx,
-	// and a refusal whose problem type declares FINAL or OUTCOME (ADR
-	// 0043): a client retrying the exact same key+body deterministically
-	// gets the exact same answer. An OUTCOME refusal's handler writes are
-	// committed by the same transaction (the savepoint above was
-	// released), which is what makes the stored answer true. A caller
-	// wanting a different outcome must use a new Idempotency-Key.
+	// Every answer that is final for the request is cached by
+	// commitStoredOutcome — a 2xx, and a refusal whose problem type
+	// declares FINAL or OUTCOME (ADR 0043): a client retrying the exact
+	// same key+body deterministically gets the exact same answer. An
+	// OUTCOME refusal's handler writes are committed by the same
+	// transaction (the savepoint above was released), which is what makes
+	// the stored answer true. A caller wanting a different outcome must
+	// use a new Idempotency-Key.
+	commitStoredOutcome(w, r, ctx, tx, rec, key)
+}
+
+// commitStoredOutcome persists the captured answer on the key row,
+// commits, and only then — after a successful commit — copies the
+// recorder's response onto the real http.ResponseWriter, VERBATIM
+// (headers, then status, then body). This ordering — capture,
+// persist+commit, THEN write to the real client — is what guarantees the
+// no-null-status-code-ever-committed invariant documented on
+// RequireIdempotencyKey. Any failure along the way rolls the transaction
+// back and answers a 500, so the key is released and the same key
+// retries the real work.
+func commitStoredOutcome(w http.ResponseWriter, r *http.Request, ctx context.Context, tx pgx.Tx, rec *keyCapture, key string) {
 	headersJSON, err := json.Marshal(rec.Header())
 	if err != nil {
 		_ = tx.Rollback(ctx)
@@ -406,9 +444,23 @@ func runFreshRequest(w http.ResponseWriter, r *http.Request, ctx context.Context
 		return
 	}
 
-	// Only after a successful commit does the real client see anything —
-	// the recorder's headers, then status, then body, VERBATIM.
 	writeRecorded(w, rec.ResponseRecorder)
+}
+
+// rollbackOnPanic is deferred by runFreshRequest: a panic from the
+// wrapped handler rolls the transaction back — so neither the
+// idempotency row nor any domain write it made visible-if-committed (the
+// ProcessPath Save, the outbox insert — see the tx-join mechanism the
+// request ctx carries) survives — and then re-panics, so the outer chi
+// Recoverer middleware still produces the service's normal 500 response.
+// A panic's outcome is deliberately never cached: it is not a "normal"
+// response (see RequireIdempotencyKey's doc), so a retry after a panic
+// must re-attempt the real work, not replay a stored 500.
+func rollbackOnPanic(ctx context.Context, tx pgx.Tx) {
+	if p := recover(); p != nil {
+		_ = tx.Rollback(ctx)
+		panic(p)
+	}
 }
 
 // writeRecorded copies a captured response onto the real writer: headers,

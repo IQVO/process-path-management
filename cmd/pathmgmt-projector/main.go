@@ -85,13 +85,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	defer func() {
-		flushCtx, cancel := context.WithTimeout(context.Background(), telemetryFlushTimeout)
-		defer cancel()
-		if err := shutdownTelemetry(flushCtx); err != nil {
-			logger.Warn("telemetry flush failed on shutdown", "error", err)
-		}
-	}()
+	defer telemetryFlush(logger, shutdownTelemetry)()
 
 	adminAddr := getenv("ADMIN_ADDR", ":8091")
 	analyticsURL := cfg.analyticsURL
@@ -108,6 +102,14 @@ func run() error {
 		return err
 	}
 
+	return serveAndWait(logger, adminAddr, pool, kafkaBrokers)
+}
+
+// serveAndWait wires the analytics consumer and the admin server, runs
+// both until SIGINT/SIGTERM or a consumer-loop exit, then returns the
+// joined error of the loop and the graceful shutdown (see
+// projectorRuntime.shutdown for the ordered stop sequence, ADR 0012).
+func serveAndWait(logger *slog.Logger, adminAddr string, pool *pgxpool.Pool, kafkaBrokers []string) error {
 	projection := analyticsstore.NewPostgresProjection(pool)
 	consumed := analyticsstore.NewConsumedEventsRepo(pool)
 	consumer := inboundkafka.NewAnalyticsConsumer(kafkaBrokers, outboundkafka.AnalyticsTopic, projection, consumed, analyticsstore.NewUnitOfWork(pool), logger)
@@ -118,15 +120,7 @@ func run() error {
 	// sequence below, before the admin server itself stops accepting
 	// connections.
 	readiness := &readinessGate{}
-
-	srv := &http.Server{Addr: adminAddr, Handler: newAdminMux(readiness), ReadHeaderTimeout: 5 * time.Second}
-
-	go func() {
-		logger.Info("projector admin server listening", "addr", adminAddr)
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			logger.Error("projector admin server failed", "error", err)
-		}
-	}()
+	srv := startAdminServer(logger, adminAddr, readiness)
 
 	consumerCtx, cancelConsumer := context.WithCancel(context.Background())
 	// consumerExit carries the analytics consumer's Run result the moment
@@ -167,6 +161,34 @@ func run() error {
 		pool:           pool,
 	}
 	return errors.Join(runErr, rt.shutdown())
+}
+
+// startAdminServer builds the projector's admin server (health/readiness
+// only, ADR 0012) and starts it listening in the background. A listener
+// error is logged, not returned: the awaitStop loop decides the process's
+// fate on the consumer side.
+func startAdminServer(logger *slog.Logger, addr string, readiness *readinessGate) *http.Server {
+	srv := &http.Server{Addr: addr, Handler: newAdminMux(readiness), ReadHeaderTimeout: 5 * time.Second}
+	go func() {
+		logger.Info("projector admin server listening", "addr", addr)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			logger.Error("projector admin server failed", "error", err)
+		}
+	}()
+	return srv
+}
+
+// telemetryFlush adapts a telemetry shutdown function into the no-arg
+// closure run defers: the flush is bounded by telemetryFlushTimeout and a
+// failure is only warned about, never fatal.
+func telemetryFlush(logger *slog.Logger, shutdown func(context.Context) error) func() {
+	return func() {
+		flushCtx, cancel := context.WithTimeout(context.Background(), telemetryFlushTimeout)
+		defer cancel()
+		if err := shutdown(flushCtx); err != nil {
+			logger.Warn("telemetry flush failed on shutdown", "error", err)
+		}
+	}
 }
 
 // openAnalyticsPool runs the analytical migrations (the projector owns the
