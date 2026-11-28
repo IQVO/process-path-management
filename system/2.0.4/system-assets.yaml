@@ -1,0 +1,59 @@
+# process-path-management 2.0.4 (v2.0.4, c0e37ed) - System Assets & Interaction Standard v0.4
+apiVersion: warehouse/system-assets/v1
+application: application.yaml
+release:
+  version: 2.0.4
+  tag: v2.0.4
+  commit: c0e37ed81881b4d7a0ad9c24b688d64c801158d2
+  chart: oci://ghcr.io/iqvo/process-path-management:2.0.4
+  images:
+  - ghcr.io/iqvo/warehouse-infra/process-path-management:c0e37ed-arm64
+  drift:
+  - MCP initialize serverInfo process-path-management-mcp@'1.0.0' != release 2.0.4 (MC-5)
+  - served A2A Agent Card version 'c0e37ed-arm64' != release 2.0.4 (SERVICE_VERSION is rendered from the
+    image tag)
+  - cluster runs chart 'process-path-management-0.1.0', not the released chart process-path-management-2.0.4
+assets:
+- id: process-path-management/openapi-reports
+  kind: openapi
+  path: openapi/openapi-reports.yaml
+  spec:
+    name: openapi
+    version: 3.0.3
+  version: 1.0.0
+  exposure: kong
+- id: process-path-management/openapi
+  kind: openapi
+  path: openapi/openapi.yaml
+  spec:
+    name: openapi
+    version: 3.0.3
+  version: 1.0.0
+  exposure: kong
+- id: process-path-management/asyncapi
+  kind: asyncapi
+  path: asyncapi/asyncapi.yaml
+  spec:
+    name: asyncapi
+    version: 2.6.0
+  version: 1.0.0
+  exposure: kafka
+- id: process-path-management/mcp
+  kind: mcp
+  documents:
+    serverCard: mcp/server-card.json
+    primitives: mcp/primitives.json
+  spec:
+    name: mcp
+    version: '2026-07-28'
+    serverCard: sep-2127
+  version: 2.0.4
+  exposure: agent-router
+- id: process-path-management/a2a
+  kind: a2a
+  path: a2a/agent-card.json
+  spec:
+    name: a2a
+    version: 1.0.0
+  version: 2.0.4
+  exposure: agent-router

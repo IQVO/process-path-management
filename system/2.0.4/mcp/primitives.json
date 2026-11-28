@@ -1,0 +1,629 @@
+{
+  "apiVersion": "warehouse/mcp-primitives/v1",
+  "server": "com.warehouse.wes/process-path-management",
+  "tools": [
+    {
+      "_meta": {
+        "com.warehouse/authority": "L1"
+      },
+      "annotations": {
+        "idempotentHint": false,
+        "readOnlyHint": true
+      },
+      "description": "Return the process-path-management 'Process Path Catalogue Growth & Change' report (paths defined/revised/deactivated) for a time window, bucketed by day. Reads via the pathmgmt-reports REST service.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "description": "start of the window, inclusive, RFC3339 (required)"
+          },
+          "to": {
+            "type": "string",
+            "description": "end of the window, exclusive, RFC3339 (required)"
+          },
+          "granularity": {
+            "type": "string",
+            "description": "optional time bucket granularity; only 'day' is supported and it is the default"
+          }
+        },
+        "required": [
+          "from",
+          "to"
+        ],
+        "additionalProperties": false
+      },
+      "name": "get_catalogue_growth_report",
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "rows": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "type": "object",
+              "properties": {
+                "dayBucket": {
+                  "type": "string"
+                },
+                "pathsDefined": {
+                  "type": "integer"
+                },
+                "pathsRevised": {
+                  "type": "integer"
+                },
+                "pathsDeactivated": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "dayBucket",
+                "pathsDefined",
+                "pathsRevised",
+                "pathsDeactivated"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "rows"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "_meta": {
+        "com.warehouse/authority": "L1"
+      },
+      "annotations": {
+        "idempotentHint": false,
+        "readOnlyHint": true
+      },
+      "description": "Return one site's Critical Pull Time (CPT) schedule: timezone and the recurring daily cutoffs (cptId, localTime, daysOfWeek, shipMethod, eligiblePathIds). Not found is returned as a tool-level error. Read-only (ADR 0010) — there is no write tool for the schedule.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "siteId": {
+            "type": "string",
+            "description": "the site id to look up the CPT schedule for, e.g. sp1"
+          }
+        },
+        "required": [
+          "siteId"
+        ],
+        "additionalProperties": false
+      },
+      "name": "get_cpt_schedule",
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "siteId": {
+            "type": "string"
+          },
+          "timezone": {
+            "type": "string"
+          },
+          "cutoffs": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "type": "object",
+              "properties": {
+                "cptId": {
+                  "type": "string"
+                },
+                "localTime": {
+                  "type": "string"
+                },
+                "daysOfWeek": {
+                  "type": [
+                    "null",
+                    "array"
+                  ],
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "shipMethod": {
+                  "type": "string"
+                },
+                "eligiblePathIds": {
+                  "type": [
+                    "null",
+                    "array"
+                  ],
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "cptId",
+                "localTime",
+                "daysOfWeek",
+                "shipMethod",
+                "eligiblePathIds"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "siteId",
+          "timezone",
+          "cutoffs",
+          "createdAt",
+          "updatedAt"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "_meta": {
+        "com.warehouse/authority": "L1"
+      },
+      "annotations": {
+        "idempotentHint": false,
+        "readOnlyHint": true
+      },
+      "description": "Return one process flow by id (ADR 0042): its name, the ordered stages (each a pathId naming an existing process path and the processType of the work done there: PICK, REBIN, PACK, SLAM, DISPATCH, ARRIVAL, RELOCATE or REPLENISH), status (ACTIVE or RETIRED), version and timestamps. Works for retired flows too. Not found is returned as a tool-level error. Read-only: flows are changed through REST only.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "flowId": {
+            "type": "string",
+            "description": "the process flow id to look up, e.g. single-unit-outbound"
+          }
+        },
+        "required": [
+          "flowId"
+        ],
+        "additionalProperties": false
+      },
+      "name": "get_process_flow",
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "flowId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "stages": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "type": "object",
+              "properties": {
+                "pathId": {
+                  "type": "string"
+                },
+                "processType": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "pathId",
+                "processType"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "status": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer"
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "flowId",
+          "name",
+          "stages",
+          "status",
+          "version",
+          "createdAt",
+          "updatedAt"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "_meta": {
+        "com.warehouse/authority": "L1"
+      },
+      "annotations": {
+        "idempotentHint": false,
+        "readOnlyHint": true
+      },
+      "description": "Return the full definition of one process path by its canonical id: matchPrefix, direct, requiredCapabilities, cycleTimeP95, eligibility, intake (the demand sources allowed to route work onto it: CUSTOMER_ORDER, STOCK_TRANSFER, SLOT_RELOCATION, INVENTORY_CONTROL, REPLENISHMENT; [] means only an explicit path id reaches it), status, and timestamps. Not found is returned as a tool-level error.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "pathId": {
+            "type": "string",
+            "description": "the canonical process path id to look up, e.g. PICK, PACK, REBIN, SLAM"
+          }
+        },
+        "required": [
+          "pathId"
+        ],
+        "additionalProperties": false
+      },
+      "name": "get_process_path",
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "pathId": {
+            "type": "string"
+          },
+          "matchPrefix": {
+            "type": "string"
+          },
+          "direct": {
+            "type": "boolean"
+          },
+          "requiredCapabilities": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "destinationLocationRole": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "active": {
+            "type": "boolean"
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string"
+          },
+          "cycleTimeP95": {
+            "type": "string"
+          },
+          "eligibility": {
+            "type": "object",
+            "properties": {
+              "maxUnitsPerLine": {
+                "type": [
+                  "null",
+                  "integer"
+                ]
+              },
+              "requiredProductAttributes": {
+                "type": [
+                  "null",
+                  "array"
+                ],
+                "items": {
+                  "type": "string"
+                }
+              },
+              "excludedProductAttributes": {
+                "type": [
+                  "null",
+                  "array"
+                ],
+                "items": {
+                  "type": "string"
+                }
+              },
+              "nonSortable": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false
+          },
+          "intake": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "pathId",
+          "matchPrefix",
+          "direct",
+          "requiredCapabilities",
+          "status",
+          "active",
+          "createdAt",
+          "updatedAt",
+          "cycleTimeP95",
+          "eligibility",
+          "intake"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "_meta": {
+        "com.warehouse/authority": "L1"
+      },
+      "annotations": {
+        "idempotentHint": false,
+        "readOnlyHint": true
+      },
+      "description": "List process flows in id order. activeOnly (default true) restricts the result to ACTIVE flows; set it false to include retired ones too. Each entry carries the same fields as get_process_flow.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "activeOnly": {
+            "type": [
+              "null",
+              "boolean"
+            ],
+            "description": "when true (the default), only ACTIVE flows are returned; when false, retired flows are included too"
+          }
+        },
+        "additionalProperties": false
+      },
+      "name": "list_process_flows",
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "flows": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "type": "object",
+              "properties": {
+                "flowId": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "stages": {
+                  "type": [
+                    "null",
+                    "array"
+                  ],
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "pathId": {
+                        "type": "string"
+                      },
+                      "processType": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "pathId",
+                      "processType"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "status": {
+                  "type": "string"
+                },
+                "version": {
+                  "type": "integer"
+                },
+                "createdAt": {
+                  "type": "string"
+                },
+                "updatedAt": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "flowId",
+                "name",
+                "stages",
+                "status",
+                "version",
+                "createdAt",
+                "updatedAt"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "flows"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "_meta": {
+        "com.warehouse/authority": "L1"
+      },
+      "annotations": {
+        "idempotentHint": false,
+        "readOnlyHint": true
+      },
+      "description": "List process paths in the catalogue. activeOnly (default true) restricts the result to ACTIVE paths; set it false to include deactivated ones too.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "activeOnly": {
+            "type": [
+              "null",
+              "boolean"
+            ],
+            "description": "when true (the default), only ACTIVE paths are returned; when false, deactivated paths are included too"
+          }
+        },
+        "additionalProperties": false
+      },
+      "name": "list_process_paths",
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "paths": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "type": "object",
+              "properties": {
+                "pathId": {
+                  "type": "string"
+                },
+                "matchPrefix": {
+                  "type": "string"
+                },
+                "direct": {
+                  "type": "boolean"
+                },
+                "requiredCapabilities": {
+                  "type": [
+                    "null",
+                    "array"
+                  ],
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "destinationLocationRole": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string"
+                },
+                "active": {
+                  "type": "boolean"
+                },
+                "createdAt": {
+                  "type": "string"
+                },
+                "updatedAt": {
+                  "type": "string"
+                },
+                "cycleTimeP95": {
+                  "type": "string"
+                },
+                "eligibility": {
+                  "type": "object",
+                  "properties": {
+                    "maxUnitsPerLine": {
+                      "type": [
+                        "null",
+                        "integer"
+                      ]
+                    },
+                    "requiredProductAttributes": {
+                      "type": [
+                        "null",
+                        "array"
+                      ],
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "excludedProductAttributes": {
+                      "type": [
+                        "null",
+                        "array"
+                      ],
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "nonSortable": {
+                      "type": "boolean"
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "intake": {
+                  "type": [
+                    "null",
+                    "array"
+                  ],
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "pathId",
+                "matchPrefix",
+                "direct",
+                "requiredCapabilities",
+                "status",
+                "active",
+                "createdAt",
+                "updatedAt",
+                "cycleTimeP95",
+                "eligibility",
+                "intake"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "paths"
+        ],
+        "additionalProperties": false
+      }
+    }
+  ],
+  "resources": [],
+  "resourceTemplates": [
+    {
+      "description": "The full definition of one process path by its canonical id: matchPrefix, direct, requiredCapabilities, cycleTimeP95, eligibility, intake, status and timestamps. Deactivated paths are readable too; an unknown id is an error, never an empty success.",
+      "mimeType": "application/json",
+      "name": "process path definition",
+      "uriTemplate": "warehouse://process-path-management/paths/{pathId}"
+    }
+  ],
+  "prompts": [
+    {
+      "arguments": [
+        {
+          "name": "pathId",
+          "description": "The canonical process path id to review, e.g. PICK, PACK, REBIN, SLAM.",
+          "required": true
+        },
+        {
+          "name": "siteId",
+          "description": "Optional site id: when given, the site's CPT schedule is also checked against the path (its cutoffs' eligiblePathIds must reference existing paths)."
+        }
+      ],
+      "description": "Standard operating procedure for reviewing one process-path catalogue entry: read the definition, check matchPrefix/capabilities/intake consistency, verify CPT cutoffs reference existing paths, and report findings for human action.",
+      "name": "review_path_definition"
+    }
+  ]
+}

@@ -1,0 +1,33 @@
+# process-path-management 2.0.4 (v2.0.4, c0e37ed) - System Assets & Interaction Standard v0.4
+apiVersion: warehouse/application/v1
+application:
+  id: process-path-management
+  name: Process Path Management
+  kind: bounded-context
+  version: 2.0.4
+  description: Process Path Management — Generic Subdomain (operator-configurable process-path catalogue,
+    replacing the retired static YAML file)
+  repository: https://github.com/IQVO/process-path-management
+  owners:
+  - claudioed
+  lifecycle: production
+subdomain:
+  id: wes
+  name: WES
+  summary: 'Warehouse Execution System: planning, releasing and executing work on the floor.'
+boundedContext:
+  id: process-path-management
+  name: Process Path Management
+  classification: Generic
+  tier: WES, extracted catalogue
+  purpose: Operator-configurable process-path topology (id, capability requirements, activation lifecycle,
+    CPT schedules), replacing a static YAML catalogue. Source of the process-path published language for
+    the fleet.
+  publishes:
+  - warehouse.process-path-management.analytics
+  - warehouse.process-path-management.events
+tags:
+- process-path
+- cpt-schedule
+assets: system-assets.yaml
+interactions: interactions.yaml

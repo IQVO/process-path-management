@@ -1,0 +1,100 @@
+{
+  "supportedInterfaces": [
+    {
+      "url": "http://process-path-management-a2a.warehouse-systems.svc.cluster.local:8093/",
+      "protocolBinding": "JSONRPC",
+      "protocolVersion": "1.0"
+    }
+  ],
+  "capabilities": {
+    "pushNotifications": false,
+    "streaming": false
+  },
+  "defaultInputModes": [
+    "application/json",
+    "text/plain"
+  ],
+  "defaultOutputModes": [
+    "application/json",
+    "text/plain"
+  ],
+  "description": "Process Path Management agent for the Warehouse Execution System: the read-only source of truth for the fleet's process-path catalogue. It answers what a process path is (its matchPrefix routing rule, whether it is direct, the capabilities required to work it, cycle time, eligibility and which demand sources may route onto it), which paths currently exist, and which ordered stages of paths a process flow passes through. It never changes the catalogue, and it does not decide dispatch, routing or assignment.",
+  "name": "process-path-management",
+  "provider": {
+    "organization": "IQVO",
+    "url": "https://github.com/IQVO/process-path-management"
+  },
+  "skills": [
+    {
+      "description": "Read the full definition of one process path by its canonical pathId (e.g. PICK, PACK, REBIN, SLAM): matchPrefix, direct, requiredCapabilities, cycleTimeP95, eligibility, intake (the demand sources allowed to route work onto it; [] means only an explicit path id reaches it), status and timestamps. Works for deactivated paths too. Answers a 404 problem when no path has that id. Persists nothing.",
+      "examples": [
+        "{\"skill\":\"get_process_path\",\"arguments\":{\"pathId\":\"PICK\"}}"
+      ],
+      "id": "get_process_path",
+      "inputModes": [
+        "application/json"
+      ],
+      "name": "Look up one process path",
+      "tags": [
+        "process-path",
+        "catalogue",
+        "read",
+        "authority:L1"
+      ]
+    },
+    {
+      "description": "Read the process-path catalogue: every ACTIVE path by default, or, with activeOnly=false, deactivated paths too (the audit view). Each entry carries the same fields as get_process_path. The catalogue is small and bounded. Persists nothing.",
+      "examples": [
+        "{\"skill\":\"list_process_paths\",\"arguments\":{}}",
+        "{\"skill\":\"list_process_paths\",\"arguments\":{\"activeOnly\":false}}"
+      ],
+      "id": "list_process_paths",
+      "inputModes": [
+        "application/json"
+      ],
+      "name": "List the process-path catalogue",
+      "tags": [
+        "process-path",
+        "catalogue",
+        "read",
+        "authority:L1"
+      ]
+    },
+    {
+      "description": "Read one process flow by flowId (ADR 0042): the ordered stages a workload passes through, each a pathId naming a process path and the processType of the work done there (PICK, REBIN, PACK, SLAM, DISPATCH, ARRIVAL, RELOCATE or REPLENISH), plus name, status (ACTIVE or RETIRED), version and timestamps. Works for retired flows too. Answers a 404 problem when no flow has that id. Persists nothing.",
+      "examples": [
+        "{\"skill\":\"get_process_flow\",\"arguments\":{\"flowId\":\"single-unit-outbound\"}}"
+      ],
+      "id": "get_process_flow",
+      "inputModes": [
+        "application/json"
+      ],
+      "name": "Look up one process flow",
+      "tags": [
+        "process-flow",
+        "flows",
+        "read",
+        "authority:L1"
+      ]
+    },
+    {
+      "description": "Read the process flows in id order: every ACTIVE flow by default, or, with activeOnly=false, retired ones too. Each entry carries the same fields as get_process_flow. Persists nothing.",
+      "examples": [
+        "{\"skill\":\"list_process_flows\",\"arguments\":{}}",
+        "{\"skill\":\"list_process_flows\",\"arguments\":{\"activeOnly\":false}}"
+      ],
+      "id": "list_process_flows",
+      "inputModes": [
+        "application/json"
+      ],
+      "name": "List the process flows",
+      "tags": [
+        "process-flow",
+        "flows",
+        "read",
+        "authority:L1"
+      ]
+    }
+  ],
+  "version": "c0e37ed-arm64"
+}

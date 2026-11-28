@@ -1,0 +1,20 @@
+{
+  "name": "com.warehouse.wes/process-path-management",
+  "version": "2.0.4",
+  "title": "Process Path Management MCP",
+  "description": "Operator-configurable process-path topology (id, capability requirements, activation lifecycle, CPT schedules), replacing a static YAML catalogue.",
+  "websiteUrl": "https://iqvo.github.io/process-path-management/",
+  "repository": {
+    "url": "https://github.com/IQVO/process-path-management",
+    "source": "github"
+  },
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "http://localhost:8010/api/process-path-management",
+      "protocolVersions": [
+        "2026-07-28"
+      ]
+    }
+  ]
+}
