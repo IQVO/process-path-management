@@ -1,0 +1,1198 @@
+openapi: 3.0.3
+info:
+  title: Process Path Management API
+  description: >
+    Operator-configurable process-path catalogue: canonical identity, the
+    matchPrefix rule downstream consumers use to resolve a caller-supplied
+    id to a path family, and the capabilities a station/associate must hold
+    to work that path. This service replaces what was, before it existed, a
+    static YAML file (warehouse-infra/config/process-paths/sortable-fc.yaml)
+    loaded once at boot by fulfillment-execution, wes-work-planning, and
+    workforce-management. It is the SOURCE of the process-path published
+    language, never a consumer of anyone else's — every change here is
+    propagated onward exclusively via Kafka (see apis/asyncapi.yaml), never
+    through a synchronous callback into this service.
+
+
+    This API follows the fleet REST API guideline (ADR 0040): URLs name
+    things, `POST /process-paths` is behind the Idempotency-Key middleware (a
+    retry replays the stored answer with the response header
+    `Idempotency-Replayed: true`; the same key with a different method, path
+    or body is 409 `idempotency-key-reused`; a missing key is 400
+    `idempotency-key-required`). Which answers are stored is decided per
+    problem type by its replay class (ADR 0043): a success and a FINAL or
+    OUTCOME refusal are stored and replayed; a RETRYABLE refusal (nothing
+    committed, the cause can change) and any 5xx or panic are never stored —
+    the key is released, a retry executes the work again, and a different
+    body under a released key is a NEW request, not
+    `idempotency-key-reused`. `PUT` and `DELETE` are idempotent by method
+    and take no key, and the collection `GET /process-paths` is
+    keyset-paginated as `{items, nextCursor}` with `limit` and `cursor`.
+  version: "1.0.0"
+  license:
+    name: MIT
+  contact:
+    name: Process Path Management Team
+    url: https://github.com/claudioed/process-path-management
+servers:
+  - url: http://localhost:8080
+    description: Local development
+tags:
+  - name: process-paths
+    description: Define, revise, retrieve, list, and deactivate process paths
+  - name: cpt-schedule
+    description: Site-scoped Critical Pull Time (CPT) schedules (ADR 0010)
+  - name: process-flows
+    description: The ordered stages of process paths a workload passes through (ADR 0042)
+  - name: health
+    description: Liveness and readiness probes
+paths:
+  /healthz:
+    get:
+      tags: [health]
+      operationId: getHealthz
+      summary: Liveness probe
+      description: Reports whether the service process is up and able to serve requests.
+      responses:
+        "200":
+          description: Service is up
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+  /readyz:
+    get:
+      tags: [health]
+      operationId: getReadyz
+      summary: Readiness probe
+      description: >-
+        Distinct from liveness (GET /healthz). Ready means: the service is
+        not draining AND Postgres answers a ping AND a Kafka broker
+        answers a metadata request (reachability only; topics are never
+        required). The dependency verdict is cached for a few seconds.
+        Readiness flips to not-ready as the FIRST step of a graceful
+        shutdown drain (503 with a status body), so a Kubernetes
+        readinessProbe stops routing new traffic while in-flight requests
+        finish. Liveness never flips.
+      responses:
+        "200":
+          description: The service is ready to receive traffic
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ready
+        "503":
+          description: >-
+            The service is draining (shutdown in progress), or Postgres or
+            Kafka is not reachable, and must not receive new traffic.
+            While draining the body is `{"status":"not_ready"}`
+            (`application/json`); when a dependency check fails it is an RFC
+            7807 problem of type `dependency-unavailable` whose detail names
+            the failing dependencies (`application/problem+json`).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: not_ready
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetails"
+  /process-paths:
+    post:
+      tags: [process-paths]
+      operationId: definePath
+      summary: Define a brand-new process path
+      description: >
+        Rejects with 409 if the given pathId is already defined — active or
+        deactivated. A path's identity is permanent once created; a caller
+        wanting to re-use an id after deactivation must be told explicitly,
+        never silently overwritten. Publishes ProcessPathCreated on success.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DefineProcessPathRequest"
+            examples:
+              fullCase:
+                summary: FULL_CASE (ADR 0038) - whole-case picking, gated on the fullCase attribute
+                value:
+                  pathId: FULL_CASE
+                  matchPrefix: full-case
+                  direct: true
+                  requiredCapabilities: ["pick"]
+                  cycleTimeP95: 1h30m
+                  eligibility:
+                    requiredProductAttributes: ["fullCase"]
+                  intake: ["CUSTOMER_ORDER"]
+              crossDock:
+                summary: CROSS_DOCK (ADR 0038) - receive to ship with no put-away, ends at Shipping
+                value:
+                  pathId: CROSS_DOCK
+                  matchPrefix: cross-dock
+                  direct: true
+                  requiredCapabilities: ["dispatch"]
+                  destinationLocationRole: Shipping
+                  cycleTimeP95: 1h
+                  eligibility:
+                    requiredProductAttributes: ["crossDock"]
+                  intake: ["CUSTOMER_ORDER", "STOCK_TRANSFER"]
+              breakCase:
+                summary: BREAK_CASE (ADR 0038) - the loose remainder of a line that is not a whole number of cases
+                value:
+                  pathId: BREAK_CASE
+                  matchPrefix: break
+                  direct: true
+                  requiredCapabilities: ["break"]
+                  cycleTimeP95: 2h
+                  intake: []
+      responses:
+        "201":
+          description: Path defined
+          headers:
+            Idempotency-Replayed:
+              $ref: "#/components/headers/IdempotencyReplayed"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProcessPath"
+        "400":
+          description: >
+            The request body is missing or not valid JSON (including a JSON
+            number too large for eligibility.maxUnitsPerLine's int64
+            range, a null element inside requiredCapabilities,
+            eligibility.requiredProductAttributes,
+            eligibility.excludedProductAttributes or intake — every array element must
+            be a string — or a NUL character U+0000 anywhere in the body),
+            all `malformed-request-body`, or the Idempotency-Key header is
+            absent (`idempotency-key-required`) or not 1-128 printable ASCII
+            characters (`idempotency-key-invalid`). These 400s are functions
+            of the request alone (class FINAL, ADR 0043): once the key is
+            accepted they are stored, and a retry with the same key, method,
+            path and body replays them with `Idempotency-Replayed: true`. A
+            RETRYABLE refusal is never stored: the key is released and a
+            retry executes again.
+          headers:
+            Idempotency-Replayed:
+              $ref: "#/components/headers/IdempotencyReplayed"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetails"
+        "409":
+          description: >-
+            A process path with this id already exists (active or
+            deactivated), or the Idempotency-Key header was already used
+            with a different method, path or body (`idempotency-key-reused`,
+            distinguishable from the business conflict by the problem type).
+            Both 409s of this route are final for the request (class FINAL,
+            ADR 0043: a taken pathId is taken forever — deactivation keeps
+            the row and there is no reactivate — and the reuse conflict is
+            the store's own answer), so a retry under the same key replays
+            them with `Idempotency-Replayed: true`.
+          headers:
+            Idempotency-Replayed:
+              $ref: "#/components/headers/IdempotencyReplayed"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetails"
+              examples:
+                pathAlreadyExists:
+                  summary: A path with this id is already defined
+                  value:
+                    type: https://errors.process-path-management.warehouse-systems.dev/path-already-exists
+                    title: A process path with this id already exists (active or deactivated)
+                    status: 409
+                    detail: process path already exists
+                    instance: /process-paths
+                idempotencyKeyReused:
+                  summary: Idempotency-Key reused with a different method, path or body (REST guideline 2.3)
+                  value:
+                    type: https://errors.process-path-management.warehouse-systems.dev/idempotency-key-reused
+                    title: Idempotency-Key was already used with a different request
+                    status: 409
+                    detail: The Idempotency-Key header on this request was already used with a different method, path or body. Use a new Idempotency-Key for a genuinely different request.
+                    instance: /process-paths
+        "422":
+          description: >
+            pathId is empty, matchPrefix is empty/not lower-case,
+            requiredCapabilities is empty, cycleTimeP95 is not a positive
+            Go duration string, destinationLocationRole is not one of
+            Drop/WorkCenter/Shipping, or intake holds an unknown or repeated
+            demand source (invalid-intake). These 422s are functions of the
+            request's own fields (class FINAL, ADR 0043): a retry with the
+            same key, method, path and body replays the stored 422 with
+            `Idempotency-Replayed: true`.
+          headers:
+            Idempotency-Replayed:
+              $ref: "#/components/headers/IdempotencyReplayed"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetails"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    get:
+      tags: [process-paths]
+      operationId: listPaths
+      summary: List process paths
+      description: >
+        Returns only Active paths by default — matching the retired YAML
+        catalogue's own posture that every consumer's normal read is "the
+        currently valid set," not everything that ever existed. Pass
+        ?all=true for the audit view (Active and Deactivated paths).
+        The list is keyset-paginated (REST guideline section 3): `limit`
+        (1-500, default 100) and an opaque `cursor`, in pathId order (the
+        unique key); the answer is `{items, nextCursor}` and
+        `nextCursor` is absent on the last page. Filters (`all`) are
+        repeated on every page request. Any query parameter other than
+        `all`, `limit` and `cursor` is 400 `unknown-query-parameter` (a
+        retired paging parameter such as `after` or `offset` fails loudly
+        instead of reading page one forever).
+      parameters:
+        - name: all
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
+          description: When true, includes Deactivated paths too.
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: One page of the requested set of process paths
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProcessPathPage"
+        "400":
+          description: >-
+            The `all` query parameter is present but not a boolean (e.g.
+            `all=null`) (`invalid-query-parameter`), `limit` is not an
+            integer from 1 to 500 (`invalid-limit`), `cursor` is not a token
+            this API issued (`invalid-cursor`), or the request carries a
+            query parameter this operation does not declare
+            (`unknown-query-parameter`).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetails"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /process-paths/{pathId}:
+    get:
+      tags: [process-paths]
+      operationId: getPath
+      summary: Get one process path by id
+      description: Returns the path regardless of status (Active or Deactivated).
+      parameters:
+        - $ref: "#/components/parameters/PathIdPathParam"
+      responses:
+        "200":
+          description: The requested process path
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProcessPath"
+        "404":
+          description: No process path exists with this id
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetails"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    put:
+      tags: [process-paths]
+      operationId: revisePath
+      summary: Revise an Active process path's matchPrefix/requiredCapabilities/cycleTimeP95/eligibility/intake
+      description: >
+        pathId and direct are not revisable (direct describes a structural
+        routing fact, not an operator-tunable parameter). Returns 422 if the
+        path is Deactivated — a deactivated path is a closed historical
+        record. A no-op revision (identical matchPrefix,
+        requiredCapabilities, cycleTimeP95, eligibility, and intake) is a
+        successful 200 that does NOT republish ProcessPathUpdated. intake
+        (ADR 0034) is optional here: omitting it keeps the current intake.
+      parameters:
+        - $ref: "#/components/parameters/PathIdPathParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RevisePathRequest"
+      responses:
+        "200":
+          description: Path revised (or unchanged, if the request was a no-op)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProcessPath"
+        "400":
+          description: >-
+            The request body is missing or not valid JSON (including a JSON
+            number too large for eligibility.maxUnitsPerLine's int64 range,
+            or a null element inside requiredCapabilities,
+            eligibility.requiredProductAttributes,
+            eligibility.excludedProductAttributes or intake — every array element must
+            be a string, or a NUL character U+0000 in the body)
+            (`malformed-request-body`).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetails"
+        "404":
+          description: No process path exists with this id
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetails"
+        "409":
+          description: >-
+            concurrent-modification: another request committed a change to
+            this path between the caller's load and this write (optimistic
+            concurrency, ADR 0017). Reload the path and re-apply the
+            revision against the current state.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetails"
+        "422":
+          description: The path is deactivated, or matchPrefix/requiredCapabilities/cycleTimeP95/intake is invalid
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetails"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    delete:
+      tags: [process-paths]
+      operationId: deactivatePath
+      summary: Deactivate (retire) a process path
+      description: >
+        Idempotent: deactivating an already-deactivated path is a no-op
+        success and does NOT republish ProcessPathDeactivated. Publishes
+        ProcessPathDeactivated the first time a path transitions to
+        Deactivated. A path that any site's CPT schedule still lists in a
+        cutoff's eligiblePathIds cannot be deactivated (ADR 0026): the
+        request is refused with 409 path-referenced-by-cpt-schedule, naming
+        the sites, and nothing changes — revise those schedules first. A
+        path that an ACTIVE process flow has a stage on cannot be deactivated
+        either (ADR 0042): 409 path-in-active-flow, naming the flows —
+        revise or retire those flows first. This
+        service takes no position on work already assigned to this path in
+        a downstream context — that is each consumer's own operational
+        concern.
+      parameters:
+        - $ref: "#/components/parameters/PathIdPathParam"
+      responses:
+        "204":
+          description: Path deactivated (or already was)
+        "404":
+          description: No process path exists with this id
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetails"
+        "409":
+          description: >-
+            path-referenced-by-cpt-schedule: at least one site's CPT
+            schedule still lists this path in a cutoff's eligiblePathIds
+            (ADR 0026), or path-in-active-flow: at least one ACTIVE process
+            flow has a stage on this path (ADR 0042). Either way the path
+            stays Active and nothing is published.
+            Also concurrent-modification when another request committed a
+            change to this path between this call's load and write (ADR
+            0017).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetails"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /sites/{siteId}/cpt-schedule:
+    get:
+      tags: [cpt-schedule]
+      operationId: getCPTSchedule
+      x-pagination-exempt: view
+      summary: Get one site's CPT schedule
+      description: >
+        Returns 404 if no schedule has been defined for this siteId yet.
+        Not a collection: one composite resource (the site's whole schedule)
+        whose representation merely contains the `cutoffs` array, so it is
+        exempt from pagination (`x-pagination-exempt: view`, REST guideline
+        3.5).
+      parameters:
+        - $ref: "#/components/parameters/SiteIdPathParam"
+      responses:
+        "200":
+          description: The requested CPT schedule
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CPTSchedule"
+        "404":
+          description: No CPT schedule exists for this site
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetails"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    put:
+      tags: [cpt-schedule]
+      operationId: defineCPTSchedule
+      summary: Define or wholesale-revise a site's CPT schedule
+      description: >
+        There is no separate create/revise endpoint: every PUT replaces
+        the schedule's timezone and cutoffs in full (ADR 0010) — a
+        CPTSchedule has no partial-update semantics. Invariants: at least
+        one cutoff; cptIds unique within the schedule; every cutoff's
+        eligiblePathIds entry must reference an Active ProcessPath in this
+        service's own store (the one cross-aggregate check, enforced at
+        write time). A no-op revision (identical timezone and cutoffs) is
+        a successful 200 that does NOT republish CPTScheduleChanged.
+      parameters:
+        - $ref: "#/components/parameters/SiteIdPathParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DefineCPTScheduleRequest"
+      responses:
+        "200":
+          description: Schedule defined or revised
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CPTSchedule"
+        "400":
+          description: The request body is missing, not valid JSON, or contains a NUL character U+0000 (`malformed-request-body`).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetails"
+        "404":
+          description: No route matches this request path (e.g. an empty siteId path segment).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetails"
+        "409":
+          description: >-
+            concurrent-modification: another request committed a change to
+            this site's schedule between the caller's load and this write
+            (optimistic concurrency, ADR 0017). Reload the schedule and
+            re-apply the change against the current state.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetails"
+        "422":
+          description: >
+            timezone is empty/not a recognized IANA zone, cutoffs is
+            empty, a cptId is empty/duplicate, a localTime is
+            empty/malformed, daysOfWeek is empty/invalid, shipMethod is
+            empty, eligiblePathIds is empty, or an eligiblePathIds entry
+            does not reference an Active process path in this service's
+            own store.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetails"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /process-flows:
+    get:
+      tags: [process-flows]
+      operationId: listProcessFlows
+      summary: List process flows
+      description: >
+        Returns only ACTIVE flows by default; pass ?all=true for the audit
+        view (ACTIVE and RETIRED). The list is keyset-paginated (REST
+        guideline section 3): `limit` (1-500, default 100) and an opaque
+        `cursor`, in flowId order (the unique key); the answer is `{items,
+        nextCursor}` and `nextCursor` is absent on the last page. Filters
+        (`all`) are repeated on every page request. Any query parameter other
+        than `all`, `limit` and `cursor` is 400 `unknown-query-parameter`.
+      parameters:
+        - name: all
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
+          description: When true, includes RETIRED flows too.
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: One page of the requested set of process flows
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProcessFlowPage"
+        "400":
+          description: >-
+            The `all` query parameter is present but not a boolean
+            (`invalid-query-parameter`), `limit` is not an integer from 1 to
+            500 (`invalid-limit`), `cursor` is not a token this API issued
+            (`invalid-cursor`), or the request carries a query parameter this
+            operation does not declare (`unknown-query-parameter`).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetails"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /process-flows/{flowId}:
+    get:
+      tags: [process-flows]
+      operationId: getProcessFlow
+      summary: Get one process flow by id
+      description: Returns the flow regardless of status (ACTIVE or RETIRED).
+      parameters:
+        - $ref: "#/components/parameters/FlowIdPathParam"
+      responses:
+        "200":
+          description: The requested process flow
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProcessFlow"
+        "404":
+          description: No process flow exists with this id (`flow-not-found`)
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetails"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    put:
+      tags: [process-flows]
+      operationId: putProcessFlow
+      summary: Define or revise a process flow
+      description: >
+        The ordered stages a workload passes through (ADR 0042). The body is
+        the flow's FULL definition: every PUT replaces the name and the
+        stages. Idempotent by nature (full state), so it takes no
+        Idempotency-Key. 201 when the flowId is new, 200 for every later PUT
+        — including one that changes nothing, which raises no event and
+        keeps the version. Each accepted change raises ProcessFlowDefined
+        (first) or ProcessFlowRevised, carrying the full state and a
+        `version` that starts at 1 and grows by one per accepted change.
+        Invariants: at least one stage; a pathId appears at most once; each
+        processType is one of the closed set; each stage's pathId names an
+        ACTIVE process path of this service's own catalogue (checked at
+        write time, under the path's row lock). A RETIRED flow cannot be
+        revised (422 `flow-retired`).
+      parameters:
+        - $ref: "#/components/parameters/FlowIdPathParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PutProcessFlowRequest"
+            examples:
+              pickRebinPackSlam:
+                summary: PICK, REBIN, PACK, SLAM, each stage on its own path
+                value:
+                  name: Single-unit outbound
+                  stages:
+                    - {pathId: PICK, processType: PICK}
+                    - {pathId: REBIN, processType: REBIN}
+                    - {pathId: PACK, processType: PACK}
+                    - {pathId: SLAM, processType: SLAM}
+              directToPack:
+                summary: A direct-to-PACK flow that shares the PICK path
+                value:
+                  name: Direct to pack
+                  stages:
+                    - {pathId: PICK, processType: PICK}
+                    - {pathId: PACK, processType: PACK}
+      responses:
+        "200":
+          description: Flow revised, or the request changed nothing (no event, same version)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProcessFlow"
+        "201":
+          description: Flow defined (ProcessFlowDefined at version 1)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProcessFlow"
+        "400":
+          description: The request body is missing, not valid JSON, or contains a NUL character U+0000 (`malformed-request-body`).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetails"
+        "409":
+          description: >-
+            concurrent-modification: another request committed a change to
+            this flow between the caller's load and this write (optimistic
+            concurrency, ADR 0017). Reload the flow and re-apply the change.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetails"
+        "422":
+          description: >
+            name is empty, stages is empty, a stage's pathId is empty or
+            repeated (`duplicate-stage-path`), a processType is not one of
+            the closed set (`invalid-process-type`), a stage's pathId does
+            not reference an Active process path (`ineligible-stage-path`),
+            or the flow is retired (`flow-retired`).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetails"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    delete:
+      tags: [process-flows]
+      operationId: retireProcessFlow
+      summary: Retire a process flow
+      description: >
+        Idempotent: retiring an already retired flow is a 204 again and does
+        NOT republish. The first retirement raises ProcessFlowRetired, the
+        full state with status RETIRED and the next version. A retired flow
+        cannot be revised, and its paths may be deactivated again.
+      parameters:
+        - $ref: "#/components/parameters/FlowIdPathParam"
+      responses:
+        "204":
+          description: Flow retired (or already was)
+        "404":
+          description: No process flow exists with this id (`flow-not-found`)
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetails"
+        "409":
+          description: >-
+            concurrent-modification: another request committed a change to
+            this flow between the caller's load and this write (ADR 0017).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetails"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+components:
+  responses:
+    InternalError:
+      description: >-
+        An unexpected error (problem type `internal-error`): a storage or
+        other infrastructure failure, or a recovered panic. On
+        `POST /process-paths` a 5xx is never stored under the
+        Idempotency-Key, so a retry with the same key runs again.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/ProblemDetails"
+  headers:
+    IdempotencyReplayed:
+      description: >-
+        Present, with the value `true`, ONLY when this response is a replay
+        of the stored answer for the request's Idempotency-Key (the handler
+        did not run again). The first execution of a key never carries it.
+      schema:
+        type: string
+        enum: ["true"]
+        example: "true"
+  parameters:
+    PathIdPathParam:
+      name: pathId
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+      example: PICK
+    FlowIdPathParam:
+      name: flowId
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+      example: single-unit-outbound
+    SiteIdPathParam:
+      name: siteId
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+      example: sp1
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+        pattern: '^[ -~]+$'
+      description: >-
+        Caller-generated unique key (a UUID per logical submit; a retry
+        reuses it, a new user action mints a new one) that makes a retried
+        request safe (ADR 0011 and ADR 0043, REST guideline section 2):
+        1-128 printable ASCII characters. Postgres is the only runtime
+        (ADR 0037), so the check is on in every deployment: a missing key
+        is answered with 400 `idempotency-key-required`, a malformed one
+        with 400 `idempotency-key-invalid`; a replay with the same key and
+        the same method, path and body returns the original response plus
+        `Idempotency-Replayed: true` when that answer was stored (a success
+        and a FINAL or OUTCOME refusal), while the same key with a
+        different method, path or body is 409 `idempotency-key-reused`. A
+        RETRYABLE refusal (nothing committed; the cause — a conflicting
+        write, a not-yet-existing referenced fact — can change) is never
+        stored: the key is released, so the same key can be retried and a
+        different body under it is a new request.
+      example: 0b6b1f1e-4a5c-4c1e-9f2a-7d3c8e5f9a01
+    Limit:
+      name: limit
+      in: query
+      required: false
+      description: >-
+        Page size of a collection GET (REST guideline 3.2): an integer from 1
+        to 500, default 100. Anything else is 400 `invalid-limit`.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 500
+        default: 100
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      description: >-
+        Opaque page token: the previous page's `nextCursor`, passed back
+        unchanged together with the same filters. Absent on the first page. A
+        value this API did not issue is 400 `invalid-cursor`.
+      schema:
+        type: string
+  schemas:
+    ProcessPathPage:
+      type: object
+      required: [items]
+      description: >-
+        One keyset page of process paths (REST guideline section 3.3),
+        ordered by pathId (the unique key).
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProcessPath"
+        nextCursor:
+          type: string
+          description: >-
+            Opaque cursor of the next page, to be passed back unchanged as
+            `cursor`. Absent on the last page.
+          example: eyJzIjoiMjAyNi0xMC0wMVQxMjowMDowMFoiLCJpIjoiUElDSyJ9
+    DefineProcessPathRequest:
+      type: object
+      required: [pathId, matchPrefix, requiredCapabilities, cycleTimeP95]
+      properties:
+        pathId:
+          type: string
+          minLength: 1
+          description: The canonical identity of the path (e.g. "PICK", "PACK", "REBIN", "SLAM").
+          example: PICK
+        matchPrefix:
+          type: string
+          minLength: 1
+          description: >
+            Lower-case prefix downstream consumers match a caller-supplied
+            id against: id == matchPrefix OR id starts with
+            matchPrefix + "-". Must be non-empty and lower-case.
+          example: pick
+        direct:
+          type: boolean
+          nullable: true
+          default: false
+          description: >
+            A structural fact about this path's routing shape (reserved for
+            a future multi-hop topology). Immutable once set; not revisable.
+            A JSON null is treated the same as an omitted field (false).
+        requiredCapabilities:
+          type: array
+          minItems: 1
+          items:
+            type: string
+          description: Capabilities a station/associate must hold to work this path.
+          example: ["pick"]
+        destinationLocationRole:
+          $ref: "#/components/schemas/DestinationLocationRole"
+        cycleTimeP95:
+          $ref: "#/components/schemas/CycleTimeP95"
+        eligibility:
+          $ref: "#/components/schemas/Eligibility"
+        intake:
+          $ref: "#/components/schemas/Intake"
+    RevisePathRequest:
+      type: object
+      required: [matchPrefix, requiredCapabilities, cycleTimeP95]
+      properties:
+        matchPrefix:
+          type: string
+          minLength: 1
+          example: pick-zone-a
+        requiredCapabilities:
+          type: array
+          minItems: 1
+          items:
+            type: string
+          example: ["pick", "hazmat"]
+        cycleTimeP95:
+          $ref: "#/components/schemas/CycleTimeP95"
+        eligibility:
+          $ref: "#/components/schemas/Eligibility"
+        intake:
+          allOf:
+            - $ref: "#/components/schemas/Intake"
+          description: >
+            Optional on revise (ADR 0034): absent or JSON null keeps the
+            path's current intake, so a client that predates the field
+            never clears it; an array (the empty array included) replaces
+            it.
+    ProcessPath:
+      type: object
+      required: [pathId, matchPrefix, direct, requiredCapabilities, cycleTimeP95, eligibility, intake, status, createdAt, updatedAt]
+      properties:
+        pathId:
+          type: string
+          example: PICK
+        matchPrefix:
+          type: string
+          example: pick
+        direct:
+          type: boolean
+        requiredCapabilities:
+          type: array
+          items:
+            type: string
+          example: ["pick"]
+        destinationLocationRole:
+          $ref: "#/components/schemas/DestinationLocationRole"
+        cycleTimeP95:
+          $ref: "#/components/schemas/CycleTimeP95"
+        eligibility:
+          $ref: "#/components/schemas/EligibilityResponse"
+        intake:
+          type: array
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/DemandSource"
+          description: >
+            The demand sources allowed to route work onto this path (ADR
+            0034), in canonical (sorted) order. Always present; [] when the
+            path is reached only by an explicit path id.
+          example: ["CUSTOMER_ORDER"]
+        status:
+          type: string
+          enum: [ACTIVE, DEACTIVATED]
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    DestinationLocationRole:
+      type: string
+      nullable: true
+      description: >
+        Optional declaration of what kind of facility-layout LocationRole
+        this path's completed work is destined for (ADR 0006). Omitted
+        entirely — or the equivalent JSON null / empty string — means no
+        destination role was declared: the default, and most common, case
+        (e.g. Pick has no single destination). Immutable once set at
+        DefinePath time; never revisable via RevisePath. This is
+        declarative routing intent this service publishes for a
+        downstream consumer to interpret — it is never validated against
+        a live facility-layout lookup (this service has zero
+        inbound/outbound dependency on any other context).
+      enum: ["", Drop, WorkCenter, Shipping]
+      example: Drop
+    CycleTimeP95:
+      type: string
+      description: >
+        The operator-declared p95 end-to-end cycle time from release into
+        the path to manifest (ADR 0010): a declared standard, not a
+        measured value. Required and must be positive. Encoded as a Go
+        duration string (e.g. "2h", "90m", "2h30m").
+      example: "2h"
+    Eligibility:
+      type: object
+      nullable: true
+      description: >
+        Rules a unit of work must satisfy to be routed to this path (ADR
+        0010). Every field is optional; an absent/empty object ({}) — or
+        the equivalent JSON null — is the fully permissive default every
+        path gets on migration, so today's routing behaviour is preserved
+        exactly until an operator narrows it.
+      properties:
+        maxUnitsPerLine:
+          type: integer
+          format: int64
+          nullable: true
+          description: nil/omitted means unbounded; 1 is how a singles path is declared.
+          example: 1
+        requiredProductAttributes:
+          type: array
+          nullable: true
+          items:
+            type: string
+          description: >
+            Set over the fleet's existing product classification
+            vocabulary (e.g. "hazmat", "fragile", "giftWrap"). This
+            service does not own or validate this vocabulary.
+          example: ["giftWrap"]
+        excludedProductAttributes:
+          type: array
+          nullable: true
+          items:
+            type: string
+          example: ["hazmat"]
+        nonSortable:
+          type: boolean
+          nullable: true
+          default: false
+    EligibilityResponse:
+      type: object
+      description: >
+        The path's eligibility as stored. Always present on a response; an
+        unconstrained path answers `{}`. `maxUnitsPerLine` is omitted when
+        unbounded, the two attribute arrays are omitted when empty and
+        `nonSortable` is omitted when false.
+      properties:
+        maxUnitsPerLine:
+          type: integer
+          format: int64
+          example: 1
+        requiredProductAttributes:
+          type: array
+          items:
+            type: string
+          example: ["giftWrap"]
+        excludedProductAttributes:
+          type: array
+          items:
+            type: string
+          example: ["hazmat"]
+        nonSortable:
+          type: boolean
+    DemandSource:
+      type: string
+      enum: [CUSTOMER_ORDER, STOCK_TRANSFER, SLOT_RELOCATION, INVENTORY_CONTROL, REPLENISHMENT]
+      description: >
+        One source of demand that may route work onto a process path (ADR
+        0034). CUSTOMER_ORDER: order-management order lines.
+        STOCK_TRANSFER: network-inventory-planning transfer legs, planned
+        through wes-work-planning. SLOT_RELOCATION: approved slot-plan
+        moves, planned through wes-work-planning. INVENTORY_CONTROL:
+        internal inventory work (amnesty, damage, problem solve).
+        REPLENISHMENT: pick-face top-ups from pick-face-replenishment,
+        planned through wes-work-planning (ADR 0036); the only source
+        declared on the REPLENISH path.
+    Intake:
+      type: array
+      nullable: true
+      uniqueItems: true
+      items:
+        $ref: "#/components/schemas/DemandSource"
+      description: >
+        The set of demand sources allowed to route work onto the path (ADR
+        0034): routing policy, revisable like eligibility. Omitted, JSON
+        null or [] on define is the empty set, meaning the path is reached
+        only by an explicit path id from an upstream stage (PACK, REBIN,
+        SLAM). An unknown or repeated value is a 422 invalid-intake.
+      example: ["CUSTOMER_ORDER"]
+    DefineCPTScheduleRequest:
+      type: object
+      required: [timezone, cutoffs]
+      properties:
+        timezone:
+          type: string
+          minLength: 1
+          description: IANA zone, e.g. America/Sao_Paulo.
+          example: America/Sao_Paulo
+        cutoffs:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/Cutoff"
+    Cutoff:
+      type: object
+      required: [cptId, localTime, daysOfWeek, shipMethod, eligiblePathIds]
+      properties:
+        cptId:
+          type: string
+          minLength: 1
+          description: Stable id, unique within the site, e.g. "sp1-1500".
+          example: sp1-1500
+        localTime:
+          type: string
+          minLength: 1
+          pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$'
+          description: Recurring daily cutoff, "HH:MM" 24-hour form.
+          example: "15:00"
+        daysOfWeek:
+          type: array
+          minItems: 1
+          items:
+            type: string
+            enum: [Mon, Tue, Wed, Thu, Fri, Sat, Sun]
+          example: ["Mon", "Tue", "Wed", "Thu", "Fri"]
+        shipMethod:
+          type: string
+          minLength: 1
+          description: Free-form label ("ground", "same-day"); no carrier integration exists in this fleet.
+          example: ground
+        eligiblePathIds:
+          type: array
+          minItems: 1
+          items:
+            type: string
+            minLength: 1
+          description: >
+            The path families that can make this cutoff. Each entry must
+            reference an Active ProcessPath in this service's own store
+            (checked at write time).
+          example: ["PICK"]
+    CPTSchedule:
+      type: object
+      required: [siteId, timezone, cutoffs, createdAt, updatedAt]
+      properties:
+        siteId:
+          type: string
+          example: sp1
+        timezone:
+          type: string
+          example: America/Sao_Paulo
+        cutoffs:
+          type: array
+          items:
+            $ref: "#/components/schemas/Cutoff"
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    ProcessFlowPage:
+      type: object
+      required: [items]
+      description: >-
+        One keyset page of process flows (REST guideline section 3.3),
+        ordered by flowId (the unique key).
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProcessFlow"
+        nextCursor:
+          type: string
+          description: >-
+            Opaque cursor of the next page, to be passed back unchanged as
+            `cursor`. Absent on the last page.
+          example: eyJzIj...SyJ9
+    FlowStage:
+      type: object
+      required: [pathId, processType]
+      properties:
+        pathId:
+          type: string
+          minLength: 1
+          description: An ACTIVE process path of this service's own catalogue.
+          example: PICK
+        processType:
+          type: string
+          enum: [PICK, REBIN, PACK, SLAM, DISPATCH, ARRIVAL, RELOCATE, REPLENISH]
+          description: The kind of work the stage performs (the task types fulfillment-execution publishes).
+          example: PICK
+    PutProcessFlowRequest:
+      type: object
+      required: [name, stages]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          example: Single-unit outbound
+        stages:
+          type: array
+          minItems: 1
+          description: The ordered stages; a pathId appears at most once.
+          items:
+            $ref: "#/components/schemas/FlowStage"
+    ProcessFlow:
+      type: object
+      required: [flowId, name, stages, status, version, createdAt, updatedAt]
+      properties:
+        flowId:
+          type: string
+          example: single-unit-outbound
+        name:
+          type: string
+          example: Single-unit outbound
+        stages:
+          type: array
+          items:
+            $ref: "#/components/schemas/FlowStage"
+        status:
+          type: string
+          enum: [ACTIVE, RETIRED]
+        version:
+          type: integer
+          minimum: 1
+          description: >-
+            Starts at 1 and grows by one per accepted change (a revision that
+            changes something, or the retirement). The same number the flow's
+            events carry.
+          example: 1
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    ProblemDetails:
+      type: object
+      description: RFC 7807 Problem Details for HTTP APIs.
+      properties:
+        type:
+          type: string
+          format: uri
+        title:
+          type: string
+        status:
+          type: integer
+        detail:
+          type: string
+        instance:
+          type: string
+      required: [type, title, status, detail, instance]

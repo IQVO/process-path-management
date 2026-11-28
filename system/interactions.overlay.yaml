@@ -1,0 +1,293 @@
+# Interactions of process-path-management (STANDARD.md Part B): every call this context MAKES
+# (technology + operation + business). Outbound rest / mcp / a2a interactions: NONE, by the
+# context's hard rule (CLAUDE.md "NO calls to sibling bounded contexts"; enforced by
+# TestNoSiblingContextOutboundCalls). Every change propagates only as CloudEvents through the
+# transactional outbox (ADR 0003), written to the integration AND the analytics topic in one
+# transaction. The MCP tools and A2A skills of this context are all read-only (L1) and trigger
+# no use case that publishes.
+# Subscriptions: NONE expressible. The only consumer (cmd/pathmgmt-projector) reads this
+# context's OWN analytics topic into the catalogue-growth report read model
+# (internal/analytics/report), which is neither a use case nor an application port.
+apiVersion: warehouse/interactions/v1
+application: ../application.yaml
+
+interactions:
+  # --- DefinePath
+  - id: define-path-publish-process-path-created
+    technology: event.publish
+    operation:
+      asset: process-path-management/asyncapi
+      id: publishProcessPathEvents
+      effect: write
+      event: { channel: warehouse.process-path-management.events, type: com.warehouse.wes.process-path-management.processpath.ProcessPathCreated }
+    business:
+      capability: process-path.catalogue
+      process: process-path-definition
+      useCase: DefinePath
+      triggers:
+        - { kind: api, via: rest, ref: definePath, actor: "human:catalogue-operator" }
+      purpose: Announce a newly defined ProcessPath (PathId, matchPrefix, required capabilities) so consumers add it to their catalogue.
+      criticality: best-effort
+      onFailure: outbox-retry
+  - id: define-path-publish-process-path-created-analytics
+    technology: event.publish
+    operation:
+      asset: process-path-management/asyncapi
+      id: publishProcessPathAnalyticsEvents
+      effect: write
+      event: { channel: warehouse.process-path-management.analytics, type: com.warehouse.wes.process-path-management.processpath.ProcessPathCreated }
+    business:
+      capability: process-path.catalogue
+      process: process-path-definition
+      useCase: DefinePath
+      triggers:
+        - { kind: api, via: rest, ref: definePath, actor: "human:catalogue-operator" }
+      purpose: Analytics copy of ProcessPathCreated for the catalogue-growth report read model (same outbox transaction, same CloudEvents id).
+      criticality: best-effort
+      onFailure: outbox-retry
+  # --- RevisePath
+  - id: revise-path-publish-process-path-updated
+    technology: event.publish
+    operation:
+      asset: process-path-management/asyncapi
+      id: publishProcessPathEvents
+      effect: write
+      event: { channel: warehouse.process-path-management.events, type: com.warehouse.wes.process-path-management.processpath.ProcessPathUpdated }
+    business:
+      capability: process-path.catalogue
+      process: process-path-revision
+      useCase: RevisePath
+      triggers:
+        - { kind: api, via: rest, ref: revisePath, actor: "human:catalogue-operator" }
+      purpose: Announce the full current state of a revised ProcessPath so consumers upsert it.
+      criticality: best-effort
+      onFailure: outbox-retry
+  - id: revise-path-publish-process-path-updated-analytics
+    technology: event.publish
+    operation:
+      asset: process-path-management/asyncapi
+      id: publishProcessPathAnalyticsEvents
+      effect: write
+      event: { channel: warehouse.process-path-management.analytics, type: com.warehouse.wes.process-path-management.processpath.ProcessPathUpdated }
+    business:
+      capability: process-path.catalogue
+      process: process-path-revision
+      useCase: RevisePath
+      triggers:
+        - { kind: api, via: rest, ref: revisePath, actor: "human:catalogue-operator" }
+      purpose: Analytics copy of ProcessPathUpdated for the catalogue-growth report read model (same outbox transaction, same CloudEvents id).
+      criticality: best-effort
+      onFailure: outbox-retry
+  # --- DeactivatePath
+  - id: deactivate-path-publish-process-path-deactivated
+    technology: event.publish
+    operation:
+      asset: process-path-management/asyncapi
+      id: publishProcessPathEvents
+      effect: write
+      event: { channel: warehouse.process-path-management.events, type: com.warehouse.wes.process-path-management.processpath.ProcessPathDeactivated }
+    business:
+      capability: process-path.catalogue
+      process: process-path-deactivation
+      useCase: DeactivatePath
+      triggers:
+        - { kind: api, via: rest, ref: deactivatePath, actor: "human:catalogue-operator" }
+      purpose: Announce that a ProcessPath was deactivated and must no longer be used.
+      criticality: best-effort
+      onFailure: outbox-retry
+  - id: deactivate-path-publish-process-path-deactivated-analytics
+    technology: event.publish
+    operation:
+      asset: process-path-management/asyncapi
+      id: publishProcessPathAnalyticsEvents
+      effect: write
+      event: { channel: warehouse.process-path-management.analytics, type: com.warehouse.wes.process-path-management.processpath.ProcessPathDeactivated }
+    business:
+      capability: process-path.catalogue
+      process: process-path-deactivation
+      useCase: DeactivatePath
+      triggers:
+        - { kind: api, via: rest, ref: deactivatePath, actor: "human:catalogue-operator" }
+      purpose: Analytics copy of ProcessPathDeactivated for the catalogue-growth report read model (same outbox transaction, same CloudEvents id).
+      criticality: best-effort
+      onFailure: outbox-retry
+  # --- DefineCPTSchedule
+  - id: define-cpt-schedule-publish-cpt-schedule-changed
+    technology: event.publish
+    operation:
+      asset: process-path-management/asyncapi
+      id: publishProcessPathEvents
+      effect: write
+      event: { channel: warehouse.process-path-management.events, type: com.warehouse.wes.process-path-management.cptschedule.CPTScheduleChanged }
+    business:
+      capability: process-path.cpt-schedule
+      process: cpt-schedule-definition
+      useCase: DefineCPTSchedule
+      triggers:
+        - { kind: api, via: rest, ref: defineCPTSchedule, actor: "human:catalogue-operator" }
+      purpose: Announce the whole current CPTSchedule of a site (timezone and cutoffs) after a define or revise.
+      criticality: best-effort
+      onFailure: outbox-retry
+  - id: define-cpt-schedule-publish-cpt-schedule-changed-analytics
+    technology: event.publish
+    operation:
+      asset: process-path-management/asyncapi
+      id: publishProcessPathAnalyticsEvents
+      effect: write
+      event: { channel: warehouse.process-path-management.analytics, type: com.warehouse.wes.process-path-management.cptschedule.CPTScheduleChanged }
+    business:
+      capability: process-path.cpt-schedule
+      process: cpt-schedule-definition
+      useCase: DefineCPTSchedule
+      triggers:
+        - { kind: api, via: rest, ref: defineCPTSchedule, actor: "human:catalogue-operator" }
+      purpose: Analytics copy of CPTScheduleChanged for the catalogue-growth report read model (same outbox transaction, same CloudEvents id).
+      criticality: best-effort
+      onFailure: outbox-retry
+  # --- DefineProcessFlow
+  - id: define-process-flow-publish-process-flow-defined
+    technology: event.publish
+    operation:
+      asset: process-path-management/asyncapi
+      id: publishProcessPathEvents
+      effect: write
+      event: { channel: warehouse.process-path-management.events, type: com.warehouse.wes.process-path-management.processflow.ProcessFlowDefined }
+    business:
+      capability: process-path.process-flow
+      process: process-flow-definition
+      useCase: DefineProcessFlow
+      triggers:
+        - { kind: api, via: rest, ref: putProcessFlow, actor: "human:catalogue-operator" }
+      purpose: Announce a newly defined ProcessFlow (ordered stages of ACTIVE ProcessPaths).
+      criticality: best-effort
+      onFailure: outbox-retry
+  - id: define-process-flow-publish-process-flow-defined-analytics
+    technology: event.publish
+    operation:
+      asset: process-path-management/asyncapi
+      id: publishProcessPathAnalyticsEvents
+      effect: write
+      event: { channel: warehouse.process-path-management.analytics, type: com.warehouse.wes.process-path-management.processflow.ProcessFlowDefined }
+    business:
+      capability: process-path.process-flow
+      process: process-flow-definition
+      useCase: DefineProcessFlow
+      triggers:
+        - { kind: api, via: rest, ref: putProcessFlow, actor: "human:catalogue-operator" }
+      purpose: Analytics copy of ProcessFlowDefined for the catalogue-growth report read model (same outbox transaction, same CloudEvents id).
+      criticality: best-effort
+      onFailure: outbox-retry
+  - id: define-process-flow-publish-process-flow-revised
+    technology: event.publish
+    operation:
+      asset: process-path-management/asyncapi
+      id: publishProcessPathEvents
+      effect: write
+      event: { channel: warehouse.process-path-management.events, type: com.warehouse.wes.process-path-management.processflow.ProcessFlowRevised }
+    business:
+      capability: process-path.process-flow
+      process: process-flow-definition
+      useCase: DefineProcessFlow
+      triggers:
+        - { kind: api, via: rest, ref: putProcessFlow, actor: "human:catalogue-operator" }
+      purpose: Announce the full current state and raised version of a revised ProcessFlow.
+      criticality: best-effort
+      onFailure: outbox-retry
+  - id: define-process-flow-publish-process-flow-revised-analytics
+    technology: event.publish
+    operation:
+      asset: process-path-management/asyncapi
+      id: publishProcessPathAnalyticsEvents
+      effect: write
+      event: { channel: warehouse.process-path-management.analytics, type: com.warehouse.wes.process-path-management.processflow.ProcessFlowRevised }
+    business:
+      capability: process-path.process-flow
+      process: process-flow-definition
+      useCase: DefineProcessFlow
+      triggers:
+        - { kind: api, via: rest, ref: putProcessFlow, actor: "human:catalogue-operator" }
+      purpose: Analytics copy of ProcessFlowRevised for the catalogue-growth report read model (same outbox transaction, same CloudEvents id).
+      criticality: best-effort
+      onFailure: outbox-retry
+  # --- RetireProcessFlow
+  - id: retire-process-flow-publish-process-flow-retired
+    technology: event.publish
+    operation:
+      asset: process-path-management/asyncapi
+      id: publishProcessPathEvents
+      effect: write
+      event: { channel: warehouse.process-path-management.events, type: com.warehouse.wes.process-path-management.processflow.ProcessFlowRetired }
+    business:
+      capability: process-path.process-flow
+      process: process-flow-retirement
+      useCase: RetireProcessFlow
+      triggers:
+        - { kind: api, via: rest, ref: retireProcessFlow, actor: "human:catalogue-operator" }
+      purpose: Announce that a ProcessFlow was retired and can no longer be revised.
+      criticality: best-effort
+      onFailure: outbox-retry
+  - id: retire-process-flow-publish-process-flow-retired-analytics
+    technology: event.publish
+    operation:
+      asset: process-path-management/asyncapi
+      id: publishProcessPathAnalyticsEvents
+      effect: write
+      event: { channel: warehouse.process-path-management.analytics, type: com.warehouse.wes.process-path-management.processflow.ProcessFlowRetired }
+    business:
+      capability: process-path.process-flow
+      process: process-flow-retirement
+      useCase: RetireProcessFlow
+      triggers:
+        - { kind: api, via: rest, ref: retireProcessFlow, actor: "human:catalogue-operator" }
+      purpose: Analytics copy of ProcessFlowRetired for the catalogue-growth report read model (same outbox transaction, same CloudEvents id).
+      criticality: best-effort
+      onFailure: outbox-retry
+  # --- RepublishCatalogue (startup, ADR 0038): integration topic ONLY, never the analytics topic
+  - id: republish-catalogue-publish-process-path-updated
+    technology: event.publish
+    operation:
+      asset: process-path-management/asyncapi
+      id: publishProcessPathEvents
+      effect: write
+      event: { channel: warehouse.process-path-management.events, type: com.warehouse.wes.process-path-management.processpath.ProcessPathUpdated }
+    business:
+      capability: process-path.catalogue-republish
+      process: catalogue-republish-at-startup
+      useCase: RepublishCatalogue
+      triggers:
+        - { kind: schedule, ref: StartupCatalogueRepublish, actor: system }
+      purpose: Re-announce the full current state of every ACTIVE ProcessPath at service start so replaying consumers never depend on broker retention.
+      criticality: best-effort
+      onFailure: outbox-retry
+  - id: republish-catalogue-publish-cpt-schedule-changed
+    technology: event.publish
+    operation:
+      asset: process-path-management/asyncapi
+      id: publishProcessPathEvents
+      effect: write
+      event: { channel: warehouse.process-path-management.events, type: com.warehouse.wes.process-path-management.cptschedule.CPTScheduleChanged }
+    business:
+      capability: process-path.catalogue-republish
+      process: catalogue-republish-at-startup
+      useCase: RepublishCatalogue
+      triggers:
+        - { kind: schedule, ref: StartupCatalogueRepublish, actor: system }
+      purpose: Re-announce the current CPTSchedule of every site at service start so replaying consumers never depend on broker retention.
+      criticality: best-effort
+      onFailure: outbox-retry
+  - id: republish-catalogue-publish-process-flow-revised
+    technology: event.publish
+    operation:
+      asset: process-path-management/asyncapi
+      id: publishProcessPathEvents
+      effect: write
+      event: { channel: warehouse.process-path-management.events, type: com.warehouse.wes.process-path-management.processflow.ProcessFlowRevised }
+    business:
+      capability: process-path.catalogue-republish
+      process: catalogue-republish-at-startup
+      useCase: RepublishCatalogue
+      triggers:
+        - { kind: schedule, ref: StartupCatalogueRepublish, actor: system }
+      purpose: Re-announce the current state of every ACTIVE ProcessFlow at service start so replaying consumers never depend on broker retention.
+      criticality: best-effort
+      onFailure: outbox-retry
